@@ -767,7 +767,7 @@ export class TuTienClient extends EventEmitter {
     const sent = this.socket.sendRaw(movePkt);
     if (sent) {
       this.moveSeq = nextSeq;
-      this.socket.recordOutboundMove({ seq: movePkt.seq, x: movePkt.x, y: movePkt.y, ep: movePkt.ep });
+      this.socket.recordOutboundMove({ seq: movePkt.seq, x: movePkt.x, y: movePkt.y, st: movePkt.st, ep: movePkt.ep });
     }
     return sent;
   }

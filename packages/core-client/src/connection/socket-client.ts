@@ -61,8 +61,34 @@ export class SocketClient extends EventEmitter {
     this.packetTap = new PacketTap(process.env.TUTIEN_PACKET_TAP_DIR || 'docs/evidence', seconds * 1000, getSelfId);
   }
 
-  public recordOutboundMove(move: { seq: number; x: number; y: number; ep?: number }): void {
+  public recordOutboundMove(move: { seq: number; x: number; y: number; st?: string; ep?: number }): void {
     this.packetTap?.recordOutboundMove(move);
+  }
+
+  public beginStationaryProbeBatch(input: {
+    label: string;
+    st: string;
+    x: number;
+    y: number;
+    positionBefore: { x: number; y: number };
+  }): void {
+    this.packetTap?.beginStationaryProbeBatch(input);
+  }
+
+  public endStationaryProbeBatch(input: {
+    label: string;
+    youCount: number;
+    positionAfter: { x: number; y: number };
+  }): void {
+    this.packetTap?.endStationaryProbeBatch(input);
+  }
+
+  public recordStationaryProbeYou(label: string, packet: Record<string, unknown>): void {
+    this.packetTap?.recordStationaryProbeYou(label, packet);
+  }
+
+  public recordStationaryProbeCancellation(reason: string): void {
+    this.packetTap?.recordStationaryProbeCancellation(reason);
   }
 
   public connect(): void {

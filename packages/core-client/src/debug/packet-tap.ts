@@ -49,7 +49,40 @@ export class PacketTap {
     saveRealm: RedactedScalar;
   }> = [];
   private readonly youPackets: Array<Record<string, RedactedNumber>> = [];
-  private readonly outboundMoves: Array<{ at: number; seq: number | null; x: number | null; y: number | null; ep: RedactedNumber }> = [];
+  private readonly outboundMoves: Array<{
+    at: number;
+    seq: number | null;
+    x: number | null;
+    y: number | null;
+    st: string | null;
+    ep: RedactedNumber;
+  }> = [];
+  private readonly stationaryProbeBatches: Array<{
+    label: string;
+    atStart: number;
+    atEnd: number;
+    seqStart: number | null;
+    seqEnd: number | null;
+    st: string | null;
+    x: number | null;
+    y: number | null;
+    movesSent: number;
+    youCount: number;
+    positionBefore: { x: number | null; y: number | null };
+    positionAfter: { x: number | null; y: number | null };
+  }> = [];
+  private readonly stationaryProbeYou: Array<Record<string, RedactedNumber | string>> = [];
+  private readonly stationaryProbeCancellations: Array<{ at: number; reason: string }> = [];
+  private activeStationaryProbeBatch: {
+    label: string;
+    atStart: number;
+    outboundStartIndex: number;
+    st: string | null;
+    x: number | null;
+    y: number | null;
+    positionBefore: { x: number | null; y: number | null };
+  } | null = null;
+  private lastOutboundMoveAt: number | null = null;
   private flushed = false;
 
   constructor(private readonly outDir: string, private readonly durationMs: number, private readonly getSelfId: () => string) {}
@@ -93,6 +126,7 @@ export class PacketTap {
     if (op === 'you' && this.youPackets.length < 100) {
       const fields: Record<string, RedactedNumber> = { at };
       for (const key of YOU_KEYS) fields[key] = redactedNumber(p[key]);
+      fields.delayMs = this.lastOutboundMoveAt === null ? null : Math.max(0, at - this.lastOutboundMoveAt);
       this.youPackets.push(fields);
     }
 
@@ -134,18 +168,98 @@ export class PacketTap {
   }
 
   /** Store only the movement fields needed to correlate an outbound move with `you`. */
-  recordOutboundMove(move: { seq: unknown; x: unknown; y: unknown; ep?: unknown }): void {
+  recordOutboundMove(move: { seq: unknown; x: unknown; y: unknown; st?: unknown; ep?: unknown }): void {
     if (this.flushed || this.outboundMoves.length >= 500) return;
+    const at = Date.now() - this.startedAt;
     const rounded = (value: unknown): number | null =>
       typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
     this.outboundMoves.push({
-      at: Date.now() - this.startedAt,
+      at,
       seq: rounded(move.seq),
       x: rounded(move.x),
       y: rounded(move.y),
+      st: typeof move.st === 'string' ? move.st : null,
       ep: redactedNumber(move.ep),
     });
+    this.lastOutboundMoveAt = at;
     if (Date.now() - this.startedAt >= this.durationMs) this.flush();
+  }
+
+  /** Begin a redacted stationary-probe batch; outbound moves are correlated by tap-local order. */
+  beginStationaryProbeBatch(input: {
+    label: string;
+    st: unknown;
+    x: unknown;
+    y: unknown;
+    positionBefore: { x: unknown; y: unknown };
+  }): void {
+    if (this.flushed || this.activeStationaryProbeBatch) return;
+    const rounded = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+    this.activeStationaryProbeBatch = {
+      label: input.label,
+      atStart: Date.now() - this.startedAt,
+      outboundStartIndex: this.outboundMoves.length,
+      st: typeof input.st === 'string' ? input.st : null,
+      x: rounded(input.x),
+      y: rounded(input.y),
+      positionBefore: { x: rounded(input.positionBefore.x), y: rounded(input.positionBefore.y) },
+    };
+  }
+
+  /** Finish a redacted stationary-probe batch and record its sequence span and runtime position. */
+  endStationaryProbeBatch(input: {
+    label: string;
+    youCount: number;
+    positionAfter: { x: unknown; y: unknown };
+  }): void {
+    if (this.flushed || !this.activeStationaryProbeBatch) return;
+    const active = this.activeStationaryProbeBatch;
+    this.activeStationaryProbeBatch = null;
+    const moves = this.outboundMoves.slice(active.outboundStartIndex);
+    const rounded = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+    this.stationaryProbeBatches.push({
+      label: input.label,
+      atStart: active.atStart,
+      atEnd: Date.now() - this.startedAt,
+      seqStart: moves[0]?.seq ?? null,
+      seqEnd: moves[moves.length - 1]?.seq ?? null,
+      st: active.st,
+      x: active.x,
+      y: active.y,
+      movesSent: moves.length,
+      youCount: Math.max(0, Math.floor(input.youCount)),
+      positionBefore: active.positionBefore,
+      positionAfter: { x: rounded(input.positionAfter.x), y: rounded(input.positionAfter.y) },
+    });
+  }
+
+  /** Attach a redacted you packet to the currently running stationary-probe batch. */
+  recordStationaryProbeYou(label: string, packet: Record<string, unknown>): void {
+    if (this.flushed || this.stationaryProbeYou.length >= 100) return;
+    const at = Date.now() - this.startedAt;
+    const value = (key: string): RedactedNumber => redactedNumber(packet[key]);
+    this.stationaryProbeYou.push({
+      batch: label,
+      at,
+      seq: value('seq'),
+      hp: value('hp'),
+      mp: value('mp'),
+      sp: value('sp'),
+      bp: value('bp'),
+      dn: value('dn'),
+      fix: value('fix'),
+      delayMs: this.lastOutboundMoveAt === null ? null : Math.max(0, at - this.lastOutboundMoveAt),
+    });
+  }
+
+  recordStationaryProbeCancellation(reason: string): void {
+    if (this.flushed || this.stationaryProbeCancellations.length >= 10) return;
+    this.stationaryProbeCancellations.push({
+      at: Date.now() - this.startedAt,
+      reason: reason.slice(0, 120),
+    });
   }
 
   flush(): void {
@@ -165,6 +279,11 @@ export class PacketTap {
       statePackets: this.statePackets,
       youPackets: this.youPackets,
       outboundMoves: this.outboundMoves,
+      stationaryProbe: {
+        batches: this.stationaryProbeBatches,
+        you: this.stationaryProbeYou,
+        cancellations: this.stationaryProbeCancellations,
+      },
       numericFields: this.numericFields,
       entityArrays,
       vitalPackets: this.vitalPackets,
