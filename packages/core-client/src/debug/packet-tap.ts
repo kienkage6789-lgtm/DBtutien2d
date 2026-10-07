@@ -1,0 +1,174 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+interface ArrayShape { packets: number; rows: number; keys: Set<string>; idTypes: Set<string> }
+type RedactedScalar = number | string | boolean | null;
+type RedactedNumber = number | boolean | null;
+
+const NUMERIC_KEYS = ['hp', 'maxHp', 'mp', 'maxMp', 'sp', 'bp', 'dn', 'seq', 'fix', 'ep', 'left', 'lostExp'] as const;
+const YOU_KEYS = ['seq', 'hp', 'mp', 'sp', 'bp', 'dn', 'fix'] as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+const redactedScalar = (value: unknown): RedactedScalar => {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+};
+
+const redactedNumber = (value: unknown): RedactedNumber => {
+  if (value === null || typeof value === 'boolean') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+};
+
+const redactedItemId = (value: unknown): RedactedScalar => {
+  if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) return value;
+  if (!isRecord(value)) return null;
+  return redactedScalar(value.id ?? value.itemId);
+};
+
+const redactedRealm = (value: unknown): RedactedScalar =>
+  typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)) ? value : null;
+
+/** Opt-in packet diagnostics. Raw packets, identifiers, names, and tokens are never persisted. */
+export class PacketTap {
+  private readonly startedAt = Date.now();
+  private readonly ops = new Map<string, number>();
+  private readonly opKeys = new Map<string, Set<string>>();
+  private readonly firstPackets: Array<{ at: number; op: string }> = [];
+  private readonly arrays = new Map<string, ArrayShape>();
+  private readonly vitalPackets: Array<Record<string, unknown>> = [];
+  private readonly selfEntries: Array<Record<string, unknown>> = [];
+  private readonly numericFields: Array<{ at: number; op: string; fields: Record<string, RedactedNumber> }> = [];
+  private readonly statePackets: Array<{
+    at: number;
+    keys: string[];
+    saveKeys: string[];
+    equipment: Array<{ slot: string; id: RedactedScalar }>;
+    realm: RedactedScalar;
+    saveRealm: RedactedScalar;
+  }> = [];
+  private readonly youPackets: Array<Record<string, RedactedNumber>> = [];
+  private readonly outboundMoves: Array<{ at: number; seq: number | null; x: number | null; y: number | null; ep: RedactedNumber }> = [];
+  private flushed = false;
+
+  constructor(private readonly outDir: string, private readonly durationMs: number, private readonly getSelfId: () => string) {}
+
+  record(packet: unknown): void {
+    if (this.flushed || !packet || typeof packet !== 'object' || Array.isArray(packet)) return;
+    const p = packet as Record<string, unknown>;
+    const op = typeof p.op === 'string' ? p.op : 'unknown';
+    const at = Date.now() - this.startedAt;
+    this.ops.set(op, (this.ops.get(op) ?? 0) + 1);
+    const keys = this.opKeys.get(op) ?? new Set<string>();
+    Object.keys(p).forEach((key) => keys.add(key));
+    this.opKeys.set(op, keys);
+    if (this.firstPackets.length < 30) this.firstPackets.push({ at, op });
+
+    const numeric = Object.fromEntries(
+      NUMERIC_KEYS
+        .filter((key) => Object.prototype.hasOwnProperty.call(p, key))
+        .map((key) => [key, redactedNumber(p[key])]),
+    ) as Record<string, RedactedNumber>;
+    if (Object.keys(numeric).length > 0 && this.numericFields.length < 200) {
+      this.numericFields.push({ at, op, fields: numeric });
+    }
+
+    if (op === 'state' && this.statePackets.length < 10) {
+      const save = isRecord(p.save) ? p.save : {};
+      const equipmentValue = p.equipment ?? save.equipment;
+      const equipment = isRecord(equipmentValue) ? equipmentValue : {};
+      this.statePackets.push({
+        at,
+        keys: Object.keys(p).sort(),
+        saveKeys: Object.keys(save).sort(),
+        equipment: Object.entries(equipment)
+          .map(([slot, item]) => ({ slot, id: redactedItemId(item) }))
+          .sort((a, b) => a.slot.localeCompare(b.slot)),
+        realm: redactedRealm(p.realm),
+        saveRealm: redactedRealm(save.realm),
+      });
+    }
+
+    if (op === 'you' && this.youPackets.length < 100) {
+      const fields: Record<string, RedactedNumber> = { at };
+      for (const key of YOU_KEYS) fields[key] = redactedNumber(p[key]);
+      this.youPackets.push(fields);
+    }
+
+    const selfId = this.getSelfId();
+    for (const [key, value] of Object.entries(p)) {
+      if (!Array.isArray(value) || value.length === 0) continue;
+      const first = value[0];
+      if (!first || typeof first !== 'object' || Array.isArray(first) || !('id' in first) || !('x' in first)) continue;
+      const slot = `${op}.${key}`;
+      const shape = this.arrays.get(slot) ?? { packets: 0, rows: 0, keys: new Set<string>(), idTypes: new Set<string>() };
+      shape.packets += 1;
+      shape.rows += value.length;
+      for (const row of value.slice(0, 5)) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+        const record = row as Record<string, unknown>;
+        Object.keys(record).forEach((field) => shape.keys.add(field));
+        shape.idTypes.add(typeof record.id);
+      }
+      const selfRow = selfId ? value.find((row) => !!row && typeof row === 'object' && !Array.isArray(row)
+        && (row as Record<string, unknown>).id === selfId) as Record<string, unknown> | undefined : undefined;
+      if (selfRow && this.selfEntries.length < 20) {
+        const numericVitals: Record<string, number | null> = {};
+        for (const field of ['hp', 'maxHp', 'mp', 'maxMp']) {
+          const n = selfRow[field];
+          if (typeof n === 'number' && Number.isFinite(n)) numericVitals[field] = n;
+        }
+      this.selfEntries.push({ at, slot, keys: Object.keys(selfRow).sort(), numericVitals });
+      }
+      this.arrays.set(slot, shape);
+    }
+    const save = p.save && typeof p.save === 'object' && !Array.isArray(p.save) ? p.save as Record<string, unknown> : {};
+    if (['hp', 'maxHp', 'mp', 'maxMp'].some((k) => k in p || k in save) && this.vitalPackets.length < 50) {
+      const pick = (source: Record<string, unknown>) => Object.fromEntries(
+        ['hp', 'maxHp', 'mp', 'maxMp'].filter((k) => typeof source[k] === 'number' && Number.isFinite(source[k])).map((k) => [k, source[k]]),
+      );
+      this.vitalPackets.push({ at, op, top: pick(p), save: pick(save) });
+    }
+    if (Date.now() - this.startedAt >= this.durationMs) this.flush();
+  }
+
+  /** Store only the movement fields needed to correlate an outbound move with `you`. */
+  recordOutboundMove(move: { seq: unknown; x: unknown; y: unknown; ep?: unknown }): void {
+    if (this.flushed || this.outboundMoves.length >= 500) return;
+    const rounded = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
+    this.outboundMoves.push({
+      at: Date.now() - this.startedAt,
+      seq: rounded(move.seq),
+      x: rounded(move.x),
+      y: rounded(move.y),
+      ep: redactedNumber(move.ep),
+    });
+    if (Date.now() - this.startedAt >= this.durationMs) this.flush();
+  }
+
+  flush(): void {
+    if (this.flushed) return;
+    this.flushed = true;
+    fs.mkdirSync(this.outDir, { recursive: true });
+    const file = path.join(this.outDir, `packet-tap-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    const entityArrays = Object.fromEntries([...this.arrays].map(([key, shape]) => [key, {
+      packets: shape.packets, rows: shape.rows, keys: [...shape.keys].sort(), idTypes: [...shape.idTypes],
+    }]));
+    const opKeys = Object.fromEntries([...this.opKeys].map(([op, keys]) => [op, [...keys].sort()]));
+    fs.writeFileSync(file, JSON.stringify({
+      durationMs: Date.now() - this.startedAt,
+      ops: Object.fromEntries(this.ops),
+      opKeys,
+      firstPackets: this.firstPackets,
+      statePackets: this.statePackets,
+      youPackets: this.youPackets,
+      outboundMoves: this.outboundMoves,
+      numericFields: this.numericFields,
+      entityArrays,
+      vitalPackets: this.vitalPackets,
+      selfEntries: this.selfEntries,
+    }, null, 2));
+  }
+}

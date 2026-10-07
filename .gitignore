@@ -1,0 +1,25 @@
+# Secrets và dữ liệu runtime (chứa credential đã mã hóa, khóa mã hóa)
+.env
+.env.*
+!.env.example
+data/
+**/data/
+*.secret
+.secret
+
+# Build và dependency
+node_modules/
+dist/
+apps/web/dist/
+packages/*/dist/
+*.tsbuildinfo
+
+# Evidence từ phiên game thật (đã redact nhưng vẫn không nên đưa lên remote)
+**/docs/evidence/
+
+# Log, tạm
+*.log
+.DS_Store
+Thumbs.db
+.claude/
+.codex/

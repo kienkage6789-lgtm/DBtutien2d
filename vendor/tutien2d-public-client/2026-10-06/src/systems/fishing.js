@@ -1,0 +1,1 @@
+!function(){"use strict";var I=window.PNTT.Fishing={MIN_WAIT:3,MAX_WAIT:6,CATCH_RATE:.8,SPIRIT_FISH_RATE:.05,COMMON_FISH:"ca_song",SPIRIT_FISH:"linh_ngu"};I.waitTime=function(T){return T=T||Math.random,I.MIN_WAIT+T()*(I.MAX_WAIT-I.MIN_WAIT)},I.rollCatch=function(T){return(T=T||Math.random)()>=I.CATCH_RATE?null:T()<I.SPIRIT_FISH_RATE?I.SPIRIT_FISH:I.COMMON_FISH}}();

@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Tu Tiên 2D Online",
+  "short_name": "Tu Tiên 2D",
+  "description": "MMORPG pixel tu tiên cày cuốc.",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#171310",
+  "theme_color": "#171310",
+  "icons": [
+    {
+      "src": "/assets/website/logo-256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

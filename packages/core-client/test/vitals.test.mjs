@@ -1,0 +1,115 @@
+import assert from 'node:assert/strict';
+import { GameStateStore, normalizeStones, normalizeVitals } from '../dist/state/game-state.js';
+
+const standard = normalizeVitals({ hp: 80, maxHp: 100, mp: 30, maxMp: 50 }, 'state', 123);
+assert.deepEqual(standard, { hp: 80, maxHp: 100, mp: 30, maxMp: 50, status: 'fresh', source: 'state', observedAt: 123 });
+
+const legacy = normalizeVitals({ ht: 70, hm: 100, sh: 20, slm: 50 }, 'state', 456);
+assert.equal(legacy.hp, 70);
+assert.equal(legacy.mp, 20);
+assert.equal(legacy.status, 'fresh');
+assert.equal(legacy.source, 'state');
+
+const effectsOnly = normalizeVitals({ ht: 999, hm: 1, sh: 0, slm: 1 }, 'status', 457);
+assert.equal(effectsOnly.status, 'unknown', 'status effect aliases are not character vitals');
+
+assert.equal(normalizeVitals({ hp: 1, ht: 2 }, 'state').status, 'conflict');
+assert.equal(normalizeVitals({ maxHp: 100, hm: 99 }, 'state').status, 'conflict');
+assert.equal(normalizeVitals({ hp: '80' }, 'state').status, 'invalid');
+assert.equal(normalizeVitals({ hp: Number.POSITIVE_INFINITY }, 'state').status, 'invalid');
+assert.equal(normalizeVitals({ hp: -1 }, 'state').status, 'invalid');
+assert.equal(normalizeVitals({ hp: 101, maxHp: 100 }, 'state').status, 'invalid');
+assert.equal(normalizeVitals({ mp: 5, maxMp: 0 }, 'status').status, 'invalid');
+assert.equal(normalizeVitals({}, 'state').status, 'unknown');
+assert.deepEqual(normalizeStones({ stones: 123 }, 458), { value: 123, status: 'fresh', source: 'state', observedAt: 458 });
+assert.deepEqual(normalizeStones({ op: 'formation', act: 'balance', stones: 456 }, 459, undefined, 'formation'), { value: 456, status: 'fresh', source: 'formation', observedAt: 459 });
+assert.equal(normalizeStones({ op: 'formation', act: 'other', stones: 999 }, 460, undefined, 'formation').status, 'unknown');
+assert.equal(normalizeStones({ stones: -1 }, 459).status, 'invalid');
+assert.equal(normalizeStones({ stones: Number.NaN }, 461).status, 'invalid');
+
+const store = new GameStateStore('tester');
+store.updateMap({ op: 'map', hp: 0, maxHp: 1 });
+assert.equal(store.vitals.status, 'unknown', 'map packets never change vitals');
+store.updateState({ op: 'state', hp: 88, maxHp: 100 });
+assert.equal(store.vitals.status, 'fresh');
+assert.equal(store.vitals.source, 'state');
+store.updateStatus({ op: 'status', ht: 77, hm: 100 });
+assert.equal(store.vitals.hp, 88, 'status effect fields never overwrite character HP');
+assert.equal(store.vitals.source, 'state');
+store.setConnectionStatus('IN_GAME');
+store.setConnectionStatus('DISCONNECTED');
+assert.equal(store.vitals.status, 'stale');
+store.setConnectionStatus('IN_GAME');
+assert.equal(store.vitals.status, 'stale', 'reconnect must not make cached vitals fresh');
+assert.equal(store.toOverview().vitals.status, 'stale');
+store.updateState({ op: 'state' });
+assert.equal(store.vitals.status, 'stale', 'a packet without vitals does not refresh them');
+store.updateState({ op: 'state', stones: 456 });
+assert.equal(store.stones, 456, 'authoritative stones update the compatibility field');
+store.updateState({ op: 'state', save: { realm: 'luyen_khi_2', exp: 12, stones: 654 } });
+assert.equal(store.realm, 'luyen_khi_2', 'state.save realm is promoted to the overview');
+assert.equal(store.exp, 12, 'state.save exp is promoted to the overview');
+assert.equal(store.stones, 654, 'state.save stones refreshes the canonical resource');
+assert.equal(store.stonesSnapshot.source, 'state');
+
+const derivedStore = new GameStateStore('derived');
+derivedStore.updateState({ op: 'state', save: { realm: 'luyen_khi_8', equipment: { phap_boi: 'truc_diep_boi' } } });
+assert.deepEqual(derivedStore.equipment, { phap_boi: 'truc_diep_boi' }, 'equipment falls back to state.save.equipment');
+assert.deepEqual(derivedStore.derivedMax, { maxHp: 225, maxMp: 188, complete: true, source: 'derived', observedAt: derivedStore.derivedMax.observedAt });
+const topLevelWins = new GameStateStore('derived-top');
+topLevelWins.updateState({ op: 'state', equipment: { mu: 'mu_bach_van' }, save: { realm: 'luyen_khi_8', equipment: { phap_boi: 'truc_diep_boi' } } });
+assert.deepEqual(topLevelWins.equipment, { mu: 'mu_bach_van' }, 'state.equipment wins over save.equipment');
+const malformedEquipment = new GameStateStore('derived-invalid');
+malformedEquipment.updateState({ op: 'state', save: { realm: 'luyen_khi_8', equipment: { mu: 42 } } });
+assert.deepEqual(malformedEquipment.equipment, {}, 'malformed equipment payload is ignored');
+let derivedConflictLogs = 0;
+derivedStore.on('log', () => { derivedConflictLogs += 1; });
+derivedStore.updateYou({ hp: 226, mp: 188 });
+derivedStore.updateYou({ hp: 227, mp: 188 });
+assert.equal(derivedStore.derivedMax.complete, false, 'observed HP above derived max marks it incomplete');
+assert.equal(derivedConflictLogs, 1, 'derived max conflict logs once');
+store.updateFormation({ op: 'formation', act: 'balance', stones: 789 });
+assert.equal(store.stones, 789, 'formation balance refreshes authoritative stones');
+assert.equal(store.stonesSnapshot.source, 'formation');
+store.updateStatus({ op: 'status', hp: 90 });
+assert.equal(store.vitals.status, 'fresh');
+assert.equal(store.hp, 90, 'legacy numeric fields remain populated for compatibility');
+assert.equal(store.vitals.maxHp, null, 'partial post-reconnect vitals do not reuse an old session max HP');
+
+const guardedStore = new GameStateStore('guarded');
+assert.equal(guardedStore.updateVitalsOnly({ op: 'state', save: { hp: 75, maxHp: 100, mp: 20, maxMp: 40 } }, 'state'), true);
+assert.equal(guardedStore.vitals.hp, 75, 'guarded first state retains authoritative save vitals');
+assert.equal(guardedStore.vitals.maxHp, 100);
+
+const presenceStore = new GameStateStore('presence');
+presenceStore.updateWelcome({ op: 'welcome', selfId: 'self-1', name: 'presence' });
+presenceStore.applySelfEntry([{ id: 'self-1', hp: 0 }], 500);
+assert.deepEqual(presenceStore.selfPresence, { hpPercent: 0, observedAt: 500 });
+assert.equal(presenceStore.vitals.status, 'unknown', 'percent presence never populates authoritative vitals');
+presenceStore.applySelfEntry([{ id: 'self-1', hp: 80 }, { id: 'self-1', hp: 75 }], 600);
+assert.equal(presenceStore.selfPresence, null, 'ambiguous self rows clear the weak signal');
+
+const downedStore = new GameStateStore('downed');
+downedStore.updateWelcome({ op: 'welcome', selfId: 'self', name: 'downed' });
+assert.equal(downedStore.downed, null, 'welcome starts with unknown downed state');
+downedStore.updateYou({ dn: true });
+assert.equal(downedStore.downed, true, 'you.dn=true marks the character down');
+downedStore.updateYou({ hp: 0 });
+assert.equal(downedStore.downed, true, 'you without dn leaves downed state unchanged');
+downedStore.updateYou({ dn: false });
+assert.equal(downedStore.downed, false, 'you.dn=false marks the character revived');
+downedStore.updateDown();
+assert.equal(downedStore.downed, true, 'down packet marks the character down');
+downedStore.updateSelfVitals({ hp: 1 }, 'revived');
+assert.equal(downedStore.downed, false, 'revived packet clears downed state');
+downedStore.updateYou({ dn: true });
+downedStore.updateWelcome({ op: 'welcome', selfId: 'self', name: 'downed' });
+assert.equal(downedStore.downed, null, 'welcome resets downed state');
+downedStore.updateYou({ dn: true });
+downedStore.updateMap({ op: 'map', mapId: 'other-map', khu: 1 });
+assert.equal(downedStore.downed, null, 'map change resets downed state');
+downedStore.updateYou({ dn: true });
+downedStore.updateMap({ op: 'map', mapId: 'other-map', khu: 2 });
+assert.equal(downedStore.downed, null, 'khu change resets downed state');
+
+console.log('core-client vitals tests passed');
