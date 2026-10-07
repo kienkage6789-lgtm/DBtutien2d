@@ -1302,3 +1302,13 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 - `you` chỉ xuất hiện sau mọi move: **bác bỏ cho move đứng yên**, nhưng **xác nhận trong probe này** sau move có dịch chuyển 42.45px; chưa xác minh ngưỡng tối thiểu kích ACK.
 - `you` sau move là cách chủ động đáng tin để lấy HP trong probe này; không được khái quát thành đảm bảo cho mọi quãng đường/map trước khi có thêm evidence.
 - Training có thể đi vào vùng farm khi HP unknown nhưng không được attack/skill; live game chưa bật autoTraining và chưa xác minh hành vi combat thực tế.
+
+## H. Stationary probe — checklist và giả định
+
+1. [x] Harness `TUTIEN_PROBE_STATIONARY=1` tắt mặc định, claim một lần cho cả process, chờ 20 giây sau `IN_GAME`, và tự hủy khi downed/quái gần/move-to/navigation/context/vị trí không an toàn.
+2. [x] Đợt A là 10 move `idle` nhịp 100ms qua `sendMove`; B `walk` chỉ được phép nếu A không có `you`, tối đa 20 move.
+3. [x] Test guard: `downed`, quái trong 300, move-to, navigation, thiếu vị trí; test env tắt; test one-shot và bound 20 move.
+4. [x] Evidence live redacted: `docs/evidence/packet-tap-2026-10-07T15-34-28-827Z.json`; A `seq 1..10`, `idle`, `you seq=10`, delay 106ms, HP/MP 225/188, `dn=0`, `fix=0`, vị trí không đổi.
+5. [~] H2 `walk` chưa chạy vì A đã thành công; full `pnpm build`/Vitest/server TS chưa tự chạy được do toolchain sandbox (`pnpm`/`tsx`/`ws`/`vitest`/symlink express).
+
+Giả định/giới hạn còn lại: `idle` đã được đối chiếu với vendor (`gateway.js` dùng `o.state`, `player.js` khởi tạo `state:"idle"`); H1 và H3 mới có một live run. `vitalsAgeMs` và `refreshVitals` chỉ là đề xuất tài liệu, chưa code; TTL đề xuất 5 giây và rate-limit refresh đề xuất 30 giây.

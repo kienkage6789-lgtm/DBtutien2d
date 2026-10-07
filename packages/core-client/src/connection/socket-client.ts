@@ -78,7 +78,7 @@ export class SocketClient extends EventEmitter {
   public endStationaryProbeBatch(input: {
     label: string;
     youCount: number;
-    positionAfter: { x: number; y: number };
+    positionAfter: { x: number | null; y: number | null } | null;
   }): void {
     this.packetTap?.endStationaryProbeBatch(input);
   }

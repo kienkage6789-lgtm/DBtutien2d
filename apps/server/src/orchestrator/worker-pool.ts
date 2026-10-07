@@ -20,6 +20,7 @@ import type { PortalEdge } from '../config/portal-catalog.js';
 import { randomUUID } from 'node:crypto';
 import { findWalkPath, isWalkSegmentClear } from './walk-path.js';
 import { getWalkGrid, isWalkableTile, WALK_TILE_SIZE } from '../config/walk-grid.js';
+import { StationaryProbe, type StationaryProbeSnapshot } from '../debug/stationary-probe.js';
 
 export interface TrainingRuntimeInfo {
   enabled: boolean;
@@ -546,6 +547,7 @@ const emptyNavigation = (): NavigationRuntimeInfo => ({
 
 export class WorkerPool {
   private activeBots: Map<string, ActiveBot> = new Map();
+  private readonly stationaryProbe = new StationaryProbe();
   private lastMoveToByAccount: Map<string, MoveToRuntimeInfo> = new Map();
   private observedMaps: Map<string, ObservedMap> = new Map();
   private lastWorldSnapshotRejectLogAt: Map<string, number> = new Map();
@@ -717,6 +719,43 @@ export class WorkerPool {
         resetWorldFreshness();
         entry.mapEpoch = Number.isSafeInteger(packet.ep) ? packet.ep as number : null;
         if (db.getAccountById(accountId)?.authError) db.updateAccount(accountId, { authError: null });
+        void this.stationaryProbe.schedule(() => {
+          return {
+            getSnapshot: () => {
+              const currentNow = Date.now();
+              const currentMapContext = this.hasCurrentMapContext(entry, currentNow);
+              const currentMonstersFresh = entry.dataStatus.monsters
+                && entry.monstersContext.fresh
+                && entry.monstersContext.observedAt !== null
+                && currentNow - entry.monstersContext.observedAt <= 5_000
+                && currentMapContext;
+              const currentPosition = entry.dataStatus.location
+                && typeof entry.location.x === 'number' && Number.isFinite(entry.location.x)
+                && typeof entry.location.y === 'number' && Number.isFinite(entry.location.y)
+                ? { x: entry.location.x, y: entry.location.y }
+                : null;
+              return {
+                downed: client.state.downed,
+                monsters: currentMonstersFresh ? entry.monsters.map((monster) => ({ x: monster.x, y: monster.y })) : [],
+                moveToStatus: entry.moveTo?.status ?? null,
+                navigationPhase: entry.navigation.phase,
+                mapContextIsCurrent: currentMapContext,
+                position: currentPosition,
+                dir: Number.isFinite(client.state.dir) ? client.state.dir : null,
+              } satisfies StationaryProbeSnapshot;
+            },
+            isConnected: () => client.isConnected(),
+            sendMove: (x, y, dir, st, shouldSend) => entry.client.sendMove(x, y, dir, st, shouldSend),
+            onYou: (listener) => {
+              client.on('you', listener);
+              return () => client.off('you', listener);
+            },
+            recordBatchStart: (input) => client.socket.beginStationaryProbeBatch(input),
+            recordBatchEnd: (input) => client.socket.endStationaryProbeBatch(input),
+            recordYou: (label, youPacket) => client.socket.recordStationaryProbeYou(label, youPacket),
+            recordCancellation: (reason) => client.socket.recordStationaryProbeCancellation(reason),
+          };
+        });
       });
 
       client.on('statusChange', (status: string) => {

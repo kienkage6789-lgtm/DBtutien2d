@@ -7,6 +7,7 @@ type RedactedNumber = number | boolean | null;
 
 const NUMERIC_KEYS = ['hp', 'maxHp', 'mp', 'maxMp', 'sp', 'bp', 'dn', 'seq', 'fix', 'ep', 'left', 'lostExp'] as const;
 const YOU_KEYS = ['seq', 'hp', 'mp', 'sp', 'bp', 'dn', 'fix'] as const;
+const REDACTED_STRUCTURAL_KEYS = new Set(['selfId']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -94,7 +95,7 @@ export class PacketTap {
     const at = Date.now() - this.startedAt;
     this.ops.set(op, (this.ops.get(op) ?? 0) + 1);
     const keys = this.opKeys.get(op) ?? new Set<string>();
-    Object.keys(p).forEach((key) => keys.add(key));
+    Object.keys(p).filter((key) => !REDACTED_STRUCTURAL_KEYS.has(key)).forEach((key) => keys.add(key));
     this.opKeys.set(op, keys);
     if (this.firstPackets.length < 30) this.firstPackets.push({ at, op });
 
@@ -113,8 +114,8 @@ export class PacketTap {
       const equipment = isRecord(equipmentValue) ? equipmentValue : {};
       this.statePackets.push({
         at,
-        keys: Object.keys(p).sort(),
-        saveKeys: Object.keys(save).sort(),
+        keys: Object.keys(p).filter((key) => !REDACTED_STRUCTURAL_KEYS.has(key)).sort(),
+        saveKeys: Object.keys(save).filter((key) => !REDACTED_STRUCTURAL_KEYS.has(key)).sort(),
         equipment: Object.entries(equipment)
           .map(([slot, item]) => ({ slot, id: redactedItemId(item) }))
           .sort((a, b) => a.slot.localeCompare(b.slot)),
@@ -142,7 +143,7 @@ export class PacketTap {
       for (const row of value.slice(0, 5)) {
         if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
         const record = row as Record<string, unknown>;
-        Object.keys(record).forEach((field) => shape.keys.add(field));
+        Object.keys(record).filter((field) => !REDACTED_STRUCTURAL_KEYS.has(field)).forEach((field) => shape.keys.add(field));
         shape.idTypes.add(typeof record.id);
       }
       const selfRow = selfId ? value.find((row) => !!row && typeof row === 'object' && !Array.isArray(row)
@@ -153,7 +154,12 @@ export class PacketTap {
           const n = selfRow[field];
           if (typeof n === 'number' && Number.isFinite(n)) numericVitals[field] = n;
         }
-      this.selfEntries.push({ at, slot, keys: Object.keys(selfRow).sort(), numericVitals });
+      this.selfEntries.push({
+        at,
+        slot,
+        keys: Object.keys(selfRow).filter((key) => !REDACTED_STRUCTURAL_KEYS.has(key)).sort(),
+        numericVitals,
+      });
       }
       this.arrays.set(slot, shape);
     }
@@ -211,7 +217,7 @@ export class PacketTap {
   endStationaryProbeBatch(input: {
     label: string;
     youCount: number;
-    positionAfter: { x: unknown; y: unknown };
+    positionAfter: { x: unknown; y: unknown } | null;
   }): void {
     if (this.flushed || !this.activeStationaryProbeBatch) return;
     const active = this.activeStationaryProbeBatch;
@@ -231,7 +237,9 @@ export class PacketTap {
       movesSent: moves.length,
       youCount: Math.max(0, Math.floor(input.youCount)),
       positionBefore: active.positionBefore,
-      positionAfter: { x: rounded(input.positionAfter.x), y: rounded(input.positionAfter.y) },
+      positionAfter: input.positionAfter
+        ? { x: rounded(input.positionAfter.x), y: rounded(input.positionAfter.y) }
+        : { x: null, y: null },
     });
   }
 

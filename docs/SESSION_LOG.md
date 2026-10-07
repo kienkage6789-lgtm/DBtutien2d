@@ -1,5 +1,46 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-07 — Stationary move probe: `you` sau 10 move đứng yên
+
+### Thay đổi
+
+- Thêm harness debug một lần tại `apps/server/src/debug/stationary-probe.ts`, tắt mặc định và chỉ schedule khi `TUTIEN_PROBE_STATIONARY=1` và account vào `IN_GAME`. Harness chờ 20 giây, kiểm tra `downed`, quái gần, move-to, navigation, context và vị trí; nếu không an toàn thì ghi lý do và không gửi move.
+- Đợt A gửi tối đa 10 move qua `TuTienClient.sendMove`, cùng kênh và callback `shouldSend` của move thường, nhịp 100ms, tọa độ làm tròn, `dir` hiện tại, `st: idle`. Đợt B `st: walk` chỉ chạy sau 15 giây nếu A không có `you`; live run không cần B.
+- Packet tap lọc key cấu trúc `selfId`; không ghi token, tên, giá trị ID hay raw packet. Test tap kiểm tra batch, `st`, seq span, `you` và redaction.
+
+### Đối chiếu protocol
+
+- `vendor/tutien2d-public-client/2026-10-06/src/net/gateway.js` gửi `st:o.state`.
+- `vendor/tutien2d-public-client/2026-10-06/src/entities/player.js` khởi tạo `state:"idle"` và trả về `idle` khi không có vector di chuyển. Đây là căn cứ để dùng `idle`, không phải giả định chưa xác minh.
+
+### Lệnh và kết quả thật
+
+- Live server dùng `TUTIEN_PACKET_TAP=90`, `TUTIEN_PROBE_STATIONARY=1`, một account duy nhất, không MiniMap, attack hay skill. Đã dùng route start/stop có sẵn; sau khi tap flush đã stop server, port `4000` không còn listen.
+- Evidence redacted: [`docs/evidence/packet-tap-2026-10-07T15-34-28-827Z.json`](evidence/packet-tap-2026-10-07T15-34-28-827Z.json). Tap `durationMs=90021`, `outboundMoves=10`, `youPackets=1`, không có cancellation.
+- Đợt A: `seqStart=1`, `seqEnd=10`, `st=idle`, tọa độ gửi `(246,695)`, `atStart=21344`, `atEnd=25312`; `you` duy nhất `seq=10` lúc `at=22414`, HP/MP/SP/BP `225/188/78/115`, `dn=0`, `fix=0`, delay `106ms` so với move gần nhất. Vì A đã có `you`, B không chạy.
+- Vị trí runtime trước/sau A đều `(246,695)`, delta `0`; HP/MP `225/188` trùng `derivedMax` đã biết cho `luyen_khi_8`; không suy luận nguyên nhân.
+- Test pass: stationary harness (guard, env off, one-shot/20 move bound/A short-circuit), packet tap, các JS test core không chạm `ws`, automation state-machine và server `.mjs` tests.
+- Full workspace build/test chưa pass trong môi trường này: `pnpm` không có trên PATH; Corepack build bị script con `pnpm` không tìm thấy; TypeScript full server thiếu symlink `express`/kiểu; các test cần `ws`/`vitest` bị sandbox từ chối `EPERM`. Không ghi các ca này là pass.
+
+### Kết luận probe
+
+| Giả thuyết | Kết luận | Bằng chứng redacted |
+|---|---|---|
+| H1. `you` mỗi bội số seq 10, không cần dịch chuyển | **XÁC NHẬN** cho run này | A `seq 1..10`, `st=idle`, đúng 1 `you seq=10`; khoảng 1.07s từ đầu đợt, delay 106ms sau move cuối |
+| H2. `st` idle/walk có ảnh hưởng | **CHƯA XÁC MINH** | A đã có `you` nên B `st=walk` không được chạy theo thiết kế |
+| H3. `you` không đổi vị trí | **XÁC NHẬN** cho run này | `fix=0`, `dn=0`, `(246,695)` → `(246,695)`, delta 0 |
+
+### Đề xuất thiết kế, chưa code
+
+- Thêm `vitalsAgeMs` ở runtime, tính từ `vitals.observedAt`; khi chưa có authoritative snapshot thì để `null`, không thay bằng 0.
+- Khi đánh quái đứng yên, đề xuất TTL HP nghiêm 5 giây; `hurt` là nguồn cập nhật duy nhất trong khoảng đó. Quá TTL thì gate attack/skill phải chặn và hiển thị stale, không suy ra HP.
+- Nếu có thêm evidence xác nhận H1, thiết kế `refreshVitals()` dùng batch 10 move `idle`, chỉ khi không có quái trong 300, không attack/skill, không move-to/navigation, context/vị trí fresh, và rate-limit ví dụ 30 giây.
+
+### Việc người dùng phải làm tay và rủi ro còn lại
+
+- Nếu lặp lại: restart server với hai env trên, start đúng một account, không bấm MiniMap/attack/skill, chờ file tap flush rồi stop server.
+- H2 `walk` chưa xác minh; một run A thành công không chứng minh mọi map, epoch, phiên bản server hay account khác. Move đứng yên vẫn là side effect có giới hạn và có thể bị server thay đổi quy tắc.
+
 ## 2026-10-07 — Training gate probe: gate mềm và `you` sau move thật
 
 ### Thay đổi
