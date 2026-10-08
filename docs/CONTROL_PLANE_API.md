@@ -1,7 +1,7 @@
 # TuTien2D Control-plane API
 
 > Tài liệu này mô tả backend dashboard trong `apps/server`, không phải game server.
-> Cập nhật: 2026-10-06.
+> Cập nhật: 2026-10-08.
 
 ## 1. Base URL, transport và security hiện tại
 
@@ -9,13 +9,15 @@
 - REST prefix: `/api`.
 - Dashboard WebSocket: `ws://<host>:4000/ws` hoặc `wss://<host>/ws` khi reverse proxy TLS.
 - Health: `GET /health`.
-- Server mặc định bind `0.0.0.0`.
-- CORS hiện đang mở bằng `cors()` mặc định.
-- Chưa có middleware xác thực hoặc RBAC trong route/API/WS hiện tại.
+- Server mặc định bind `127.0.0.1`; bind ngoài loopback bắt buộc `API_TOKEN` có ít
+  nhất 32 ký tự.
+- CORS dùng allowlist `ALLOWED_ORIGINS`; không dùng `*`.
+- `/api` đi qua `requireAuth`; khi `API_TOKEN` được đặt, HTTP dùng
+  `Authorization: Bearer <API_TOKEN>`. Dashboard WebSocket dùng subprotocol
+  `bearer` và kiểm tra origin allowlist.
 
-Vì vậy API này chỉ được coi là internal/private. Không expose trực tiếp ra Internet
-trước khi thêm authentication, authorization, CORS allowlist, origin check cho WS
-và rate limit.
+API vẫn là control-plane nội bộ; không expose trực tiếp ra Internet nếu chưa có
+reverse proxy và biện pháp authorization phù hợp.
 
 ## 2. Response envelope
 
@@ -148,6 +150,8 @@ phát qua `account_updated` trên `/ws` và được UI merge theo realtime. HTT
 snapshot không được phép ghi đè một frame WebSocket mới hơn.
 
 `vitals.status` là một trong `unknown`, `fresh`, `stale`, `invalid`, `conflict`.
+`vitalsAgeMs` là tuổi backend tính tại thời điểm broadcast, chỉ là số hữu hạn không âm
+khi `vitals.status === "fresh"` và `vitals.observedAt` có giá trị; ngược lại là `null`.
 `vitals.source` trong type tương thích có thể là `state`, `you`, `hurt`, `revived`,
 `status` hoặc `null`; tuy nhiên `status` effect-only không tạo snapshot fresh và
 không phải nguồn vitals authoritative. Không dùng các alias hiệu ứng
@@ -157,6 +161,27 @@ Các field top-level HP/MP là `null` khi snapshot chưa fresh/valid; consumer k
 [VITALS_SYNC_FIX.md](VITALS_SYNC_FIX.md).
 
 `stonesSnapshot.source` có thể là `state`, `formation` hoặc `null`.
+
+#### `POST /api/accounts/:id/vitals/refresh`
+
+Endpoint này chạy qua `requireAuth` cùng toàn bộ `/api`. Body tùy chọn là
+`{ "allowNearMonsters": false }`; mặc định là `false`. Worker chỉ gửi tối đa
+10 move `idle` tại tọa độ/dir hiện tại, cách nhau khoảng 100ms, dừng ngay khi
+nhận `you` mới và không retry khi hết thời gian chờ.
+
+Response thành công (`200`): `{ success: true, data: { status, movesSent, ackLatencyMs? } }`,
+trong đó `status` là `refreshed` hoặc `no_ack`. Điều kiện không an toàn trả `409`
+với envelope `{ success:false, error, errorCode, requestId, retryable }`.
+
+| Reason | errorCode | retryable |
+| --- | --- | --- |
+| `refresh_rate_limited` | `VITALS_REFRESH_RATE_LIMITED` | `true` |
+| `refresh_in_progress` | `VITALS_REFRESH_IN_PROGRESS` | `true` |
+| disconnected | `VITALS_REFRESH_NOT_CONNECTED` | `true` |
+| downed, move/navigation/combat/quái gần/thiếu context hoặc vị trí | `VITALS_REFRESH_NOT_ALLOWED` | `false` |
+
+Các ngưỡng `5s`, `30s`, `30s` trong policy chung là đề xuất, **chưa xác minh
+live**. HP/MP vẫn chỉ được cập nhật qua snapshot canonical, không phải move.
 
 ### 3.3. Map và manual action
 
@@ -338,4 +363,3 @@ cho mọi client kết nối. Không gửi credential qua kênh này.
 6. Thêm idempotency key cho start/stop/restart/action và mọi mutation.
 7. Thêm rate limit, timeout, cancellation và metrics cho các route/action.
 8. Redact credential trong log; revoke mọi token từng commit vào repo.
-

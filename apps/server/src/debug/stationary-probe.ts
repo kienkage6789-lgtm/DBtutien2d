@@ -31,7 +31,10 @@ export type StationaryProbeGuardReason =
   | 'direction_invalid'
   | 'monster_data_invalid';
 
-export function stationaryProbeGuardReason(snapshot: StationaryProbeSnapshot): StationaryProbeGuardReason | null {
+export function stationaryProbeGuardReason(
+  snapshot: StationaryProbeSnapshot,
+  options: { allowNearMonsters?: boolean } = {},
+): StationaryProbeGuardReason | null {
   if (snapshot.downed === true) return 'downed_true';
   if (!snapshot.mapContextIsCurrent) return 'map_context_not_current';
   if (!snapshot.position
@@ -45,7 +48,7 @@ export function stationaryProbeGuardReason(snapshot: StationaryProbeSnapshot): S
   }
   for (const monster of snapshot.monsters) {
     if (!Number.isFinite(monster.x) || !Number.isFinite(monster.y)) return 'monster_data_invalid';
-    if (Math.hypot(monster.x - snapshot.position.x, monster.y - snapshot.position.y) <= 300) {
+    if (!options.allowNearMonsters && Math.hypot(monster.x - snapshot.position.x, monster.y - snapshot.position.y) <= 300) {
       return 'monster_within_300';
     }
   }

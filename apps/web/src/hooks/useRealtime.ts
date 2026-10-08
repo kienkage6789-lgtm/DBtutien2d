@@ -135,10 +135,20 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
   if (hasOwn(payload, 'downed') && (typeof payload.downed === 'boolean' || payload.downed === null)) next.downed = payload.downed;
+  let vitalsAccepted = false;
   if (hasOwn(payload, 'vitals')) {
     const vitals = sanitizeVitals(payload.vitals, previous?.vitals);
     const prevAt = previous?.vitals?.observedAt;
-    if (vitals && !(isFiniteNumber(prevAt) && isFiniteNumber(vitals.observedAt) && vitals.observedAt < prevAt)) next.vitals = vitals;
+    if (vitals && !(isFiniteNumber(prevAt) && isFiniteNumber(vitals.observedAt) && vitals.observedAt < prevAt)) {
+      next.vitals = vitals;
+      vitalsAccepted = true;
+    }
+  }
+  if (hasOwn(payload, 'vitalsAgeMs')
+    && (payload.vitalsAgeMs === null || isFiniteNumber(payload.vitalsAgeMs) && payload.vitalsAgeMs >= 0)
+    && (vitalsAccepted || !hasOwn(payload, 'vitals'))) {
+    next.vitalsAgeMs = payload.vitalsAgeMs as number | null;
+    next.vitalsReceivedAt = Date.now();
   }
   if (hasOwn(payload, 'derivedMax')) {
     const derivedMax = sanitizeDerivedMax(payload.derivedMax);

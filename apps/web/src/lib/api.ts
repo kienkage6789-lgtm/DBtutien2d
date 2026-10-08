@@ -91,6 +91,43 @@ export interface MoveToReceipt {
   reason: string | null;
 }
 
+export interface VitalsRefreshResult {
+  status: 'refreshed' | 'skipped' | 'no_ack';
+  reason?: string;
+  movesSent: number;
+  ackLatencyMs?: number;
+}
+
+export class VitalsRefreshApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly httpStatus: number,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'VitalsRefreshApiError';
+  }
+}
+
+export async function requestVitalsRefresh(accountId: string): Promise<VitalsRefreshResult> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/vitals/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok || !json?.success || !json?.data || !['refreshed', 'skipped', 'no_ack'].includes(json.data.status)) {
+    throw new VitalsRefreshApiError(
+      typeof json?.error === 'string' ? json.error : `Không thể làm mới HP (HTTP ${response.status}).`,
+      typeof json?.errorCode === 'string' ? json.errorCode : 'VITALS_REFRESH_FAILED',
+      response.status,
+      json?.retryable === true,
+    );
+  }
+  return json.data as VitalsRefreshResult;
+}
+
 export class MoveToApiError extends Error {
   constructor(
     message: string,

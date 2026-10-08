@@ -1,4 +1,4 @@
-import { AuthError, SupabaseAuth, TuTienClient } from '@tutien2d/core-client';
+import { AuthError, SupabaseAuth, TuTienClient, VITALS_ATTACK_MAX_AGE_MS } from '@tutien2d/core-client';
 import type { MapPacket } from '@tutien2d/core-client';
 import type { Snap2RuntimeStats } from '@tutien2d/core-client';
 import type { DerivedMaxSnapshot, StonesSnapshot, VitalSnapshot } from '@tutien2d/core-client';
@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { findWalkPath, isWalkSegmentClear } from './walk-path.js';
 import { getWalkGrid, isWalkableTile, WALK_TILE_SIZE } from '../config/walk-grid.js';
 import { StationaryProbe, type StationaryProbeSnapshot } from '../debug/stationary-probe.js';
+import { refreshVitals as runVitalsRefresh, type VitalsRefreshResult } from './vitals-refresh.js';
 
 export interface TrainingRuntimeInfo {
   enabled: boolean;
@@ -87,6 +88,8 @@ export interface AccountRuntimeInfo {
   maxMp: number | null;
   /** Canonical vitals plus freshness/validity metadata. */
   vitals: VitalSnapshot;
+  /** Age computed at the backend frame timestamp; null unless canonical vitals are fresh. */
+  vitalsAgeMs: number | null;
   derivedMax: DerivedMaxSnapshot;
   downed: boolean | null;
   /** Weak presence signal from the self row; never treated as absolute HP. */
@@ -486,13 +489,19 @@ export function resolveMoveVitalError(downed: boolean | null, vitals: VitalSnaps
   return null;
 }
 
+export function vitalsRuntimeAge(vitals: VitalSnapshot, now: number): number | null {
+  if (vitals.status !== 'fresh' || vitals.observedAt === null || !Number.isFinite(vitals.observedAt)) return null;
+  return Math.max(0, now - vitals.observedAt);
+}
+
 function moveVitalErrorForEntry(entry: ActiveBot): 'character_down' | null {
   return resolveMoveVitalError(entry.client.state.downed, entry.vitals);
 }
 
-export function resolveStrictVitalError(downed: boolean | null, vitals: VitalSnapshot): 'vitals_unknown' | 'character_down' | null {
+export function resolveStrictVitalError(downed: boolean | null, vitals: VitalSnapshot, now = Date.now()): 'vitals_unknown' | 'character_down' | null {
   if (resolveMoveVitalError(downed, vitals) === 'character_down') return 'character_down';
-  if (vitals.status !== 'fresh' || vitals.hp === null || vitals.hp <= 0) return 'vitals_unknown';
+  const ageMs = vitalsRuntimeAge(vitals, now);
+  if (vitals.status !== 'fresh' || ageMs === null || ageMs > VITALS_ATTACK_MAX_AGE_MS || vitals.hp === null || vitals.hp <= 0) return 'vitals_unknown';
   return null;
 }
 
@@ -663,6 +672,7 @@ export class WorkerPool {
         this.navigateMapAndWait(accountId, entry, mapId, shouldContinue));
       controller.setTrainingMovementExecutor((request) =>
         this.moveToTrainingArea(accountId, entry, request));
+      controller.setVitalsRefreshRequester(() => this.refreshVitals(accountId));
 
       // Bind events
       controller.on('log', (log: BotLogMessage) => {
@@ -721,29 +731,7 @@ export class WorkerPool {
         if (db.getAccountById(accountId)?.authError) db.updateAccount(accountId, { authError: null });
         void this.stationaryProbe.schedule(() => {
           return {
-            getSnapshot: () => {
-              const currentNow = Date.now();
-              const currentMapContext = this.hasCurrentMapContext(entry, currentNow);
-              const currentMonstersFresh = entry.dataStatus.monsters
-                && entry.monstersContext.fresh
-                && entry.monstersContext.observedAt !== null
-                && currentNow - entry.monstersContext.observedAt <= 5_000
-                && currentMapContext;
-              const currentPosition = entry.dataStatus.location
-                && typeof entry.location.x === 'number' && Number.isFinite(entry.location.x)
-                && typeof entry.location.y === 'number' && Number.isFinite(entry.location.y)
-                ? { x: entry.location.x, y: entry.location.y }
-                : null;
-              return {
-                downed: client.state.downed,
-                monsters: currentMonstersFresh ? entry.monsters.map((monster) => ({ x: monster.x, y: monster.y })) : [],
-                moveToStatus: entry.moveTo?.status ?? null,
-                navigationPhase: entry.navigation.phase,
-                mapContextIsCurrent: currentMapContext,
-                position: currentPosition,
-                dir: Number.isFinite(client.state.dir) ? client.state.dir : null,
-              } satisfies StationaryProbeSnapshot;
-            },
+            getSnapshot: () => this.getStationarySnapshot(entry),
             isConnected: () => client.isConnected(),
             sendMove: (x, y, dir, st, shouldSend) => entry.client.sendMove(x, y, dir, st, shouldSend),
             onYou: (listener) => {
@@ -1098,6 +1086,24 @@ export class WorkerPool {
     }
   }
 
+  public refreshVitals(accountId: string, options: { allowNearMonsters?: boolean } = {}): Promise<VitalsRefreshResult> {
+    const entry = this.activeBots.get(accountId);
+    if (!entry) return Promise.resolve({ status: 'skipped', reason: 'disconnected', movesSent: 0 });
+    return runVitalsRefresh({
+      accountId,
+      getSnapshot: () => this.getStationarySnapshot(entry),
+      isConnected: () => this.activeBots.get(accountId) === entry && entry.client.isConnected(),
+      operationLedger: entry.client.operationLedger,
+      trainingPhase: entry.controller.getTrainingState().phase,
+      sendMove: (x, y, dir, st, shouldSend) => entry.client.sendMove(x, y, dir, st, shouldSend),
+      onYou: (listener) => {
+        entry.client.on('you', listener);
+        return () => entry.client.off('you', listener);
+      },
+      allowNearMonsters: options.allowNearMonsters === true,
+    });
+  }
+
   public getRuntimeInfo(accountId: string): AccountRuntimeInfo {
     const acc = db.getAccountById(accountId);
     const entry = this.activeBots.get(accountId);
@@ -1157,6 +1163,7 @@ export class WorkerPool {
         mp: null,
         maxMp: null,
         vitals: emptyVitals(),
+        vitalsAgeMs: null,
         derivedMax: emptyDerivedMax(),
         downed: null,
         selfPresence: null,
@@ -1223,6 +1230,7 @@ export class WorkerPool {
       mp: entry.dataStatus.mp ? entry.vitals.mp : null,
       maxMp: entry.dataStatus.maxMp ? entry.vitals.maxMp : null,
       vitals: { ...entry.vitals },
+      vitalsAgeMs: vitalsRuntimeAge(entry.vitals, now),
       derivedMax: { ...entry.client.state.derivedMax },
       downed: entry.client.state.downed,
       selfPresence: entry.client.state.selfPresence ? { ...entry.client.state.selfPresence } : null,
@@ -1364,6 +1372,31 @@ export class WorkerPool {
       },
       clientEpoch: entry.client.state.contextEpoch,
     });
+  }
+
+  /** Shared stationary snapshot/guard input for the opt-in harness and refresh. */
+  private getStationarySnapshot(entry: ActiveBot): StationaryProbeSnapshot {
+    const now = Date.now();
+    const mapContextIsCurrent = this.hasCurrentMapContext(entry, now);
+    const monstersFresh = entry.dataStatus.monsters
+      && entry.monstersContext.fresh
+      && entry.monstersContext.observedAt !== null
+      && now - entry.monstersContext.observedAt <= 5_000
+      && mapContextIsCurrent;
+    const position = entry.dataStatus.location
+      && typeof entry.location.x === 'number' && Number.isFinite(entry.location.x)
+      && typeof entry.location.y === 'number' && Number.isFinite(entry.location.y)
+      ? { x: entry.location.x, y: entry.location.y }
+      : null;
+    return {
+      downed: entry.client.state.downed,
+      monsters: monstersFresh ? entry.monsters.map((monster) => ({ x: monster.x, y: monster.y })) : [],
+      moveToStatus: entry.moveTo?.status ?? null,
+      navigationPhase: entry.navigation.phase,
+      mapContextIsCurrent,
+      position,
+      dir: Number.isFinite(entry.client.state.dir) ? entry.client.state.dir : null,
+    } satisfies StationaryProbeSnapshot;
   }
 
   private async runMoveTo(

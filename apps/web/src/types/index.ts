@@ -22,6 +22,10 @@ export interface AccountRuntime {
     source: 'state' | 'status' | 'you' | 'hurt' | 'revived' | null;
     observedAt: number | null;
   };
+  /** Backend-computed age at frame send time; null unless vitals are fresh. */
+  vitalsAgeMs?: number | null;
+  /** Client receipt time for the frame carrying vitalsAgeMs. */
+  vitalsReceivedAt?: number;
   derivedMax?: {
     maxHp: number | null;
     maxMp: number | null;

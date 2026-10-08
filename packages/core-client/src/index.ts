@@ -8,3 +8,4 @@ export * from './state/derived-vitals.js';
 export * from './state/snap2-reducer.js';
 export * from './client.js';
 export * from './operation-ledger.js';
+export * from './vitals-policy.js';

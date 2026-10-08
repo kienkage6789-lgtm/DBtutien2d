@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { VitalSnapshot } from '@tutien2d/core-client';
-import { resolveMoveVitalError, resolveStrictVitalError } from './worker-pool.js';
+import { resolveMoveVitalError, resolveStrictVitalError, vitalsRuntimeAge } from './worker-pool.js';
 
 const vitals = (overrides: Partial<VitalSnapshot> = {}): VitalSnapshot => ({
   hp: null,
@@ -21,7 +21,11 @@ assert.equal(resolveMoveVitalError(null, vitals({ hp: 0, maxHp: 100, status: 'fr
 
 assert.equal(resolveStrictVitalError(null, vitals()), 'vitals_unknown', 'strict attack gate rejects unknown vitals');
 assert.equal(resolveStrictVitalError(null, vitals({ hp: 0, maxHp: 100, status: 'fresh', source: 'state' })), 'vitals_unknown', 'strict attack gate does not infer death from state hp=0');
-assert.equal(resolveStrictVitalError(null, vitals({ hp: 80, maxHp: 100, status: 'fresh', source: 'state' })), null, 'strict attack gate accepts fresh positive vitals');
-assert.equal(resolveStrictVitalError(true, vitals({ hp: 80, maxHp: 100, status: 'fresh', source: 'state' })), 'character_down');
+assert.equal(resolveStrictVitalError(null, vitals({ hp: 80, maxHp: 100, status: 'fresh', source: 'state', observedAt: 900 }), 1_000), null, 'strict attack gate accepts fresh positive vitals within age');
+assert.equal(resolveStrictVitalError(null, vitals({ hp: 80, maxHp: 100, status: 'fresh', source: 'state', observedAt: 1_000 }), 31_001), 'vitals_unknown', 'strict attack gate rejects stale vitals');
+assert.equal(resolveStrictVitalError(true, vitals({ hp: 80, maxHp: 100, status: 'fresh', source: 'state', observedAt: 900 }), 1_000), 'character_down');
+assert.equal(vitalsRuntimeAge(vitals({ status: 'fresh', observedAt: 900 }), 1_000), 100);
+assert.equal(vitalsRuntimeAge(vitals({ status: 'fresh', observedAt: 1_100 }), 1_000), 0);
+assert.equal(vitalsRuntimeAge(vitals({ status: 'unknown', observedAt: 900 }), 1_000), null);
 
 console.log('worker-pool vitals gate tests passed');

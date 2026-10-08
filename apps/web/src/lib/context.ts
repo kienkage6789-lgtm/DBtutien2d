@@ -1,7 +1,9 @@
 import type { AccountRuntime, MapDataContext, MapEntityContext } from '../types';
+import { VITALS_DISPLAY_STALE_MS } from '@tutien2d/core-client/vitals-policy';
 
 export const MAP_CONTEXT_TTL_MS = 15_000;
 export const ENTITY_CONTEXT_TTL_MS = 5_000;
+export { VITALS_DISPLAY_STALE_MS };
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -71,6 +73,20 @@ export function resolveMapContext(
     return { usable: false, reason: 'mismatch', ageMs };
   }
   return { usable: true, mapId: ctx.mapId, khu: ctx.khu, ageMs };
+}
+
+/** Resolve backend vitals age against the client receipt clock without negatives. */
+export function resolveVitalsAge(
+  account: Pick<AccountRuntime, 'vitals' | 'vitalsAgeMs' | 'vitalsReceivedAt'>,
+  now: number = Date.now(),
+): number | null {
+  if (account.vitals?.status !== 'fresh'
+    || !isFiniteNumber(account.vitalsAgeMs)
+    || account.vitalsAgeMs < 0) return null;
+  const elapsed = isFiniteNumber(now) && isFiniteNumber(account.vitalsReceivedAt)
+    ? Math.max(0, now - account.vitalsReceivedAt)
+    : 0;
+  return Math.max(0, account.vitalsAgeMs + elapsed);
 }
 
 export function isEntityContextValid(

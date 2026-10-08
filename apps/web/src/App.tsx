@@ -23,6 +23,7 @@ import {
   cancelMoveTo,
   requestMoveTo,
   requestMapEntry,
+  requestVitalsRefresh,
 } from './lib/api';
 import type { WorldBounds } from './lib/minimap';
 import { describeContextBlock, resolveMapContext } from './lib/context';
@@ -118,6 +119,12 @@ export const App: React.FC = () => {
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Không thể hủy di chuyển.');
     }
+  };
+
+  const handleRefreshVitals = async (accountId: string) => {
+    const result = await requestVitalsRefresh(accountId);
+    await refreshAccounts();
+    return result;
   };
 
   const handleStartBot = async (id: string) => {
@@ -243,6 +250,7 @@ export const App: React.FC = () => {
                   mapGeometry={(() => { const view = resolveMapContext(acc); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()}
                   onMoveTo={(target) => handleMoveTo(acc, target)}
                   onCancelMoveTo={(operationId) => { void handleCancelMoveTo(acc, operationId); }}
+                  onRefreshVitals={handleRefreshVitals}
                   onStart={handleStartBot}
                   onStop={handleStopBot}
                   onOpenInventory={setActiveInventoryAccount}

@@ -37,5 +37,13 @@ export class OperationLedger {
     return expired;
   }
   get(key: string): OperationEntry | undefined { return this.entries.get(key); }
+  /** True while an attack/skill is inside its confirmation window. */
+  hasPendingCombat(now = Date.now()): boolean {
+    this.sweep(now);
+    for (const entry of this.entries.values()) {
+      if ((entry.kind === 'attack' || entry.kind === 'skill') && entry.status === 'sent') return true;
+    }
+    return false;
+  }
   reset(): void { this.entries.clear(); this.sequence = 0; }
 }

@@ -1312,5 +1312,8 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 5. [~] H2 `walk` chưa chạy vì A đã thành công; full `pnpm build`/Vitest/server TS chưa tự chạy được do toolchain sandbox (`pnpm`/`tsx`/`ws`/`vitest`/symlink express).
 6. [~] Đã thêm mode `TUTIEN_PROBE_STATIONARY=offset`: đúng `4 + 10` move `idle`, nhãn `offset-0`/`offset-1`, ghi `youDuringPostMoveWait`, guard và one-shot; test source bằng Node type-transform pass, nhưng build/dist và `node --test` chuẩn bị chặn bởi `EPERM` của toolchain.
 7. [ ] Live evidence của mode offset và bảng phân biệt M1/M2/M3: **chưa xác minh**; không được tạo evidence giả khi chưa có build và phiên game thật.
+8. [x] `vitalsAgeMs` được tính ở backend khi snapshot fresh; web merge giữ `observedAt` không lùi, tính tuổi không âm và AccountCard đánh dấu cũ sau 5s.
+9. [~] `refreshVitals` đã tách coordinator có lock/rate-limit theo account, guard dùng chung với stationary probe, API/auth/UI/training đã nối; build/test sandbox chưa chạy do `pnpm`/TypeScript/Vitest bị chặn `EPERM`.
+10. [~] Các ngưỡng `VITALS_DISPLAY_STALE_MS=5_000`, `VITALS_ATTACK_MAX_AGE_MS=30_000`, `VITALS_REFRESH_MIN_INTERVAL_MS=30_000` là policy đề xuất, **chưa xác minh live**.
 
-Giả định/giới hạn còn lại: `idle` đã được đối chiếu với vendor (`gateway.js` dùng `o.state`, `player.js` khởi tạo `state:"idle"`); H1 và H3 mới có một live run. `vitalsAgeMs` và `refreshVitals` chỉ là đề xuất tài liệu, chưa code; TTL đề xuất 5 giây và rate-limit refresh đề xuất 30 giây.
+Giả định/giới hạn còn lại: `idle` đã được đối chiếu với vendor (`gateway.js` dùng `o.state`, `player.js` khởi tạo `state:"idle"`); H1 và H3 mới có một live run. `vitalsAgeMs` và `refreshVitals` đã có code/test fixture nhưng chưa được build/test trong sandbox này; các ngưỡng 5 giây, 30 giây và 30 giây vẫn là đề xuất, chưa xác minh live.

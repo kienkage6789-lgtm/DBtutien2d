@@ -5,6 +5,18 @@
   "description": "Headless Game Client Engine for TuTien2D",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./vitals-policy": {
+      "types": "./dist/vitals-policy.d.ts",
+      "import": "./dist/vitals-policy.js",
+      "default": "./dist/vitals-policy.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w"

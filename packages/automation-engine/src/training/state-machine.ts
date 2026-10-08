@@ -1,3 +1,5 @@
+import { VITALS_ATTACK_MAX_AGE_MS } from '@tutien2d/core-client';
+
 /** Pure training navigation/combat policy. The caller owns transport and persistence. */
 export type TrainingPhase =
   | 'SYNCING' | 'ENTERING_MAP' | 'WAITING_MAP_CONFIRM' | 'WAITING_KHU'
@@ -26,6 +28,10 @@ export interface TrainingSnapshot {
   hp?: number;
   maxHp?: number;
   vitalObservedAt?: number | null;
+  /** Backend/client-computed age when available; never negative. */
+  vitalsAgeMs?: number | null;
+  /** True when an absolute snapshot was observed before it became stale. */
+  vitalsKnown?: boolean;
   selfPresence?: { hpPercent: number | null; observedAt: number } | null;
   vitalStatus: 'unknown' | 'fresh' | 'stale' | 'invalid' | 'conflict';
   vitalReason?: string;
@@ -59,7 +65,13 @@ export interface TrainingInput {
   config: TrainingConfig;
   snapshot?: TrainingSnapshot;
   actionResult?: { operationId: string; ok: boolean; error?: string };
+  /** Result of the controller-owned refresh attempt, if one was made this step. */
+  vitalsRefreshResult?: TrainingVitalsRefreshResult;
 }
+
+export type TrainingVitalsRefreshResult = {
+  status: 'refreshed' | 'skipped' | 'no_ack';
+};
 
 export interface TrainingDecision {
   state: TrainingMachineState;
@@ -137,7 +149,7 @@ export function stepTraining(state: TrainingMachineState, input: TrainingInput):
   const observedLiveness = resolveLiveness({
     vitals: { hp: validVitals ? snap.hp! : null, status: validVitals ? snap.vitalStatus : 'unknown', observedAt: snap.vitalObservedAt ?? null },
     selfPresence: snap.selfPresence ?? null, derivedMaxComplete: snap.derivedMaxComplete !== false,
-    now: input.now, maxAgeMs: input.config.snapshotMaxAgeMs,
+    now: input.now, maxAgeMs: VITALS_ATTACK_MAX_AGE_MS,
   });
   // Only the snapshot's explicit dead flag represents authoritative downed evidence.
   // A zero in a generic state packet is insufficient and must not block navigation.
@@ -193,7 +205,24 @@ export function stepTraining(state: TrainingMachineState, input: TrainingInput):
       && (!input.config.monsterType || m.name === input.config.monsterType || m.id === input.config.monsterType))
     .sort((a, b) => Math.hypot(a.x - snap.x!, a.y - snap.y!) - Math.hypot(b.x - snap.x!, b.y - snap.y!) || a.id.localeCompare(b.id))[0];
   if (!target) return { state: { ...state, phase: 'TRAINING', reason: undefined }, accepted: true };
-  if (liveness === 'unknown') return { state: { ...state, phase: 'TRAINING', reason: 'VITALS_UNKNOWN' }, accepted: true, reason: 'VITALS_UNKNOWN' };
+  const vitalsObservedAt = snap.vitalObservedAt ?? null;
+  const vitalsAgeMs = snap.vitalsAgeMs
+    ?? (finite(vitalsObservedAt) ? Math.max(0, input.now - vitalsObservedAt) : null);
+  const vitalsFreshEnough = snap.vitalStatus === 'fresh'
+    && finite(snap.hp)
+    && vitalsAgeMs !== null
+    && Number.isFinite(vitalsAgeMs)
+    && vitalsAgeMs >= 0
+    && vitalsAgeMs <= VITALS_ATTACK_MAX_AGE_MS;
+  const vitalsKnown = snap.vitalsKnown === true || finite(vitalsObservedAt) || finite(snap.hp);
+  const refreshDidNotAck = input.vitalsRefreshResult?.status === 'skipped'
+    || input.vitalsRefreshResult?.status === 'no_ack';
+  if (!vitalsFreshEnough || liveness === 'unknown' || refreshDidNotAck) {
+    const reason = liveness === 'unknown' && snap.hp === 0
+      ? 'VITALS_UNKNOWN'
+      : vitalsKnown ? 'VITALS_STALE' : 'VITALS_UNKNOWN';
+    return { state: { ...state, phase: 'TRAINING', reason }, accepted: true, reason };
+  }
   if (state.lastAttackAt !== undefined && input.now - state.lastAttackAt < input.config.attackIntervalMs)
     return { state: { ...state, phase: 'TRAINING' }, accepted: true, reason: 'ATTACK_COOLDOWN' };
   const decision = issue('TRAINING', operationId => ({ type: 'ATTACK', targetId: target.id, operationId }));

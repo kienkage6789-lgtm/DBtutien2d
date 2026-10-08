@@ -40,6 +40,49 @@ const unknownAttack = stepTraining(createTrainingState('unknown-attack'), {
 });
 assert.equal(unknownAttack.action, undefined, 'unknown vitals never authorize attack');
 assert.equal(unknownAttack.reason, 'VITALS_UNKNOWN');
+const staleAttack = stepTraining(createTrainingState('stale-attack'), {
+  now: 31_000, config,
+  snapshot: snap({ observedAt: 31_000, vitalObservedAt: 0, vitalsAgeMs: 30_001, vitalsKnown: true, monsters: liveMob }),
+});
+assert.equal(staleAttack.action, undefined, 'stale vitals never authorize attack');
+assert.equal(staleAttack.reason, 'VITALS_STALE');
+assert.equal(staleAttack.state.phase, 'TRAINING', 'stale vitals only block attack, not training state');
+const staleMove = stepTraining(createTrainingState('stale-move'), {
+  now: 31_000, config,
+  snapshot: snap({ observedAt: 31_000, vitalObservedAt: 0, vitalsAgeMs: 30_001, vitalsKnown: true, x: 0, monsters: liveMob }),
+});
+assert.equal(staleMove.action?.type, 'MOVE_TO_AREA', 'stale vitals still allow movement');
+
+// The controller-owned async hook is attempted once, then rate-gated; a
+// skipped refresh leaves only the attack blocker and does not stop training.
+{
+  const refreshClient = new EventEmitter();
+  refreshClient.state = {
+    worldUpdatedAt: Date.now(), mapKnown: true, mapId: 'm1', khuKnown: true, khu: 2,
+    positionKnown: true, x: 100, y: 100, selfPresence: null, downed: false,
+    vitals: { hp: 100, maxHp: null, mp: null, maxMp: null, status: 'fresh', source: 'state', observedAt: 0 },
+    derivedMax: { complete: true }, enemies: [{ id: 'mob', x: 101, y: 100, hp: 100 }],
+  };
+  const refreshController = new BotController('refresh-hook', refreshClient, {
+    autoTraining: true, farmMapId: 'm1', farmKhu: 2, farmX: 100, farmY: 100, trainingRadius: 20,
+  });
+  let refreshRequests = 0;
+  refreshController.setVitalsRefreshRequester(async () => {
+    refreshRequests += 1;
+    return { status: 'skipped' };
+  });
+  Object.assign(refreshController, {
+    isRunning: true, runGeneration: 1,
+    trainingState: { phase: 'TRAINING', sessionId: 'refresh-session', sequence: 0 },
+  });
+  await refreshController.runTrainingTick(1);
+  assert.equal(refreshRequests, 1);
+  assert.equal(refreshController.getTrainingState().reason, 'VITALS_STALE');
+  assert.equal(refreshController.getTrainingState().phase, 'TRAINING');
+  refreshClient.state.worldUpdatedAt = Date.now();
+  await refreshController.runTrainingTick(1);
+  assert.equal(refreshRequests, 1, 'refresh hook is limited to once per interval');
+}
 const percentOnly = stepTraining(createTrainingState('percent-zero'), { now: 1000, config,
   snapshot: snap({ vitalStatus: 'unknown', hp: undefined, maxHp: undefined, vitalObservedAt: null, selfPresence: { hpPercent: 0, observedAt: 1000 }, monsters: liveMob }) });
 assert.equal(percentOnly.action, undefined, 'zero percent cannot prove death or authorize attack');

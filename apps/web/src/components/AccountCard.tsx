@@ -14,7 +14,8 @@ import {
   Bug,
 } from 'lucide-react';
 import { AccountRuntime, MapCatalog, MapRequestReceipt } from '../types';
-import { fetchBotConfig, updateBotConfig } from '../lib/api';
+import { fetchBotConfig, updateBotConfig, type VitalsRefreshResult } from '../lib/api';
+import { resolveVitalsAge, VITALS_DISPLAY_STALE_MS } from '../lib/context';
 import { MapNavigationPanel } from './MapNavigationPanel';
 import { MiniMap } from './MiniMap';
 import { WorldBounds } from '../lib/minimap';
@@ -45,6 +46,7 @@ interface AccountCardProps {
   mapGeometry?: WorldBounds | null;
   onMoveTo?: (target: { x: number; y: number }) => Promise<void> | void;
   onCancelMoveTo?: (operationId: string) => void;
+  onRefreshVitals: (accountId: string) => Promise<VitalsRefreshResult>;
 }
 
 export const AccountCard: React.FC<AccountCardProps> = ({
@@ -62,10 +64,13 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   mapGeometry,
   onMoveTo,
   onCancelMoveTo,
+  onRefreshVitals,
 }) => {
   const [autoFarmEnabled, setAutoFarmEnabled] = useState<boolean | null>(null);
   const [farmToggleLoading, setFarmToggleLoading] = useState(false);
   const [farmToggleError, setFarmToggleError] = useState<string | null>(null);
+  const [vitalsRefreshLoading, setVitalsRefreshLoading] = useState(false);
+  const [vitalsRefreshError, setVitalsRefreshError] = useState<string | null>(null);
 
   const isRunning = account.status === 'running';
   const dataStatus = account.dataStatus;
@@ -99,18 +104,16 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   const hasAuthoritativeLocation = !!mapContext;
   const hasAuthoritativeRealm = dataStatus?.realm === true;
   const vitalsStatus = vitals?.status ?? 'unknown';
-  const vitalsStatusLabel: Record<string, string> = {
-    unknown: 'chưa có dữ liệu',
-    fresh: 'đang đồng bộ',
-    stale: 'dữ liệu cũ',
-    invalid: 'dữ liệu không hợp lệ',
-    conflict: 'dữ liệu xung đột',
-  };
-  const hpPercent = hasAuthoritativeHp && displayMaxHp !== null && displayMaxHp > 0 && (hasAuthoritativeMaxHp || derivedComplete) && hp !== null
+  const vitalsAgeMs = resolveVitalsAge(account);
+  const vitalsAgeLabel = vitalsAgeMs === null
+    ? '—'
+    : vitalsAgeMs < 1_000 ? '<1s trước' : `${Math.floor(vitalsAgeMs / 1_000)}s trước`;
+  const vitalsDisplayStale = vitalsAgeMs !== null && vitalsAgeMs > VITALS_DISPLAY_STALE_MS;
+  const hpPercent = hasAuthoritativeHp && displayMaxHp !== null && displayMaxHp > 0 && derivedComplete && hp !== null
     ? Math.min(100, Math.max(0, Math.round((hp / displayMaxHp) * 100))) : null;
   const estimatedHpPercent = !hasAuthoritativeHp && account.selfPresence?.hpPercent !== null && account.selfPresence?.hpPercent !== undefined
     ? Math.round(account.selfPresence.hpPercent) : null;
-  const mpPercent = hasAuthoritativeMp && displayMaxMp !== null && displayMaxMp > 0 && (hasAuthoritativeMaxMp || derivedComplete) && mp !== null
+  const mpPercent = hasAuthoritativeMp && displayMaxMp !== null && displayMaxMp > 0 && derivedComplete && mp !== null
     ? Math.min(100, Math.max(0, Math.round((mp / displayMaxMp) * 100))) : null;
   const hasCharacterCoordinates = !!mapContext && finiteValue(account.x) !== null && finiteValue(account.y) !== null;
   const mapId = mapContext?.mapId || '';
@@ -258,19 +261,43 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           <span className="flex items-center gap-1 text-rose-400 font-medium">
             <Heart className="w-3.5 h-3.5 fill-rose-500/30" /> HP (Sinh Lực)
           </span>
-          <span className={`font-mono text-[11px] ${vitalsStatus === 'fresh' ? 'text-slate-300' : 'text-amber-300'}`}>
+          <div className="flex items-center gap-2">
+            <span className={`font-mono text-[11px] ${vitalsDisplayStale ? 'opacity-60' : ''} ${vitalsStatus === 'fresh' ? 'text-slate-300' : 'text-amber-300'}`}>
             {estimatedHpPercent !== null
               ? `HP ~${estimatedHpPercent}% (ước lượng)`
               : !hasAnyAuthoritativeHp && vitalsStatus !== 'fresh'
-              ? `Vitals: ${vitalsStatusLabel[vitalsStatus] || vitalsStatus}`
+              ? '—'
               : `${hasAuthoritativeHp ? displayNumber(hp) : '—'} / ${displayMaxHp === null ? '—' : `${usingDerivedHpMax && !derivedComplete ? '~' : ''}${displayNumber(displayMaxHp)}${usingDerivedHpMax ? ' (suy ra)' : ''}`}${hpPercent === null ? '' : ` (${hpPercent}%)`}`}
-          </span>
+            </span>
+            <span className={`font-mono text-[10px] ${vitalsDisplayStale ? 'text-amber-300 opacity-70' : 'text-slate-500'}`}>· {vitalsAgeLabel}</span>
+            <button
+              type="button"
+              onClick={async () => {
+                setVitalsRefreshLoading(true);
+                setVitalsRefreshError(null);
+                try {
+                  const result = await onRefreshVitals(account.id);
+                  if (result.status === 'no_ack') setVitalsRefreshError('Chưa nhận được phản hồi HP từ game.');
+                  else if (result.status === 'skipped') setVitalsRefreshError(result.reason || 'Không thể làm mới HP lúc này.');
+                } catch (error) {
+                  setVitalsRefreshError(error instanceof Error ? error.message : 'Không thể làm mới HP.');
+                } finally {
+                  setVitalsRefreshLoading(false);
+                }
+              }}
+              disabled={account.connection !== 'IN_GAME' || vitalsRefreshLoading}
+              className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {vitalsRefreshLoading ? 'Đang làm mới…' : 'Làm mới HP'}
+            </button>
+          </div>
         </div>
+        {vitalsRefreshError && <p role="alert" className="text-right text-[10px] text-amber-300">{vitalsRefreshError}</p>}
         <div className="w-full h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
-          <div
+          {hpPercent !== null && <div
             className="h-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-500 rounded-full"
-            style={{ width: `${hpPercent ?? 0}%` }}
-          />
+            style={{ width: `${hpPercent}%` }}
+          />}
         </div>
       </div>
 
@@ -280,15 +307,15 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           <span className="flex items-center gap-1 text-sky-400 font-medium">
             <Zap className="w-3.5 h-3.5 fill-sky-500/30" /> MP (Linh Lực)
           </span>
-          <span className="text-slate-300 font-mono text-[11px]">
-            {!hasAnyAuthoritativeMp && !hasAuthoritativeMp && displayMaxMp === null ? 'MP: đang chờ dữ liệu realtime' : `${hasAuthoritativeMp ? displayNumber(mp) : '—'} / ${displayMaxMp === null ? '—' : `${usingDerivedMpMax && !derivedComplete ? '~' : ''}${displayNumber(displayMaxMp)}${usingDerivedMpMax ? ' (suy ra)' : ''}`}${mpPercent === null ? '' : ` (${mpPercent}%)`}`}
+          <span className={`text-slate-300 font-mono text-[11px] ${vitalsDisplayStale ? 'opacity-60' : ''}`}>
+            {!hasAnyAuthoritativeMp && !hasAuthoritativeMp && displayMaxMp === null ? '—' : `${hasAuthoritativeMp ? displayNumber(mp) : '—'} / ${displayMaxMp === null ? '—' : `${usingDerivedMpMax && !derivedComplete ? '~' : ''}${displayNumber(displayMaxMp)}${usingDerivedMpMax ? ' (suy ra)' : ''}`}${mpPercent === null ? '' : ` (${mpPercent}%)`}`} · {vitalsAgeLabel}
           </span>
         </div>
         <div className="w-full h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden">
-          <div
+          {mpPercent !== null && <div
             className="h-full bg-gradient-to-r from-sky-600 to-sky-400 transition-all duration-500 rounded-full"
-            style={{ width: `${mpPercent ?? 0}%` }}
-          />
+            style={{ width: `${mpPercent}%` }}
+          />}
         </div>
       </div>
 

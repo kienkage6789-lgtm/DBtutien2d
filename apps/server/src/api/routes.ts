@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { workerPool } from '../orchestrator/worker-pool.js';
+import type { VitalsRefreshResult } from '../orchestrator/vitals-refresh.js';
 import { AuthError } from '@tutien2d/core-client';
 import { type BotConfig } from '@tutien2d/automation-engine';
 import { getWalkGrid, WALK_TILE_SIZE } from '../config/walk-grid.js';
@@ -35,6 +36,23 @@ export function moveToErrorResponse(error: string, nearestTarget?: { x: number; 
       ...(error === 'target_blocked' ? { acceptedTarget: nearestTarget ?? null, nearestTarget: nearestTarget ?? null } : {}),
     },
   };
+}
+
+export function vitalsRefreshErrorResponse(reason: string): {
+  status: 409;
+  body: { success: false; error: string; errorCode: string; retryable: boolean };
+} {
+  const retryable = reason === 'refresh_rate_limited'
+    || reason === 'refresh_in_progress'
+    || reason === 'disconnected';
+  const errorCode = reason === 'refresh_rate_limited'
+    ? 'VITALS_REFRESH_RATE_LIMITED'
+    : reason === 'refresh_in_progress'
+      ? 'VITALS_REFRESH_IN_PROGRESS'
+      : reason === 'disconnected'
+        ? 'VITALS_REFRESH_NOT_CONNECTED'
+        : 'VITALS_REFRESH_NOT_ALLOWED';
+  return { status: 409, body: { success: false, error: reason, errorCode, retryable } };
 }
 
 // GET all accounts with runtime stats
@@ -174,6 +192,34 @@ apiRouter.get('/accounts/:id', (req: Request, res: Response) => {
   const runtime = workerPool.getRuntimeInfo(account.id);
   const config = db.getBotConfig(account.id);
   res.json({ success: true, data: { ...runtime, config } });
+});
+
+apiRouter.post('/accounts/:id/vitals/refresh', async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : {};
+  const unknown = Object.keys(body).filter((key) => key !== 'allowNearMonsters');
+  if (unknown.length > 0 || body.allowNearMonsters !== undefined && typeof body.allowNearMonsters !== 'boolean') {
+    res.status(400).json({ success: false, error: 'invalid_request', errorCode: 'INVALID_REQUEST', retryable: false });
+    return;
+  }
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const result: VitalsRefreshResult = await workerPool.refreshVitals(accountId, {
+      allowNearMonsters: body.allowNearMonsters === true,
+    });
+    if (result.status === 'skipped') {
+      const error = vitalsRefreshErrorResponse(result.reason ?? 'refresh_not_allowed');
+      res.status(error.status).json({ ...error.body, requestId: res.locals.requestId });
+      return;
+    }
+    res.json({ success: true, data: result });
+  } catch {
+    res.status(500).json({ success: false, error: 'Lỗi máy chủ nội bộ.', errorCode: 'INTERNAL_ERROR', retryable: false });
+  }
 });
 
 // Request map entry. The current game protocol does not provide a khu selector.

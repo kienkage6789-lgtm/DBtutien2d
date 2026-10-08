@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { TuTienClient } from '@tutien2d/core-client';
+import { TuTienClient, VITALS_ATTACK_MAX_AGE_MS, VITALS_REFRESH_MIN_INTERVAL_MS } from '@tutien2d/core-client';
 import { BotActivityStatus, BotConfig, BotLogMessage, DEFAULT_BOT_CONFIG } from './types.js';
 import { InventorySellerModule } from './inventory/seller.js';
 import { RestockerModule } from './inventory/restocker.js';
@@ -12,6 +12,7 @@ import {
   TrainingConfig,
   TrainingMachineState,
   TrainingSnapshot,
+  TrainingVitalsRefreshResult,
 } from './training/state-machine.js';
 
 const normalizeTrainingMonsterType = (value: unknown): string =>
@@ -28,6 +29,7 @@ export interface TrainingMovementRequest {
 }
 
 export type TrainingMovementExecutor = (request: TrainingMovementRequest) => Promise<boolean>;
+export type VitalsRefreshRequester = () => Promise<TrainingVitalsRefreshResult>;
 
 export class BotController extends EventEmitter {
   public readonly client: TuTienClient;
@@ -47,6 +49,8 @@ export class BotController extends EventEmitter {
   private quest: QuestRunnerModule;
   private mapNavigation?: (mapId: string, shouldContinue: () => boolean) => Promise<boolean>;
   private trainingMovement?: TrainingMovementExecutor;
+  private vitalsRefreshRequester?: VitalsRefreshRequester;
+  private lastVitalsRefreshRequestAt = 0;
   public readonly accountId: string;
 
   constructor(accountId: string, client: TuTienClient, config?: Partial<BotConfig>) {
@@ -168,6 +172,11 @@ export class BotController extends EventEmitter {
   /** Delegate training movement to the server's authoritative walk executor. */
   public setTrainingMovementExecutor(execute: TrainingMovementExecutor): void {
     this.trainingMovement = execute;
+  }
+
+  /** Inject the server-owned, account-scoped bounded refresh operation. */
+  public setVitalsRefreshRequester(request: VitalsRefreshRequester): void {
+    this.vitalsRefreshRequester = request;
   }
 
   public isBotRunning(): boolean {
@@ -350,10 +359,12 @@ export class BotController extends EventEmitter {
     const maxHp = typeof rawVitals?.maxHp === 'number' && Number.isFinite(rawVitals.maxHp) ? rawVitals.maxHp : undefined;
     const validVitals = vitalStatus === 'fresh' && hp !== undefined && hp >= 0
       && (maxHp === undefined || maxHp > 0 && hp <= maxHp);
-    const vitalsFresh = typeof rawVitals?.observedAt === 'number'
-      && Number.isFinite(rawVitals.observedAt)
-      && Date.now() >= rawVitals.observedAt
-      && Date.now() - rawVitals.observedAt <= Math.max(5000, this.config.tickIntervalSec * 3000);
+    const vitalsNow = Date.now();
+    const vitalsObservedAt = typeof rawVitals?.observedAt === 'number' && Number.isFinite(rawVitals.observedAt)
+      ? rawVitals.observedAt : null;
+    const vitalsAgeMs = vitalsObservedAt === null ? null : Math.max(0, vitalsNow - vitalsObservedAt);
+    const vitalsFresh = validVitals && vitalsObservedAt !== null
+      && vitalsNow >= vitalsObservedAt && vitalsNow - vitalsObservedAt <= VITALS_ATTACK_MAX_AGE_MS;
     const mapId = s.mapKnown === true ? s.mapId : undefined;
     const khu = s.khuKnown === true ? s.khu : undefined;
     const hasPosition = s.positionKnown === true;
@@ -363,11 +374,14 @@ export class BotController extends EventEmitter {
       observedAt: s.worldUpdatedAt,
       mapId,
       khu,
-      hp: validVitals && vitalsFresh ? hp : undefined,
-      maxHp: validVitals && vitalsFresh ? maxHp : undefined,
-      vitalObservedAt: rawVitals?.observedAt ?? null,
+      hp: validVitals ? hp : undefined,
+      maxHp: validVitals ? maxHp : undefined,
+      vitalsAgeMs,
+      vitalsKnown: vitalsObservedAt !== null
+        && typeof rawVitals?.hp === 'number' && Number.isFinite(rawVitals.hp),
+      vitalObservedAt: vitalsObservedAt,
       selfPresence: s.selfPresence ? { ...s.selfPresence } : null,
-      vitalStatus: validVitals && vitalsFresh ? 'fresh' : vitalStatus === 'fresh' ? 'stale' : vitalStatus,
+      vitalStatus: validVitals ? 'fresh' : vitalStatus,
       vitalReason: typeof rawVitals?.reason === 'string' ? rawVitals.reason.slice(0, 256) : undefined,
       x: hasPosition && mapId !== undefined && khu !== undefined ? s.x : undefined,
       y: hasPosition && mapId !== undefined && khu !== undefined ? s.y : undefined,
@@ -380,12 +394,35 @@ export class BotController extends EventEmitter {
   }
 
   private async runTrainingTick(generation: number): Promise<void> {
-    const decision = stepTraining(this.trainingState, {
-      now: Date.now(),
+    const now = Date.now();
+    let decision = stepTraining(this.trainingState, {
+      now,
       config: this.trainingConfig(),
       snapshot: this.trainingSnapshot(),
       actionResult: this.trainingActionResult,
     });
+    if ((decision.reason === 'VITALS_UNKNOWN' || decision.reason === 'VITALS_STALE')
+      && this.vitalsRefreshRequester
+      && now - this.lastVitalsRefreshRequestAt >= VITALS_REFRESH_MIN_INTERVAL_MS
+      && this.isCurrentRun(generation)) {
+      this.lastVitalsRefreshRequestAt = now;
+      let refreshResult: TrainingVitalsRefreshResult;
+      try {
+        refreshResult = await this.vitalsRefreshRequester();
+      } catch {
+        // A transport/cleanup error is fail-closed for combat, but must not
+        // terminate the whole training loop or cause an unbounded retry.
+        refreshResult = { status: 'no_ack' };
+      }
+      if (!this.isCurrentRun(generation)) return;
+      decision = stepTraining(decision.state, {
+        now: Date.now(),
+        config: this.trainingConfig(),
+        snapshot: this.trainingSnapshot(),
+        actionResult: this.trainingActionResult,
+        vitalsRefreshResult: refreshResult,
+      });
+    }
     this.trainingState = decision.state;
     this.reconcileTrainingActionResult(decision.state);
     if (decision.state.phase === 'BLOCKED') {

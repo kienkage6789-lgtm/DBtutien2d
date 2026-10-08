@@ -1,5 +1,33 @@
 # Nhật ký phiên triển khai
 
+# 2026-10-08 — Triển khai vitalsAgeMs và refreshVitals (build/test sandbox bị chặn)
+
+### Thay đổi
+
+- Backend thêm `vitalsAgeMs` chỉ khi `VitalSnapshot.status === "fresh"`, có policy chung `VITALS_DISPLAY_STALE_MS=5_000`, `VITALS_ATTACK_MAX_AGE_MS=30_000`, `VITALS_REFRESH_MIN_INTERVAL_MS=30_000`; các ngưỡng này là đề xuất, chưa xác minh live.
+- Tách `apps/server/src/orchestrator/vitals-refresh.ts`: tối đa 10 move `idle`, nhịp 100ms, listener `you` đăng ký trước khi gửi, chờ ACK cuối tối đa 1500ms, không retry `no_ack`, khóa và rate-limit theo account. Guard dùng chung với stationary probe; mode `1`/`offset` không đổi.
+- Nối `POST /api/accounts/:id/vitals/refresh` sau middleware `requireAuth`, error envelope/409 mapping, web merge + `resolveVitalsAge`, AccountCard hiển thị tuổi và nút `Làm mới HP`.
+- OperationLedger có `hasPendingCombat`; training giữ pha `TRAINING`, chỉ chặn attack bằng `VITALS_UNKNOWN`/`VITALS_STALE`, hook refresh tối đa một lần mỗi 30 giây.
+- Thêm test fixture cho refresh guards/lock/rate-limit/listener/ACK, API error mapping, web age/merge và training stale. Không đọc `data/`/`.env`, không chạy server, không login hoặc gửi packet live.
+- Rà soát source sau đó sửa freshness guard còn sót trong `BotController`, fail-closed lỗi refresh thành `no_ack`, và không render thanh HP/MP có độ rộng `0` khi tỉ lệ chưa biết.
+
+### Lệnh đã chạy và kết quả thật
+
+- `corepack pnpm --version`: **bị chặn**; Corepack cố truy cập registry và gặp `EACCES` mạng.
+- `corepack pnpm --offline build`: **bị chặn cùng nguyên nhân**; Corepack vẫn cố resolve pnpm từ registry và gặp `EACCES`.
+- `node node_modules/typescript/bin/tsc -p packages/core-client/tsconfig.json`: **bị chặn** với `EPERM` khi mở TypeScript trong `.pnpm`.
+- `node node_modules/vitest/vitest.mjs run src/lib/context.test.ts src/hooks/useRealtime.test.ts` (tại `apps/web`): **bị chặn** với `EPERM` khi mở Vitest trong `.pnpm`.
+- `node --experimental-strip-types apps/server/src/orchestrator/vitals-refresh.test.ts`: **bị chặn** với `EPERM` khi mở `ws` trong `.pnpm`.
+- `node --experimental-strip-types apps/server/src/api/vitals-refresh.contract.test.ts`: **chưa chạy được** vì source test import `routes.js` nhưng dist/server chưa được build (`ERR_MODULE_NOT_FOUND`).
+- `node --experimental-strip-types packages/automation-engine/src/training/state-machine.test.mjs`: **fail** vì test nạp `dist` cũ chưa rebuild, nhận `VITALS_UNKNOWN` thay vì assertion mới `VITALS_STALE`; không dùng kết quả này để tuyên bố source test pass.
+- `node --experimental-strip-types --check` trên các file TypeScript nguồn/test đã sửa: **pass**; Node không hỗ trợ kiểm tra trực tiếp `.tsx` bằng cờ này (`ERR_UNKNOWN_FILE_EXTENSION`), nên vẫn cần build web thật.
+
+### Còn chờ xác minh
+
+- Full `pnpm build` và test liên quan chưa chạy được trong sandbox; source/dist cần build lại trước khi đánh giá pass.
+- Chưa xác minh live: refresh đứng yên không quái nhận `you` và cập nhật HP/MP; rate limit; khóa khi có move-to/navigation/attack; mặc định quái trong 300 bị skip; `no_ack` không retry; training refresh thành công và blocker stale.
+- Chưa xác minh live ý nghĩa số move tối thiểu để server phát `you` trong mọi seq/st/quái/map; thiết kế vẫn giữ tối đa 10 theo probe đã có và không khẳng định protocol mạnh hơn evidence.
+
 ## 2026-10-08 — Kết quả live probe offset (4 + 10 move đứng yên)
 
 Chạy bởi Claude Code sau khi Codex sửa harness (Codex không chạy được build/live trong sandbox). Build 4/4 package pass; test harness và packet tap pass. Evidence redacted: `docs/evidence/packet-tap-2026-10-07T23-14-12-695Z.json` (thư mục evidence không nằm trong git).
