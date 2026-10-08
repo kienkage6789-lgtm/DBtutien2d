@@ -1,5 +1,18 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Đo live tốc độ `move-to` (engine core): bản mới so với bản cũ
+
+`scripts/measure-moveto.cjs` (cần `TUTIEN_MEASURE_LIVE=1`): tự khởi động/tắt server, chọn đích khoảng 300 px đi được và cách quái trên 160 px, gọi `POST /accounts/:id/navigation/move-to` (`arrivalRadius` 20), bấm giờ từ lúc gửi tới lúc `moveTo.status = arrived` (thăm dò 200 ms), dừng nếu `hurtCount` tăng từ 5; luôn dọn dẹp. Cùng nhân vật ở `thanh_truc_lam`, engine `core`, một phiên đăng nhập.
+
+| Phiên bản | Kết quả |
+|---|---|
+| Sau sửa (`PredictedMover`, commit `25ebafb`) | 3/3 lượt tới đích: 300 px trong 3,2 s (93,6 px/s) và 3,4 s (89,4 px/s), 180 px trong 2,1 s (84 px/s); trung bình khoảng 89 px/s; `hurt` tăng 1 trong cả đợt |
+| Trước khi sửa (`worker-pool.ts` của commit `9e5d704`, thay tạm rồi khôi phục) | Lượt 1: sau 25 s vẫn CHƯA tới đích với quãng 300 px (dưới 12 px/s); hai lượt sau bị từ chối `409 operation_in_progress` vì lệnh đầu còn chạy |
+
+Kết luận: nhanh hơn ít nhất khoảng 8 lần (300 px: 3,2 s so với hơn 25 s). Con số 89 px/s thấp hơn lý thuyết 101 px/s vì thời gian bắt đầu và độ trễ thăm dò 200 ms cộng với bán kính tới nơi 20 px (đo thời gian tới lúc trạng thái `arrived`), không phải vì tốc độ di chuyển chậm hơn. Trước đây "7 px/s" chỉ là ước tính từ mã; số đo thật của bản cũ chỉ cho biết là dưới 12 px/s (đo bị cắt ở 25 s nên không biết chính xác).
+
+Chưa xác minh: `you.fix` (server sửa vị trí) có xảy ra không, tốc độ khi có nhiều quái xung quanh, đi qua cổng thật sau sửa, và quãng dài hơn 300 px.
+
 ## 2026-10-08 — Nghiệm thu sửa thuật toán di chuyển cũ (PredictedMover)
 
 Codex sửa `runMoveTo` và vòng đi tới cổng của engine `core` theo `PROMPT_FIX_MOVE_SPEED.md`: `PredictedMover` (`packages/core-client/src/movement/predicted-mover.ts`) dự đoán vị trí cục bộ và cộng dồn giữa các lần gửi, tốc độ `SPEED × WALK_MULT` (khoảng 100,98 px/s) lấy từ `AUTO_CONSTANTS` sinh từ vendor, `dt` thực kẹp 20 đến 200 ms, bước làm tròn cũng không vượt `tốc độ × dt`; hòa giải khi nhận `you` theo quy tắc của `gateway.js` (hàng đợi 32 lệnh, ngưỡng 6 px bỏ qua và 140 px sửa cứng sau 3 lần liên tiếp). Ngưỡng phát hiện kẹt nới từ 1 s lên 1,5 s mỗi lần (3 lần) ở `runMoveTo` và từ 2,5 s lên 3,5 s ở vòng cổng, vì `you` chỉ đến khoảng 1 s một lần.
