@@ -1,5 +1,56 @@
 # Training protocol gaps: map, khu, movement, combat, recovery
 
+> **Cập nhật 2026-10-08 — đọc mục này trước.** Phần còn lại của file là bản rà soát gốc (2026-10-06) và được giữ để tham khảo; nhiều câu "chưa có bằng chứng" trong đó đã lỗi thời. Bảng dưới là trạng thái hiện tại. Kiến trúc: [`ARCHITECTURE.md`](ARCHITECTURE.md); đặc tả auto: [`AUTO_SPEC.md`](AUTO_SPEC.md).
+
+## 0. Trạng thái hiện tại của 10 khoảng trống (mục 2 gốc)
+
+Nhãn: **[Live]** đã quan sát trên game thật (evidence đã redact trong `docs/evidence/`, thư mục này không nằm trong git); **[Client]** đọc từ mã client chính thức trong `vendor/`, chưa thử live; **[Chưa biết]** chưa có dữ liệu.
+
+| # | Khoảng trống gốc | Trạng thái 2026-10-08 |
+|---|---|---|
+| 1 | Danh sách map, liên kết, điều kiện vào | **[Client]** danh mục 16 map (metadata, không phải allowlist của server). **[Live]** cổng hai chiều `tan_vien ⇄ thanh_truc_lam` đã `arrived`. Điều kiện vào các map khác: **[Chưa biết]** |
+| 2 | Lệnh chọn khu | **[Client]** `{op:"khu", act:"xem"}` và `{op:"khu", act:"chon", khu:N}`; server trả gói `khu` (số người từng khu `dem[]`, `toiDa`, `tran[]`, `khu` hiện tại). Chưa thử live; khóa `KHU_PROTOCOL_UNAVAILABLE` vẫn giữ |
+| 3 | `enter` có giữ khu không | **[Live]** `enter` chỉ có tác dụng khi nhân vật đứng trong ô cổng của map hiện tại (gửi trực tiếp từ vị trí bất kỳ không đổi map). Việc giữ hay đổi khu: **[Chưa biết]** |
+| 4 | Đơn vị tọa độ, va chạm, tốc độ, `seq`/`st`/`dir` | **[Client]** tile 32 px, hitbox 16×12, tốc độ gốc 68 nhân hệ số đi/chạy (1.485/1.65), `seq` do client tăng từ 1 và echo `ep`. Lưới va chạm 16/16 map đã sinh từ vendor. **[Live]** `seq` bắt đầu từ 1, nhịp ~10 Hz, `st:"idle"` dùng được khi đứng yên. Trong gói `move`: `fly:1` là bay, `fs` là trạng thái câu cá (đi cùng `fx`/`fy`); code hiện gán cứng `fly:0, fs:0` |
+| 5 | Server có tìm đường không, tiến độ xác nhận thế nào | **[Live]** server không tìm đường: client gửi luồng vị trí từng bước; điều hướng cổng dùng A\* phía bot. Tiến độ xác nhận qua gói `you` (mỗi 10 `seq`, khi `fix:1` là sửa vị trí) và snapshot vị trí |
+| 6 | Chọn mục tiêu và đánh | **[Client]** `{op:"attack", targetId}` (đòn chạm ~0.28 s sau khi vung, chu kỳ 0.8 s), `{op:"skill", skillId, targetId}`; kết quả `skill_res {n}`, `kill`, `hurt`. Hp quái là tuyệt đối, `hm` = hpMax. Cooldown, tầm, tốc độ gửi mà server kiểm tra: **[Chưa biết]**. Chưa thử đánh live |
+| 7 | Gói xác nhận chết, cờ sống/chết | **[Client]** `you.dn`, gói `down {left, lostExp}`, `revived {hp, mp, x, y}`. **[Live]** `dn` dạng số 0/1 (`dn:0` quan sát được; `dn:1` chưa gặp). Không dùng `hp <= 0` một mình |
+| 8 | Lệnh hồi sinh | **[Client]** `cmd("revive", {mode:"home"})` về `tan_vien` với 60% HP, `{mode:"spot"}` tại chỗ 35% HP, tối đa 3 lần; client tự về làng sau 60 s gục. Chưa thử live; khóa `RESPAWN_PROTOCOL_UNAVAILABLE` vẫn giữ |
+| 9 | Chính sách reconnect | **[Code]** reset `contextEpoch`, xóa thực thể khi đổi context, vitals về `unknown`. **[Live]** reconnect đã được thử trong các phiên trước nhưng thứ tự gói sau reconnect chưa được ghi lại có hệ thống |
+| 10 | Server có chống lặp không | **[Chưa biết]**. Giảm thiểu: `OperationLedger` chặn gửi lặp attack/skill trong cửa sổ chờ, không retry mù; REST `move-to` chống trùng theo `requestId` |
+
+## 1. Những câu trong bản gốc không còn đúng
+
+- "Không tìm thấy capture/fixture protocol game đã lưu": đã có nhiều evidence packet-tap đã redact (cấu trúc key, thứ tự gói, số liệu `you`), nhưng **không** có raw packet nên vẫn chưa đủ để dựng fixture replay hoàn chỉnh.
+- "Chưa có command chọn khu hoặc respawn": lệnh đã thấy trong client chính thức (mục 0, dòng 2 và 8), chưa kiểm chứng live.
+- "Death chỉ suy ra từ vitals `fresh` với `hp=0`": thay bằng cờ gục `downed` (từ `you.dn`, `down`, `revived`). Training vẫn đặt `BLOCKED: RESPAWN_PROTOCOL_UNAVAILABLE` khi gục.
+- "Quái thiếu HP coi là alive": dữ liệu quái giờ có `hp` tuyệt đối, `hm` và cờ chết `d`, chuẩn hóa bằng `ENEMY_DEFS` sinh từ vendor.
+- "`GameStateStore` mặc định `hp=100`": vitals chưa biết được thể hiện là `unknown` trong `VitalSnapshot`; runtime trả `null` khi chưa fresh.
+- "Di chuyển/gate": gate di chuyển hiện là **mềm** (chỉ chặn khi gục); gate tấn công/skill **nghiêm** (vitals fresh và tuổi trong ngưỡng).
+
+## 2. Trạng thái điều kiện mở khóa (mục 4 gốc)
+
+| Tính năng | Trạng thái |
+|---|---|
+| Đọc map/khu/vị trí | **Đã mở** (parser, guard theo epoch, freshness) |
+| Chuyển map | **Đã mở qua cổng** (live hai chiều); `enter` trực tiếp không dùng được |
+| Chọn khu | **Còn khóa** — cần thử live `khu act:"xem"` (chỉ đọc) rồi `chon` |
+| Đi tới bãi | **Đã mở** (A\* trên lưới va chạm, xác nhận bằng snapshot vị trí); lưới 16 map đã có, chưa kiểm chứng live ngoài vài map |
+| Auto attack | **Còn khóa** — có đặc tả và hàm thuần (chọn mục tiêu, luân phiên kỹ năng); chưa nối vào bot, chưa thử đánh live |
+| Death detection | **Một phần** — có `downed` từ `dn`; chưa gặp `dn:1`/`down` live |
+| Auto respawn | **Còn khóa** — lệnh đã biết, chưa thử |
+| Return-to-training | **Còn khóa** — phụ thuộc chọn khu, hồi sinh, auto attack |
+
+## 3. Việc cần làm để tiến tiếp (theo thứ tự)
+
+1. Thử live `{op:"khu", act:"xem"}` (chỉ đọc), ghi gói trả về; sau đó `chon` giữa hai khu.
+2. Thử live `revive` trong tình huống kiểm soát (cần nhân vật đang gục; cân nhắc rủi ro mất đạo hạnh `lostExp`).
+3. P2 đến P4 của `AUTO_SPEC.md` với một quái yếu ở map có spawn, xác nhận `hurt`/`kill`/`skill_res` và quan sát phản hồi khi vi phạm cooldown.
+4. Ghi evidence redact cho từng bước vào `docs/evidence/` và cập nhật bảng này.
+
+---
+
+
 > Đây là tài liệu backlog/giới hạn training. Evidence vocabulary và contract
 > chuẩn nằm trong [`API_REFERENCE.md`](API_REFERENCE.md); các ví dụ trong file
 > này không phải capture live.

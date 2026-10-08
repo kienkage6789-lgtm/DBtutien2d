@@ -1,6 +1,52 @@
 # KẾ HOẠCH TRIỂN KHAI DỰ ÁN (PROJECT IMPLEMENTATION PLAN)
 ## Nền tảng Quản Lý Đa Tài Khoản & Tự Động Hóa TuTien2D
 
+> **Cập nhật 2026-10-08 — đọc mục này trước.** Phần còn lại của file là kế hoạch gốc v1.0 (2026-10-06), giữ nguyên để tham khảo lịch sử. Kiến trúc thực tế nằm ở [`ARCHITECTURE.md`](ARCHITECTURE.md); nhật ký ở [`SESSION_LOG.md`](SESSION_LOG.md).
+
+## 0. Trạng thái thực tế so với kế hoạch (2026-10-08)
+
+### 0.1 Tiến độ theo sprint
+
+| Sprint | Kế hoạch | Thực tế |
+|---|---|---|
+| 1. Core headless engine | WebSocket client, state store, anti-detection | **Xong** và đã chạy live: kết nối, hello, ping, reconnect, `GameStateStore`, jitter cho hành động; thêm guard theo epoch, `Snap2Reducer`, `VitalSnapshot`, `OperationLedger`, packet tap |
+| 2. Module nghiệp vụ | seller, restocker, farm, quest | **Có mã nhưng đang khóa** ở luồng chạy (bán đồ, mua thuốc, quest, hang động, điểm danh thủ công); chưa kiểm chứng live trong các phiên gần đây. Chỉ Auto farm (điều hướng về bãi) được bật |
+| 3. Backend | worker pool, DB, WS hub | **Xong**, nhưng khác công nghệ: Express + `ws`, DB JSON một file (không Prisma/SQLite), worker chạy cùng tiến trình |
+| 4. Dashboard | Next.js | **Xong**, nhưng là React + Vite + Tailwind; có MiniMap click-để-di-chuyển, panel điều hướng map, nút làm mới HP, nhập API token |
+| 5. Multi-tenant, proxy, Docker | RBAC, proxy pool, compose | **Chưa làm**. Có `proxyUrl` trong DB nhưng luồng proxy chưa hoàn thiện/kiểm thử |
+
+### 0.2 Khác biệt công nghệ so với mục 2
+
+| Kế hoạch | Thực tế |
+|---|---|
+| Next.js 15 (App Router), Shadcn/UI | React 18 + Vite 6, Tailwind, lucide-react |
+| Fastify, Prisma ORM, Redis, PostgreSQL | Express, `ws`, DB JSON (`data/tutien_db.json`), không Redis |
+| Mã hóa AES-256-GCM | Đúng như kế hoạch (khóa từ `ENCRYPTION_SECRET` hoặc `data/.secret`) |
+| pnpm workspaces | Đúng như kế hoạch (4 package) |
+
+### 0.3 Việc đã làm ngoài kế hoạch gốc
+
+- **Bảo mật control-plane**: bind loopback mặc định, `API_TOKEN` bắt buộc khi bind ngoài, kiểm tra Origin, WebSocket subprotocol `bearer`, error envelope, giới hạn phân trang.
+- **Xác minh protocol bằng live**: nguồn HP/MP, `you` là ACK của move theo `seq` bội số 10, `dn` dạng số, `refreshVitals`, điều hướng qua cổng hai chiều.
+- **Phân tích client chính thức** (`vendor/`): `UI_FEATURE_INVENTORY.md`, `AUTO_SPEC.md`, các bảng sinh tự động (quái, kỹ năng, lưới va chạm 16 map, điểm sinh quái).
+- **Hạ tầng làm việc với agent**: git, `AGENTS.md`, quy trình chạy Codex, `PROMPT_*.md`.
+
+### 0.4 Hướng đi hiện tại
+
+Mục tiêu đổi từ "tự động hóa 100% ngay" sang **dựng lại từng chức năng game, kiểm chứng live, rồi mới tự động hóa dần**:
+
+1. Hoàn thiện nền dữ liệu và kiểm chứng giao thức (đang làm; chọn khu và hồi sinh đã thấy trong client nhưng chưa thử live).
+2. Auto đánh quái theo `AUTO_SPEC.md`: P0 (dữ liệu, parser) và P1 (chọn mục tiêu, luân phiên kỹ năng, lưới va chạm) đã xong ở dạng hàm thuần chưa nối vào bot; P2 đến P7 (tiếp cận, đánh thường, kỹ năng, nghỉ, hồi sinh, tích hợp training) chưa làm.
+3. Bật lại dần các module cũ (bán đồ, mua thuốc, quest) sau khi từng cái được kiểm chứng.
+4. Sprint 5 chỉ làm khi cần mở ra ngoài localhost.
+
+### 0.5 "Bước tiếp theo" ở mục 5 của kế hoạch gốc
+
+Ba bước khởi động (monorepo, cài phụ thuộc, `core-client`) **đã hoàn thành**.
+
+---
+
+
 > **Dự án:** TuTien2D Multi-Account Dashboard & Automation Platform  
 > **Phiên bản kế hoạch:** v1.0  
 > **Thời gian dự kiến:** 5 Sprints (Giai đoạn cá nhân $\rightarrow$ Mở rộng đa người dùng)  
@@ -183,7 +229,7 @@
 
 ## Cấu hình Quest và điểm farm (2026-10-06)
 
-- Quest được bật/tắt riêng bằng utoMainQuest, utoDailyQuest (điểm danh + seed tasks) và utoCaveQuest. Dữ liệu cũ utoDaily/utoCave được đọc làm giá trị dự phòng khi cấu hình mới chưa có.
-- Farm có utoTravelToFarm, armMapId, armKhu, armX, armY. Dashboard hiển thị panel grid minh họa vị trí nhân vật và điểm farm, cùng map/khu/tọa độ và trạng thái đối chiếu.
+- Quest được bật/tắt riêng bằng autoMainQuest, autoDailyQuest (điểm danh + seed tasks) và autoCaveQuest. Dữ liệu cũ autoDaily/autoCave được đọc làm giá trị dự phòng khi cấu hình mới chưa có.
+- Farm có autoTravelToFarm, farmMapId, farmKhu, farmX, farmY. Dashboard hiển thị panel grid minh họa vị trí nhân vật và điểm farm, cùng map/khu/tọa độ và trạng thái đối chiếu.
 - Tự đi đến đích hiện chỉ gửi move khi cùng map và cùng khu, cách đích trên 3 đơn vị; giới hạn một lệnh mỗi 30 giây. Giao thức hiện triển khai chưa có command chuyển map/khu đã xác nhận, nên khác map/khu cần người dùng chuyển thủ công. Panel dùng tỷ lệ tọa độ minh họa, không phải bản đồ địa hình game.
 - Cập nhật cấu hình một phần giữ nguyên các nested fields trong sellRules và delayRangeMs.
