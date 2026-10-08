@@ -267,6 +267,7 @@ export class VendorRunner {
   private vitalsProbe: { startedAt: number; movesSent: number; hurtCount: number } | null = null;
   private vitalsProbeExhausted = false;
   private vitalsProbeMoves = 0;
+  private observedMapId: string | null = null;
   private observedKhu: number | null = null;
   private observedSoKhu: number | null = null;
   /** Thời điểm bật Auto; dùng để dừng Auto nếu quá lâu chưa có gói vitals chính thức. */
@@ -317,6 +318,7 @@ export class VendorRunner {
       this.vitalsProbe = null;
       this.vitalsProbeExhausted = false;
       this.vitalsProbeMoves = 0;
+      this.observedMapId = null;
       this.observedKhu = null;
       this.observedSoKhu = null;
       this.startLoop();
@@ -357,6 +359,7 @@ export class VendorRunner {
     if (this.lifecycle === 'stopped' || this.lifecycle === 'error' || !this.P || !this.env) throw new Error('VENDOR_NOT_RUNNING');
     const player = this.getPlayer();
     if (!player) throw new Error('VENDOR_NOT_IN_GAME');
+    if (!this.isMapReady()) throw new Error('VENDOR_MAP_NOT_READY');
     if (this.isDown(player)) throw new Error('VENDOR_CHARACTER_DOWN');
     // Gói vitals chính thức (you/hurt/revived) chỉ đến SAU khi nhân vật bắt đầu di chuyển, nên không đòi nó
     // trước khi bật Auto (sẽ không bao giờ bật được khi đứng yên). Mô hình HP của client (đầy lúc đăng nhập,
@@ -368,6 +371,7 @@ export class VendorRunner {
         || (anchor.khu != null && (!Number.isInteger(anchor.khu) || anchor.khu < 1))) {
         throw new Error('AUTO_ANCHOR_INVALID');
       }
+      if (anchor.mapId !== this.observedMapId) throw new Error('AUTO_ANCHOR_MAP_MISMATCH');
       const mapData = this.P.MapData?.get ? this.P.MapData.get(anchor.mapId) : this.P.MapData?.[anchor.mapId];
       if (!mapData) throw new Error('AUTO_ANCHOR_MAP_UNKNOWN');
     }
@@ -401,8 +405,9 @@ export class VendorRunner {
     const elapsed = this.startedAt > 0 ? Math.max(0, now - this.startedAt) : 0;
     const fps = elapsed > 0 ? this.frames / (elapsed / 1000) : 0;
     const vitals = this.getVitals(player);
-    const mapId = this.getMapId();
-    const khu = this.getKhu();
+    const mapReady = this.isMapReady();
+    const mapId = mapReady ? this.getMapId() : null;
+    const khu = mapReady ? this.getKhu() : null;
     const world = this.getWorldEntities(mapId, khu, now, player);
     return {
       lifecycle: this.lifecycle,
@@ -431,15 +436,15 @@ export class VendorRunner {
       tokenExpiresAt: this.tokenManager?.getSession?.()?.expiresAt ?? null,
       mapId,
       khu,
-      x: player ? safeNumber(player.x) : null,
-      y: player ? safeNumber(player.y) : null,
+      x: mapReady && player ? safeNumber(player.x) : null,
+      y: mapReady && player ? safeNumber(player.y) : null,
       hp: player ? safeNumber(player.hp) : null,
       maxHp: player ? safeNumber(player.hpMax) : null,
       mp: player ? safeNumber(player.mp) : null,
       maxMp: player ? safeNumber(player.mpMax) : null,
       downed: player ? this.isDown(player) : null,
       vitalsProbeMoves: this.vitalsProbeMoves,
-      soKhu: this.getSoKhu(),
+      soKhu: mapReady ? this.getSoKhu() : null,
       monsters: world.monsters,
       players: world.players,
       monstersContext: world.monstersContext,
@@ -512,7 +517,13 @@ export class VendorRunner {
     const supervisor = this.supervisor ?? this.createSupervisor();
     if (reconnect && this.autoRequested) {
       const anchor = supervisor.getSnapshot().anchor;
-      if (anchor) { supervisor.start(anchor, true); this.autoStartedAt = Date.now(); }
+      if (anchor) {
+        await this.waitForMapReady();
+        if (this.autoRequested && !this.stopRequested) {
+          supervisor.start(anchor, true);
+          this.autoStartedAt = Date.now();
+        }
+      }
     }
     // `lifecycle` có thể đã đổi trong lúc await (ví dụ supervisor dừng khẩn): đọc lại qua hàm để TypeScript không thu hẹp kiểu cũ.
     if (this.currentLifecycle() !== 'halted') this.lifecycle = this.autoRequested ? 'farming' : 'in_game';
@@ -526,6 +537,15 @@ export class VendorRunner {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error('VENDOR_SCENE_NOT_READY');
+  }
+
+  private async waitForMapReady(): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if (this.isMapReady()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('VENDOR_MAP_NOT_READY');
   }
 
   private currentLifecycle(): VendorRunnerSnapshot['lifecycle'] {
@@ -740,6 +760,7 @@ export class VendorRunner {
     this.lastVitalsAt = null;
     this.vitalsProbeExhausted = false;
     this.vitalsProbeMoves = 0;
+    this.observedMapId = null;
     this.observedKhu = null;
     this.observedSoKhu = null;
     if (this.reconnectAttempts >= this.options.reconnectMaxRetries) {
@@ -765,6 +786,7 @@ export class VendorRunner {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
     if (op === 'map') {
+      this.observedMapId = typeof packet.mapId === 'string' && packet.mapId.trim() ? packet.mapId : null;
       this.observedKhu = Number.isInteger(packet.khu) && Number(packet.khu) > 0 ? Number(packet.khu) : null;
       this.observedSoKhu = typeof packet.soKhu === 'number' && Number.isFinite(packet.soKhu) && packet.soKhu > 0
         ? packet.soKhu : null;
@@ -804,8 +826,19 @@ export class VendorRunner {
 
   private getPlayer(): any | null { return this.P?.SceneWorld?.player ?? null; }
   private getMapId(): string | null {
+    const transitioning = !!this.P?.SceneWorld?.transitioning;
+    if (this.observedMapId !== null) {
+      if (transitioning) return null;
+      const sceneMapId = this.P?.SceneWorld?.map?.data?.id;
+      if (typeof sceneMapId === 'string' && sceneMapId.trim() && sceneMapId !== this.observedMapId) return null;
+      return this.observedMapId;
+    }
+    if (transitioning) return null;
     const value = this.P?.SceneWorld?.map?.data?.id ?? this.P?.Gateway?.mapId;
     return typeof value === 'string' && value.trim() ? value : null;
+  }
+  private isMapReady(): boolean {
+    return this.observedMapId !== null && !this.P?.SceneWorld?.transitioning && this.getMapId() === this.observedMapId;
   }
   /**
    * The map packet is the authoritative source: gateway.js forwards its
@@ -922,9 +955,15 @@ export class VendorRunner {
     this.env = null;
     this.P = null;
     this.currentSocket = null;
+    this.observedMapId = null;
+    this.observedKhu = null;
+    this.observedSoKhu = null;
   }
 
   private disconnectTransportOnly(): void {
+    this.observedMapId = null;
+    this.observedKhu = null;
+    this.observedSoKhu = null;
     try { this.currentSocket?.close(); } catch { /* already closed */ }
     try { this.P?.Gateway?.socket?.close?.(); } catch { /* already closed */ }
     if (this.P?.Gateway) {

@@ -1373,3 +1373,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 3. [x] Rút worker pool/API/web về vendor-only; MiniMap chỉ đọc; bỏ move-to, đổi map/khu, vitals refresh, inventory, training và engine config khỏi dashboard.
 4. [x] Chuyển cấu hình DB tối giản vào server, đọc được record cũ và bỏ trường lạ khi ghi.
 5. [~] Chưa chạy `pnpm install`, `pnpm build` hoặc test trong sandbox; cần người giao việc chạy toàn bộ lệnh được liệt kê trong handoff.
+
+## O. Vendor map readiness — checklist 2026-10-08
+
+1. [x] Đọc source vendor local: `Gateway.mapId` được gán ở `op:"map"` trước `SceneWorld.enterServerMap`; map khác cảnh hiện tại bật `SceneWorld.transitioning` cho tới sau commit và hai `requestAnimationFrame`.
+2. [x] Runner ưu tiên `observedMapId`, xóa trạng thái khi reset/đóng kết nối/reconnect; snapshot không ghép map với tọa độ cũ trong lúc chưa biết/chuyển cảnh.
+3. [x] `startAuto` chặn map chưa sẵn sàng và anchor khác map; API error envelope có HTTP 409 và retry semantics tương ứng.
+4. [x] Test source thêm fake map khác `tan_vien`, map delay, snapshot trước/trong/sau transition, gate map và anchor mismatch; không phát sẵn kết quả snapshot.
+5. [~] Chưa chạy được test/build trong sandbox do `tsx` lỗi `uv_os_get_passwd returned ENOMEM`; cần người giao việc chạy `npx tsx --test src/headless/vendor-runner.test.ts`, contract test và `pnpm build`.
+6. [ ] Chưa xác minh timing/reconnect/anchor trên game thật.

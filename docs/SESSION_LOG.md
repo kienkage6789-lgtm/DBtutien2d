@@ -1,5 +1,26 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Vendor map readiness and Auto anchor guard
+
+Thay doi:
+- `vendor-runner.ts`: luu `observedMapId` tu goi `map`; uu tien map da quan sat, xoa khi reset/dong ket noi/reconnect; snapshot tra `null` cho map/khu/x/y trong luc chua co map hoac `SceneWorld.transitioning`, va chi phat toa do sau khi canh da commit.
+- `startAuto`: tu choi `VENDOR_MAP_NOT_READY` neu map chua san sang; tu choi `AUTO_ANCHOR_MAP_MISMATCH` neu anchor khac map da quan sat; reconnect Auto cho map moi commit truoc khi resume.
+- `vendor-auto-errors.ts` va contract test: hai loi map moi tra HTTP 409; `VENDOR_MAP_NOT_READY` retryable.
+- Test fixture co the tri hoan goi `map` va phat map `thanh_truc_lam`; them test snapshot truoc/trong/sau transition va gate anchor. Khong sua vendor.
+
+Thu tu client vendor da doc duoc tu source local:
+- Gateway khoi tao `mapId=null`. Khi nhan `op:"map"`, Gateway gan `mapId` truoc roi goi `SceneWorld.enterServerMap`.
+- Neu map khac canh mac dinh, `SceneWorld.transitioning=true` ngay; `SceneWorld.map` va toa do cu van con trong luc tai map. Sau `Assets.ensureMap` va commit `TileMap`, player nhan `map.x/map.y`; `transitioning` tat sau hai `requestAnimationFrame`.
+
+Lenh/ket qua:
+- `npx tsx --test src/headless/vendor-runner.test.ts`: bi chan truoc khi nap test boi `uv_os_get_passwd returned ENOMEM` trong tsx/Node 24.16.0; chua co ket qua test pass/fail.
+- `npx tsx --test src/api/vendor-auto.contract.test.ts`: bi cung loi `uv_os_get_passwd returned ENOMEM`.
+- `node --experimental-strip-types --test src/headless/vendor-runner.test.ts`: Node strip-only khong ho tro parameter property; khong chay duoc test.
+- TypeScript `transpileModule` cho 4 file sua: khong co diagnostic. Compiler API: 0 diagnostic tren 4 file sua; toan server con 18 diagnostic phu thuoc toolchain/thieu express types.
+- `git diff --check`: pass. Khong chay build, khong mo mang/game that, khong doc `data/`/`.env*`, khong sua vendor, khong commit.
+
+Chua xac minh: build va test trong moi truong nguoi giao viec; timing map/transition, reconnect va hanh vi anchor tren game that.
+
 ## 2026-10-08 — Xóa hẳn engine core, giữ engine vendor
 
 Thay đổi:

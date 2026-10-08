@@ -80,7 +80,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       <div className="mt-1 flex flex-wrap gap-x-3 text-slate-400"><span>Chết: {account.vendor.supervisor.stats.deaths}</span><span>Chuyến về: {account.vendor.supervisor.stats.trips}</span><span>Hurt: {account.vendor.hurtCount}</span></div>
       {account.vendor.supervisor.phase === 'halted' && <p role="alert" className="mt-1 text-rose-300">Đã dừng an toàn: {account.vendor.supervisor.reasonCode || 'không rõ lý do'}</p>}
       <div className="mt-2 flex gap-2">
-        <button type="button" disabled={account.vendor.autoRequested || account.vendor.downed === true || account.vitals.status !== 'fresh'} onClick={() => onStartVendorAuto(account)} className="rounded-lg border border-cyan-500/40 bg-cyan-600/20 px-2.5 py-1.5 text-cyan-200 disabled:opacity-40">Bật Auto tại vị trí này</button>
+        <button type="button" disabled={account.vendor.autoRequested || account.vendor.downed === true} onClick={() => onStartVendorAuto(account)} className="rounded-lg border border-cyan-500/40 bg-cyan-600/20 px-2.5 py-1.5 text-cyan-200 disabled:opacity-40">Bật Auto tại vị trí này</button>
         <button type="button" disabled={!account.vendor.autoRequested && account.vendor.supervisor.phase === 'idle'} onClick={() => onStopVendorAuto(account.id)} className="rounded-lg border border-rose-500/40 bg-rose-600/20 px-2.5 py-1.5 text-rose-200 disabled:opacity-40">Dừng Auto</button>
       </div>
     </div>}

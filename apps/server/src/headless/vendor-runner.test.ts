@@ -29,7 +29,9 @@ class FakeSocket implements VendorSocketLike {
   public static instances: FakeSocket[] = [];
   public static emitYouAfterMoveCount: number | null = null;
   public static emitHurtAfterMoveCount: number | null = null;
+  public static mapId = 'tan_vien';
   public static mapKhu: number | undefined = 1;
+  public static mapDelayMs = 0;
   public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
@@ -71,9 +73,11 @@ class FakeSocket implements VendorSocketLike {
       this.emit({ op: 'welcome', serverTime: Date.now(), hasChar: true, snap: 2, ep: 1 });
       setTimeout(() => {
         this.emit({ op: 'state', save: { realm: 'luyen_khi_8', exp: 0, equipment: {} } });
-        this.emit({ op: 'map', mapId: 'tan_vien', ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: 240, y: 192, dir: 0, p: [] });
-        this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
-        if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
+        setTimeout(() => {
+          this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: 240, y: 192, dir: 0, p: [] });
+          this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
+          if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
+        }, FakeSocket.mapDelayMs);
       }, 5);
     });
   }
@@ -146,6 +150,91 @@ test('VendorRunner validates the configured game URL before loading the client',
     gameServerUrl: 'https://fixture.invalid/not-websocket',
     vendorClientDir,
   }), /VENDOR_GAME_URL_INVALID/);
+});
+
+test('VendorRunner keeps map and position unknown until the observed map is committed', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.mapId = 'thanh_truc_lam';
+  FakeSocket.mapDelayMs = 120;
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    const beforeMap = runner.getSnapshot();
+    assert.equal(beforeMap.mapId, null);
+    assert.equal(beforeMap.khu, null);
+    assert.equal(beforeMap.x, null);
+    assert.equal(beforeMap.y, null);
+
+    for (let i = 0; i < 30 && (runner.getSnapshot().packets.incoming.map ?? 0) < 1; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const duringTransition = runner.getSnapshot();
+    assert.equal(duringTransition.packets.incoming.map, 1);
+    assert.equal(duringTransition.mapId, null);
+    assert.equal(duringTransition.khu, null);
+    assert.equal(duringTransition.x, null);
+    assert.equal(duringTransition.y, null);
+
+    for (let i = 0; i < 600 && runner.getSnapshot().mapId === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const afterMap = runner.getSnapshot();
+    assert.equal(afterMap.mapId, 'thanh_truc_lam');
+    assert.notEqual(afterMap.mapId, 'tan_vien');
+    assert.equal(afterMap.x, 240);
+    assert.equal(afterMap.y, 192);
+  } finally {
+    FakeSocket.mapId = 'tan_vien';
+    FakeSocket.mapDelayMs = 0;
+    await runner.stop();
+  }
+});
+
+test('VendorRunner gates Auto on map readiness and rejects a mismatched anchor', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.mapId = 'thanh_truc_lam';
+  FakeSocket.mapDelayMs = 160;
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    await assert.rejects(() => runner.startAuto(), /VENDOR_MAP_NOT_READY/);
+
+    for (let i = 0; i < 600 && runner.getSnapshot().mapId !== 'thanh_truc_lam'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(runner.getSnapshot().mapId, 'thanh_truc_lam');
+    await assert.rejects(() => runner.startAuto({ mapId: 'tan_vien', khu: 1, x: 240, y: 192 }), /AUTO_ANCHOR_MAP_MISMATCH/);
+
+    const started = await runner.startAuto({ mapId: 'thanh_truc_lam', khu: 1, x: 240, y: 192 });
+    assert.equal(started.anchor?.mapId, 'thanh_truc_lam');
+    assert.equal(started.autoRequested, true);
+  } finally {
+    FakeSocket.mapId = 'tan_vien';
+    FakeSocket.mapDelayMs = 0;
+    await runner.stop();
+  }
 });
 
 test('VendorRunner starts Auto without an authoritative vitals packet, then stops it if none arrives', async () => {

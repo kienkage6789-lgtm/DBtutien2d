@@ -14,5 +14,23 @@ test('vendor Auto errors use explicit machine codes and retry semantics', () => 
   });
   assert.equal(vendorAutoErrorResponse('VENDOR_VITALS_UNKNOWN').body.retryable, true);
   assert.equal(vendorAutoErrorResponse('VENDOR_NOT_RUNNING').status, 409);
+  assert.deepEqual(vendorAutoErrorResponse('VENDOR_MAP_NOT_READY'), {
+    status: 409,
+    body: {
+      success: false,
+      error: 'VENDOR_MAP_NOT_READY',
+      errorCode: 'VENDOR_MAP_NOT_READY',
+      retryable: true,
+    },
+  });
+  assert.deepEqual(vendorAutoErrorResponse('AUTO_ANCHOR_MAP_MISMATCH'), {
+    status: 409,
+    body: {
+      success: false,
+      error: 'AUTO_ANCHOR_MAP_MISMATCH',
+      errorCode: 'AUTO_ANCHOR_MAP_MISMATCH',
+      retryable: false,
+    },
+  });
   assert.equal(vendorAutoErrorResponse('AUTO_ANCHOR_MAP_UNKNOWN').body.retryable, false);
 });

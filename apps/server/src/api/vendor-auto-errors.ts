@@ -6,9 +6,11 @@ export function vendorAutoErrorResponse(error: string): {
   const errorCode = /^[A-Z][A-Z0-9_]{2,79}$/.test(candidate.trim()) ? candidate.trim() : 'VENDOR_AUTO_FAILED';
   const retryable = errorCode === 'VENDOR_NOT_IN_GAME'
     || errorCode === 'VENDOR_VITALS_UNKNOWN'
-    || errorCode === 'VENDOR_NOT_RUNNING';
+    || errorCode === 'VENDOR_NOT_RUNNING'
+    || errorCode === 'VENDOR_MAP_NOT_READY';
   const status = errorCode === 'VENDOR_CHARACTER_DOWN' ? 409
     : errorCode === 'VENDOR_NOT_RUNNING' || errorCode === 'VENDOR_NOT_IN_GAME'
-      || errorCode === 'VENDOR_VITALS_UNKNOWN' || errorCode === 'ENGINE_VENDOR_REQUIRED' ? 409 : 400;
+      || errorCode === 'VENDOR_VITALS_UNKNOWN' || errorCode === 'VENDOR_MAP_NOT_READY'
+      || errorCode === 'AUTO_ANCHOR_MAP_MISMATCH' || errorCode === 'ENGINE_VENDOR_REQUIRED' ? 409 : 400;
   return { status, body: { success: false, error: errorCode, errorCode, retryable } };
 }

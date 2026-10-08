@@ -141,6 +141,7 @@ const emptyEntityContext = (): MapEntityContext => ({
 
 export class WorkerPool {
   private readonly activeVendors = new Map<string, { runner: VendorRunner }>();
+  private runtimeBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private readonly observedMaps = new Map<string, ObservedMap>();
   private readonly auth = new SupabaseAuth({
     url: CONFIG.SUPABASE_URL,
@@ -196,6 +197,7 @@ export class WorkerPool {
     });
 
     this.activeVendors.set(accountId, { runner });
+    this.ensureRuntimeBroadcast();
     try {
       await runner.start();
       db.updateAccount(accountId, { status: 'running', authError: null });
@@ -211,6 +213,26 @@ export class WorkerPool {
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
       throw error;
     }
+  }
+
+  /**
+   * Vị trí, quái và người chơi của engine vendor chỉ đổi trong runner, không có sự kiện đẩy ra ngoài.
+   * Không phát định kỳ thì dashboard chỉ nhận snapshot khi có log, và TTL của context (map 15 s, quái 5 s)
+   * làm marker biến mất sau vài giây.
+   */
+  private ensureRuntimeBroadcast(): void {
+    if (this.runtimeBroadcastTimer) return;
+    this.runtimeBroadcastTimer = setInterval(() => {
+      if (this.activeVendors.size === 0) {
+        if (this.runtimeBroadcastTimer) clearInterval(this.runtimeBroadcastTimer);
+        this.runtimeBroadcastTimer = null;
+        return;
+      }
+      for (const accountId of this.activeVendors.keys()) {
+        try { wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); } catch { /* một tài khoản lỗi không làm dừng vòng phát */ }
+      }
+    }, 1000);
+    this.runtimeBroadcastTimer.unref?.();
   }
 
   public async stopAccount(accountId: string, opts: { keepStatus?: boolean } = {}): Promise<boolean> {
