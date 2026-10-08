@@ -122,7 +122,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
     </ul>
     {seedLock && supportedTasks.some((item) => item.runsLeft !== null && item.runsLeft > 0) && <p role="status" className="mt-2 text-amber-300">{seedLock}</p>}
     {operation && <div className="mt-2 flex items-center justify-between gap-2 rounded border border-cyan-500/25 bg-cyan-950/15 px-2 py-1.5 text-cyan-200">
-      <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.progress?.itemId === 'nam_linh_chi' ? ` · nấm ${operation.progress.collected}/${operation.progress.required}` : ''}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>
+      <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.progress?.itemId === 'nam_linh_chi' ? ` · nấm ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'truc_gia' && operation.progress?.itemId === 'truc_tam' ? ` · Trúc Tâm: ${operation.progress.collected}/${operation.progress.required}` : ''}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>
       {active(operation) && <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded border border-rose-500/40 bg-rose-600/20 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy</button>}
     </div>}
     {operation?.why && <p role="alert" className="mt-2 text-rose-300">{cleanWhy(operation.why)}</p>}

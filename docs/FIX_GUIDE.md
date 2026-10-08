@@ -1427,3 +1427,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 3. [x] Vendor adapter đọc `SceneWorld.map`/`flatProps`, `Inventory.count('nam_linh_chi')`, gọi `Gateway.cmd('resource.harvest')`; dashboard/API/realtime hiển thị hai việc và tiến độ nấm.
 4. [~] Esbuild transform cú pháp 8 file TS/TSX pass; test source `daily-quests` 16/16, `daily.contract` 1/1 và `vendor-runner` 18/18 pass với preload tạm cho lỗi `os.userInfo` của sandbox; `pnpm build`/Vitest/full typecheck vẫn chưa chạy được vì `pnpm` thiếu PATH và package dưới `.pnpm` bị `EPERM`.
 5. [ ] Chưa xác minh live lại ngưỡng khoảng cách, mọi prop đồng thời hồi, giới hạn 3 lượt/ngày phía server; `truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi` vẫn chưa hỗ trợ.
+
+## U. Module nhiệm vụ hằng ngày — `truc_gia` (offline 2026-10-09)
+
+1. [x] State machine hỗ trợ `truc_gia`: nhận ở Đại Phu, đi theo map tới `thanh_truc_lam`, liệt kê cây từ map đang tải, chặt 4 prop và giao việc; tiếp tục việc đang dở.
+2. [x] Vendor adapter suy tọa độ `tx/ty`, trả `activeCollectedIds`, giữ `startChopping(prop, mapId?)` tổng quát; `duoc_moc` và `linh_chi` giữ hành vi cũ.
+3. [x] API/docs/dashboard hiển thị `truc_gia` và tiến độ `Trúc Tâm: n/4`; route thử nghiệm, vendor client và `auto-supervisor.ts` không đổi.
+4. [~] `typescript.transpileModule` cho 5 file TS/TSX thay đổi pass cú pháp; `daily-quests.test.ts` và `vendor-runner.test.ts` bị chặn trước khi nạp bởi `uv_os_get_passwd returned ENOMEM`; chưa chạy được `pnpm build`, Vitest hoặc các test `tsx --test` còn lại trong sandbox; cần chạy từng file server theo danh sách handoff và toàn bộ build/test.
+5. [ ] Chưa xác minh live ngưỡng khoảng cách, cây bị người khác chặt/`hidden`, giới hạn 3 lượt/ngày phía server; `cau_ca`/`ho_tong_chau`/`dai_hoi` chưa hỗ trợ.

@@ -9,6 +9,9 @@ const task = {
 const linhChiTask = {
   id: 'linh_chi', name: 'Hái Nấm Linh Chi Núi', kind: 'collect', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
 };
+const trucGiaTask = {
+  id: 'truc_gia', name: 'Chặt Trúc Tâm', kind: 'collect', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
+};
 
 class FakeDailyClient implements DailyClient {
   public now = 0;
@@ -28,10 +31,18 @@ class FakeDailyClient implements DailyClient {
     { id: 'linh_chi_2', type: 'ling_chi_prop', x: 200, y: 100 },
     { id: 'linh_chi_3', type: 'ling_chi_prop', x: 300, y: 100 },
   ];
+  public bambooProps: DailyProp[] = [
+    { id: 'truc_gia_1', type: 'seed_bamboo_prop', seedTask: 'truc_gia', x: 120, y: 120, r: 44 },
+    { id: 'truc_gia_2', type: 'seed_bamboo_prop', seedTask: 'truc_gia', x: 220, y: 120, r: 44 },
+    { id: 'truc_gia_3', type: 'seed_bamboo_prop', seedTask: 'truc_gia', x: 320, y: 120, r: 44 },
+    { id: 'truc_gia_4', type: 'seed_bamboo_prop', seedTask: 'truc_gia', x: 420, y: 120, r: 44 },
+  ];
+  public lastChopPropId: string | null = null;
+  public chopMapIds: string[] = [];
   public resolveAck: ((ack: DailyAck) => void) | null = null;
   public state: DailyClientState = {
     today: '2026-10-08', stage: 21, checkin: { done: false, total: 0 }, seedTasks: [task], activeSeedTask: null,
-    stones: 100, duocCong: 4, canhKho: 0, namLinhChi: 0, activeCollected: 0, activeRequired: null, drops: [],
+    stones: 100, duocCong: 4, canhKho: 0, namLinhChi: 0, activeCollected: 0, activeCollectedIds: [], activeRequired: null, drops: [],
   };
 
   public nowMs(): number { return this.now; }
@@ -48,14 +59,15 @@ class FakeDailyClient implements DailyClient {
     this.walk = { operationId: `walk-${this.now}`, target: request.target ?? null, resolvedTarget: request.target ?? null, status: 'accepted', requester: 'daily', startedAt: this.now, updatedAt: this.now };
     return this.walk;
   }
-  public readDailyState(): DailyClientState { return { ...this.state, checkin: { ...this.state.checkin }, seedTasks: this.state.seedTasks.map((item) => ({ ...item })), drops: this.state.drops.map((item) => ({ ...item })) }; }
+  public readDailyState(): DailyClientState { return { ...this.state, checkin: { ...this.state.checkin }, seedTasks: this.state.seedTasks.map((item) => ({ ...item })), activeCollectedIds: [...this.state.activeCollectedIds], drops: this.state.drops.map((item) => ({ ...item })) }; }
   public getProp(_mapId: string, propId: string): DailyProp | null { return { id: propId, x: 100, y: 100, r: 58 }; }
-  public startChopping(_prop: DailyProp): boolean { return true; }
+  public startChopping(prop: DailyProp, mapId: string = 'duoc_vien'): boolean { this.lastChopPropId = prop.id; this.chopMapIds.push(mapId); return true; }
   public invokeCheckin(): unknown { return true; }
   public listProps(mapId: string, type: string): DailyProp[] {
     // Mô hình đúng client: cây Linh Chi chỉ đọc được từ map đang tải.
     if (this.positionMapId !== null && mapId !== this.positionMapId) return [];
-    return this.resourceProps.filter((prop) => prop.type === type).map((prop) => ({ ...prop }));
+    const source = type === 'seed_bamboo_prop' ? this.bambooProps : this.resourceProps;
+    return source.filter((prop) => prop.type === type).map((prop) => ({ ...prop }));
   }
   public getPosition(): { mapId: string; x: number; y: number } | null { return this.positionMapId ? { mapId: this.positionMapId, x: 100, y: 100 } : null; }
   public harvestResource(_propId: string): unknown { this.commandCount += 1; return true; }
@@ -65,10 +77,13 @@ class FakeDailyClient implements DailyClient {
     const taskId = this.state.activeSeedTask;
     this.state.activeSeedTask = null;
     this.state.activeCollected = 0;
+    this.state.activeCollectedIds = [];
     this.state.namLinhChi = taskId === 'linh_chi' ? 0 : this.state.namLinhChi;
     this.state.activeRequired = null;
-    this.state.stones = (this.state.stones ?? 0) + (taskId === 'linh_chi' ? 10 : 20);
-    this.state.duocCong = (this.state.duocCong ?? 0) + (taskId === 'linh_chi' ? 1 : 3);
+    // Phần thưởng thật đã đo: linh_chi 10 Linh Thạch + 1 Dược Công, truc_gia 15 + 1, duoc_moc 20 + 3.
+    const reward = taskId === 'linh_chi' ? { stones: 10, duocCong: 1 } : taskId === 'truc_gia' ? { stones: 15, duocCong: 1 } : { stones: 20, duocCong: 3 };
+    this.state.stones = (this.state.stones ?? 0) + reward.stones;
+    this.state.duocCong = (this.state.duocCong ?? 0) + reward.duocCong;
     return true;
   }
   public issueCommand(command: string, action: () => unknown): Promise<DailyAck> {
@@ -519,4 +534,143 @@ test('DailyQuests điểm danh từ map khác đi theo map tới tan_vien trư�
   assert.ok(client.walkRequests[1].target);
   drive(client, daily, () => client.command === 'diemdanh');
   assert.equal(client.command, 'diemdanh');
+});
+
+async function acceptTrucGia(client: FakeDailyClient, daily: DailyQuests): Promise<void> {
+  drive(client, daily, () => client.command === 'seed.start');
+  assert.equal(client.command, 'seed.start');
+  client.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+  daily.tick();
+  client.command = '';
+}
+
+function chopTrucGia(client: FakeDailyClient, daily: DailyQuests, collect: boolean): string {
+  client.lastChopPropId = null;
+  drive(client, daily, () => client.lastChopPropId !== null);
+  const propId = client.lastChopPropId;
+  assert.ok(propId);
+  if (collect) {
+    client.state.activeCollectedIds.push(propId);
+    daily.tick();
+  } else {
+    client.now += 6_000;
+    daily.tick();
+  }
+  return propId;
+}
+
+async function completeTrucGiaRun(client: FakeDailyClient, daily: DailyQuests): Promise<void> {
+  await acceptTrucGia(client, daily);
+  for (let i = 0; i < 4; i += 1) chopTrucGia(client, daily, true);
+  drive(client, daily, () => client.command === 'seed.complete');
+  assert.equal(client.command, 'seed.complete');
+  client.ack({ cmd: 'seed.complete', ok: true, stones: 15, duocCong: 1 });
+  await flush();
+  daily.tick();
+}
+
+test('DailyQuests truc_gia đi theo map, chọn 4 cây đã tải và giao Đại Phu đúng thứ tự', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [trucGiaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('truc_gia');
+  await acceptTrucGia(client, daily);
+  for (let i = 0; i < 4; i += 1) chopTrucGia(client, daily, true);
+  drive(client, daily, () => client.command === 'seed.complete');
+  assert.equal(client.command, 'seed.complete');
+  assert.deepEqual(client.chopMapIds, ['thanh_truc_lam', 'thanh_truc_lam', 'thanh_truc_lam', 'thanh_truc_lam']);
+  const mapOnly = client.walkRequests.filter((request) => request.target === undefined).map((request) => request.targetMapId);
+  assert.deepEqual(mapOnly, ['thanh_truc_lam', 'duoc_vien']);
+  const bambooWalk = client.walkRequests.find((request) => request.targetMapId === 'thanh_truc_lam' && request.target);
+  assert.deepEqual(bambooWalk?.target, { x: 120, y: 136 });
+  assert.deepEqual(daily.getOperation()?.progress, { itemId: 'truc_tam', collected: 4, required: 4 });
+});
+
+test('DailyQuests truc_gia tiếp tục việc dở từ các prop đã thu và lặp đủ runs', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'thanh_truc_lam';
+  client.state.seedTasks = [{ ...trucGiaTask, runsLeft: 3 }];
+  client.state.activeSeedTask = 'truc_gia';
+  client.state.activeCollectedIds = ['truc_gia_1', 'truc_gia_2'];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('truc_gia', 2);
+  assert.equal(daily.getOperation()?.step, 'seed_walk_tree');
+  const first = chopTrucGia(client, daily, true);
+  assert.equal(first, 'truc_gia_3');
+  const second = chopTrucGia(client, daily, true);
+  assert.equal(second, 'truc_gia_4');
+  assert.notEqual(client.command, 'seed.start');
+  drive(client, daily, () => client.command === 'seed.complete');
+  client.ack({ cmd: 'seed.complete', ok: true, stones: 15, duocCong: 1 });
+  await flush();
+  daily.tick();
+  daily.tick();
+  assert.equal(daily.getOperation()?.runIndex, 2);
+  assert.equal(daily.getOperation()?.step, 'seed_walk_npc');
+});
+
+test('DailyQuests truc_gia chạy nhiều lượt và cộng đúng phần thưởng', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [trucGiaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('truc_gia', 2);
+  await completeTrucGiaRun(client, daily);
+  await completeTrucGiaRun(client, daily);
+  assert.equal(daily.getOperation()?.status, 'done');
+  assert.deepEqual(daily.getOperation()?.rewards, { stones: 30, duocCong: 2 });
+  assert.equal(client.chopMapIds.length, 8);
+});
+
+test('DailyQuests truc_gia áp sát/chặt lại tối đa 3 lần rồi CHOP_NO_PROGRESS', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'thanh_truc_lam';
+  client.state.seedTasks = [trucGiaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('truc_gia');
+  await acceptTrucGia(client, daily);
+  chopTrucGia(client, daily, false);
+  chopTrucGia(client, daily, false);
+  chopTrucGia(client, daily, false);
+  assert.equal(daily.getOperation()?.status, 'failed');
+  assert.equal(daily.getOperation()?.reason, 'CHOP_NO_PROGRESS');
+  assert.match(daily.getOperation()?.why ?? '', /distance=/);
+  assert.equal(client.chopMapIds.length, 3);
+});
+
+test('DailyQuests truc_gia hủy giữa chừng và hủy ngay khi Auto bật', () => {
+  const client = new FakeDailyClient();
+  client.state.seedTasks = [trucGiaTask];
+  const daily = new DailyQuests(client);
+  const operation = daily.startSeedTask('truc_gia');
+  daily.tick();
+  assert.equal(daily.cancel(operation.operationId, 'user_cancelled'), true);
+  const commandCount = client.commandCount;
+  daily.tick();
+  assert.equal(client.commandCount, commandCount);
+
+  const autoClient = new FakeDailyClient();
+  autoClient.state.seedTasks = [trucGiaTask];
+  const autoDaily = new DailyQuests(autoClient);
+  autoDaily.startSeedTask('truc_gia');
+  autoClient.auto = true;
+  autoDaily.tick();
+  assert.equal(autoDaily.getOperation()?.status, 'cancelled');
+  assert.equal(autoDaily.getOperation()?.reason, 'auto_started');
+});
+
+test('DailyQuests truc_gia timeout ACK seed.start không retry mù', () => {
+  const client = new FakeDailyClient();
+  client.state.seedTasks = [trucGiaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('truc_gia');
+  drive(client, daily, () => client.command === 'seed.start');
+  assert.equal(client.commandCount, 2);
+  client.now = 6_000;
+  daily.tick();
+  assert.equal(daily.getOperation()?.status, 'failed');
+  assert.equal(daily.getOperation()?.reason, 'ACK_TIMEOUT');
+  assert.equal(client.commandCount, 2);
 });

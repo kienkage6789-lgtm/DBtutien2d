@@ -152,3 +152,26 @@ Chưa đo: ngưỡng khoảng cách chính xác tới prop/NPC (giữa 35 px và
 Đã triển khai offline `linh_chi` trong `DailyQuests` và `VendorRunner`: nhận/giao ở Đại Phu, đi nhiều map tới `tan_vien`, chọn prop `ling_chi_prop` không ẩn theo khoảng cách, gọi `resource.harvest`, đọc `Inventory.count('nam_linh_chi')` và xử lý `ack.du`/`retryAfter` hữu hạn. `duoc_moc` giữ nguyên chu trình cũ; các việc khác vẫn `TASK_NOT_SUPPORTED`. Bản triển khai không phải phép đo live mới.
 
 Chưa xác minh: build/test đầy đủ trong môi trường giao việc, ngưỡng khoảng cách chính xác, hành vi khi mọi prop đồng thời hồi, giới hạn 3 lượt/ngày phía server và `truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi`.
+
+---
+
+## 11. KẾT QUẢ ĐO LIVE — chu trình `truc_gia` hoàn chỉnh (2026-10-09, `duoc_vien` ↔ `thanh_truc_lam`)
+
+Đo qua `quest-probe` (`seed.start`, `props`, `chop`, `status`, `seed.complete`). Xung quanh 23 quái ở `thanh_truc_lam`; hurt tổng 2 lần, không gục.
+
+| Bước | Điều kiện | Kết quả (gói server) |
+|---|---|---|
+| `seed.start truc_gia` | cách Đại Phu 40 px | `ack {ok:true, toast:"Đã nhận việc của Đại Phu"}` + `state {reason:"seed.start"}`; `daily.truc_gia = {day, n:1}` |
+| Đi tới `thanh_truc_lam` | `walkTo` map 1 chặng | thành công (khu 1, điểm xuất hiện (432,927)) |
+| Props việc | `props` của map đã tải | 4 prop `truc_gia_1..4`, type `seed_bamboo_prop`, `seedTask:"truc_gia"`, `r` 44, tất cả hiện: (592,192), (880,416), (336,672), (1008,288); `block:true` (ô bị chặn, ô chiếm vùng phía TRÊN toạ độ prop: đáy ô = `prop.y`) |
+| Chặt thử đứng cách điểm chặt 82 px | đích `(x, y+36)` bị `walkTo` dịch xa | KHÔNG thu được: client tự hủy việc chặt (tầm = `r+16` = 60 px quanh `(prop.x, prop.y - TILE/2)`); không phát lệnh nào |
+| Chặt đứng cách điểm chặt 37–51 px | đích `(x, y+16)` | client tự chặt 3 nhát (~1,4 s), chặt xong tự gọi `collectSeedMaterial` ⇒ `seed.collect {propId}` ⇒ `ack {ok:true}` (không toast) + `state {reason:"seed.collect"}`; `seedQuest.collected` 1 → 4 |
+| `seed.complete` | cách Đại Phu 37 px | `ack {ok:true, toast:"Đã báo công việc vặt — nhận Dược Công"}` + `state`; Linh Thạch 1375 → 1390 (+15), Dược Công 24 → 25 (+1) |
+
+Khác `duoc_moc`: trúc là prop riêng (4 cây, mỗi cây một lần), chặt xong thu NGAY (không có cành rơi để nhặt); khác `linh_chi`: dùng `seed.collect` (không phải `resource.harvest`) và số cây cần đã cố định theo prop. Phần thưởng khớp định nghĩa: 1 Dược Công + 15 Linh Thạch.
+
+Bài học áp dụng: đích đi bộ tới cây là `(prop.x, prop.y + 16)` (sát hơn 36 px vì ô cây chiếm vùng phía trên); prop của `thanh_truc_lam` phải đọc từ map ĐÃ TẢI (có `x/y`), đi theo map tới `thanh_truc_lam` trước (`walkTo` nhiều map không đi tiếp tới `target`).
+
+Chưa đo: khi cây bị người khác chặt (`hidden`), ngưỡng khoảng cách chính xác, giới hạn 3 lượt/ngày ở server.
+
+Triển khai offline 2026-10-09: `daily-quests.ts` và `vendor-runner.ts` đã hỗ trợ `truc_gia` theo kết quả đo trên; không xem dòng này là xác minh live mới. `duoc_moc` và `linh_chi` giữ nguyên hành vi đã triển khai.

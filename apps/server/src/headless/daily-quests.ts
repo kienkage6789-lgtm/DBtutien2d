@@ -75,6 +75,7 @@ export interface DailyAck {
   retryAfter?: number;
   regrowAfter?: number;
   itemId?: string;
+  propId?: string;
 }
 
 export interface DailyProp {
@@ -83,6 +84,7 @@ export interface DailyProp {
   y: number;
   r?: number;
   chopTask?: string;
+  seedTask?: string;
   type?: string;
   hidden?: boolean;
 }
@@ -97,6 +99,7 @@ export interface DailyDrop {
 
 export interface DailyClientState extends DailyStatus {
   activeCollected: number | null;
+  activeCollectedIds: string[];
   activeRequired: number | null;
   drops: DailyDrop[];
 }
@@ -116,7 +119,7 @@ export interface DailyClient {
   getProp(mapId: string, propId: string): DailyProp | null;
   listProps?(mapId: string, type: string): DailyProp[];
   getPosition?(): { mapId: string; x: number; y: number } | null;
-  startChopping(prop: DailyProp): boolean;
+  startChopping(prop: DailyProp, mapId?: string): boolean;
   invokeCheckin(): unknown;
   startSeedQuest(taskId: string): unknown;
   completeSeedQuest(): unknown;
@@ -158,17 +161,21 @@ const ACTIVE_WALK = new Set<WalkOperation['status']>(['accepted', 'running']);
 const ACTIVE_DAILY = new Set<DailyOperationStatus>(['accepted', 'running']);
 const DUOC_MOC_TASK = 'duoc_moc';
 const LINH_CHI_TASK = 'linh_chi';
-const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK]);
+const TRUC_GIA_TASK = 'truc_gia';
+const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK, TRUC_GIA_TASK]);
 const NPC_CHECKIN = 'manh_shopt1';
 const NPC_SEED = 'dai_phu';
 const TREE_SEED = 'co_thu_linh_moc';
+const BAMBOO_MAP = 'thanh_truc_lam';
+const BAMBOO_PROP_TYPE = 'seed_bamboo_prop';
 const TREE_TILE_SIZE = 32;
 const REQUIRED_BRANCHES = 5;
 const REQUIRED_LINH_CHI = 3;
+const REQUIRED_BAMBOO = 4;
 const MAX_CHOP_ATTEMPTS = 3;
 const ACK_TIMEOUT_MS = 5_000;
 const STEP_TIMEOUT_MS = 30_000;
-const CHOP_WAIT_MS = 5_000;
+const CHOP_WAIT_MS = 6_000;
 const TOTAL_RUN_TIMEOUT_MS = 6 * 60_000;
 const RESOURCE_APPROACH_OFFSET = 30;
 const RESOURCE_CLOSE_OFFSET = 12;
@@ -195,6 +202,7 @@ function copyOperation(operation: DailyOperation | null): DailyOperation | null 
 function formatProgress(state: DailyClientState, target: string): string {
   const map = state.activeSeedTask ?? 'unknown';
   if (map === LINH_CHI_TASK) return `${target} map=${map} nam=${state.namLinhChi ?? 'unknown'}/${REQUIRED_LINH_CHI}`;
+  if (map === TRUC_GIA_TASK) return `${target} map=${map} truc=${state.activeCollectedIds.length}/${REQUIRED_BAMBOO}`;
   const collected = state.activeCollected ?? state.canhKho ?? 0;
   return `${target} map=${map} canh=${collected}/${REQUIRED_BRANCHES}`;
 }
@@ -220,8 +228,18 @@ export class DailyQuests {
   private abortOnHurt = false;
   private maxHurt = 1;
   private totalDeadlineAt = 0;
-  private pendingCollectAck: { deadlineAt: number; result: DailyAck | null } | null = null;
+  private pendingCollectAck: {
+    deadlineAt: number;
+    result: DailyAck | null;
+    mode: 'drop' | 'bamboo';
+    propId?: string;
+    beforeCollectedIds: Set<string>;
+    beforeCollected: number;
+  } | null = null;
   private pendingHarvestPropId: string | null = null;
+  private collectedIds = new Set<string>();
+  private chopPropId: string | null = null;
+  private chopMapId: string | null = null;
   private resourceTried = new Set<string>();
   private resourceCoolingUntil = new Map<string, number>();
   private resourceWaitUntil = 0;
@@ -278,7 +296,11 @@ export class DailyQuests {
     if (!Number.isInteger(this.maxHurt) || this.maxHurt < 1 || this.maxHurt > 50) throw new DailyError('INVALID_REQUEST');
     this.createOperation('seed', taskId, runs, state);
     const continuing = state.activeSeedTask === taskId;
-    const enough = taskId === LINH_CHI_TASK && (state.namLinhChi ?? 0) >= REQUIRED_LINH_CHI;
+    const enough = taskId === LINH_CHI_TASK
+      ? (state.namLinhChi ?? 0) >= REQUIRED_LINH_CHI
+      : taskId === TRUC_GIA_TASK
+        ? state.activeCollectedIds.length >= REQUIRED_BAMBOO
+        : false;
     this.setStep(continuing
       ? enough ? 'seed_walk_complete' : taskId === LINH_CHI_TASK ? 'seed_walk_resource' : 'seed_walk_tree'
       : 'seed_walk_npc');
@@ -337,6 +359,30 @@ export class DailyQuests {
     }
     if (this.pendingWalk) {
       this.pollWalk(now);
+      return;
+    }
+    if (this.pendingCollectAck?.mode === 'bamboo') {
+      const pending = this.pendingCollectAck;
+      if (pending.result) {
+        this.pendingCollectAck = null;
+        if (!pending.result.ok) {
+          this.retryBambooChop(`ack=${cleanServerText(pending.result.why ?? pending.result.toast, 'server_refused')}`);
+        } else {
+          this.finishBambooChop(pending.propId ?? this.chopPropId ?? 'unknown', now);
+        }
+        return;
+      }
+      if (this.bambooChopProgressed(pending)) {
+        this.pendingCollectAck = null;
+        this.client.cancelPendingCommand?.('seed.collect');
+        this.finishBambooChop(pending.propId ?? this.chopPropId ?? 'unknown', now);
+        return;
+      }
+      if (pending.deadlineAt > 0 && now >= pending.deadlineAt) {
+        this.pendingCollectAck = null;
+        this.client.cancelPendingCommand?.('seed.collect');
+        this.retryBambooChop('progress_timeout');
+      }
       return;
     }
     if (this.pendingCollectAck?.result) {
@@ -412,6 +458,9 @@ export class DailyQuests {
     this.pendingDrop = null;
     this.chopStartedAt = 0;
     this.chopAttempts = 0;
+    this.collectedIds = new Set(state.activeCollectedIds);
+    this.chopPropId = null;
+    this.chopMapId = null;
     this.collectedBefore = state.activeCollected ?? 0;
     this.baselineStones = state.stones;
     this.baselineDuocCong = state.duocCong;
@@ -471,6 +520,10 @@ export class DailyQuests {
   }
 
   private walkToTree(): void {
+    if (this.isTrucGia()) {
+      this.walkToBamboo();
+      return;
+    }
     if (this.beginWalkToMapIfNeeded('duoc_vien')) return;
     const prop = this.client.getProp('duoc_vien', TREE_SEED);
     if (!prop) { this.fail('TARGET_INVALID'); return; }
@@ -490,6 +543,53 @@ export class DailyQuests {
   }
 
   private isLinhChi(): boolean { return this.operation?.taskId === LINH_CHI_TASK; }
+
+  private isTrucGia(): boolean { return this.operation?.taskId === TRUC_GIA_TASK; }
+
+  private currentBambooCount(state: DailyClientState = this.client.readDailyState()): number {
+    for (const id of state.activeCollectedIds) this.collectedIds.add(id);
+    return this.collectedIds.size;
+  }
+
+  private walkToBamboo(): void {
+    if (!this.isTrucGia()) { this.fail('INVALID_STEP'); return; }
+    const state = this.client.readDailyState();
+    const collected = this.currentBambooCount(state);
+    if (collected >= REQUIRED_BAMBOO) {
+      this.setStep('seed_walk_complete');
+      return;
+    }
+    if (this.beginWalkToMapIfNeeded(BAMBOO_MAP)) return;
+    const now = this.client.nowMs();
+    const props = (this.client.listProps?.(BAMBOO_MAP, BAMBOO_PROP_TYPE) ?? [])
+      .filter((prop) => prop.type === BAMBOO_PROP_TYPE
+        && prop.seedTask === TRUC_GIA_TASK
+        && prop.hidden !== true
+        && finite(prop.x) && finite(prop.y)
+        && !this.collectedIds.has(prop.id));
+    if (props.length === 0) { this.fail('NO_HARVESTABLE_PROP'); return; }
+    const position = this.client.getPosition?.();
+    props.sort((a, b) => {
+      if (position && position.mapId === BAMBOO_MAP) {
+        const da = (a.x - position.x) ** 2 + (a.y - position.y) ** 2;
+        const db = (b.x - position.x) ** 2 + (b.y - position.y) ** 2;
+        if (da !== db) return da - db;
+      }
+      return a.id.localeCompare(b.id);
+    });
+    const prop = props.find((candidate) => candidate.id === this.chopPropId) ?? props[0];
+    this.chopPropId = prop.id;
+    this.chopMapId = BAMBOO_MAP;
+    this.beginWalk({
+      targetMapId: BAMBOO_MAP,
+      target: { x: prop.x, y: prop.y + 16 },
+      arrivalRadius: 10,
+      abortOnHurt: this.abortOnHurt,
+      maxHurt: this.maxHurt,
+      requester: 'daily',
+    }, 'seed_chop');
+    this.client.recordLog({ code: 'daily_step', detail: `bamboo_prop=${prop.id} collected=${collected}/${REQUIRED_BAMBOO}`, at: now });
+  }
 
   private currentLinhChi(): number | null { return this.client.readDailyState().namLinhChi; }
 
@@ -668,8 +768,8 @@ export class DailyQuests {
     } else if (command === 'seed.collect') {
       this.setStep('seed_collect_wait');
     } else if (command === 'seed.complete') {
-      this.earnedStones += ack.stones ?? (this.isLinhChi() ? 10 : 20);
-      this.earnedDuocCong += ack.duocCong ?? (this.isLinhChi() ? 1 : 3);
+      this.earnedStones += ack.stones ?? (this.isLinhChi() ? 10 : this.isTrucGia() ? 15 : 20);
+      this.earnedDuocCong += ack.duocCong ?? (this.isLinhChi() || this.isTrucGia() ? 1 : 3);
       if (this.operation && this.operation.runIndex < this.operation.runsTotal) {
         this.setStep('seed_wait_reset');
       } else {
@@ -728,6 +828,29 @@ export class DailyQuests {
   }
 
   private beginChop(): void {
+    if (this.isTrucGia()) {
+      const propId = this.chopPropId;
+      const mapId = this.chopMapId ?? BAMBOO_MAP;
+      const prop = propId ? this.client.getProp(mapId, propId) : null;
+      if (!prop) { this.fail('TARGET_INVALID'); return; }
+      if (this.chopAttempts >= MAX_CHOP_ATTEMPTS) {
+        this.fail('CHOP_NO_PROGRESS', this.bambooChopDetail(prop.id));
+        return;
+      }
+      this.armBambooCollectAck(prop.id);
+      if (!this.client.startChopping(prop, mapId)) {
+        this.pendingCollectAck = null;
+        this.client.cancelPendingCommand?.('seed.collect');
+        this.fail('CHOP_UNAVAILABLE');
+        return;
+      }
+      this.chopAttempts += 1;
+      this.chopStartedAt = this.client.nowMs();
+      if (this.pendingCollectAck) this.pendingCollectAck.deadlineAt = this.chopStartedAt + CHOP_WAIT_MS;
+      this.client.recordLog({ code: 'daily_step', detail: `chop_prop=${prop.id} collected=${this.currentBambooCount()}/${REQUIRED_BAMBOO} distance=${this.bambooChopDistance(prop) ?? 'unknown'}`, at: this.chopStartedAt });
+      this.setStep('seed_wait_drop');
+      return;
+    }
     const prop = this.client.getProp('duoc_vien', TREE_SEED);
     if (!prop) { this.fail('TARGET_INVALID'); return; }
     if (this.chopAttempts >= MAX_CHOP_ATTEMPTS) { this.fail('CHOP_NO_DROP'); return; }
@@ -738,6 +861,7 @@ export class DailyQuests {
   }
 
   private waitForDrop(now: number): void {
+    if (this.isTrucGia()) return;
     const state = this.client.readDailyState();
     if ((state.activeCollected ?? 0) >= REQUIRED_BRANCHES) { this.setStep('seed_walk_complete'); return; }
     if (this.findGroundDrop()) { this.setStep('seed_walk_drop'); return; }
@@ -751,13 +875,79 @@ export class DailyQuests {
     if (this.pendingCollectAck) return;
     const state = this.client.readDailyState();
     this.collectedBefore = state.activeCollected ?? 0;
-    const pending = { deadlineAt: 0, result: null as DailyAck | null };
+    const pending = {
+      deadlineAt: 0,
+      result: null as DailyAck | null,
+      mode: 'drop' as const,
+      beforeCollectedIds: new Set(this.collectedIds),
+      beforeCollected: state.activeCollected ?? 0,
+    };
     this.pendingCollectAck = pending;
     this.client.watchCommand('seed.collect').then((ack) => {
       if (this.pendingCollectAck === pending) pending.result = ack;
     }, () => {
       if (this.pendingCollectAck === pending) pending.result = { cmd: 'seed.collect', ok: false, why: 'COMMAND_FAILED' };
     });
+  }
+
+  private armBambooCollectAck(propId: string): void {
+    if (this.pendingCollectAck) return;
+    const state = this.client.readDailyState();
+    this.currentBambooCount(state);
+    const pending = {
+      deadlineAt: 0,
+      result: null as DailyAck | null,
+      mode: 'bamboo' as const,
+      propId,
+      beforeCollectedIds: new Set(this.collectedIds),
+      beforeCollected: state.activeCollected ?? 0,
+    };
+    this.pendingCollectAck = pending;
+    this.client.watchCommand('seed.collect').then((ack) => {
+      if (this.pendingCollectAck === pending) pending.result = ack;
+    }, () => {
+      if (this.pendingCollectAck === pending) pending.result = { cmd: 'seed.collect', ok: false, why: 'COMMAND_FAILED' };
+    });
+  }
+
+  private bambooChopProgressed(pending: { beforeCollectedIds: Set<string>; beforeCollected: number }): boolean {
+    const state = this.client.readDailyState();
+    this.currentBambooCount(state);
+    return state.activeCollectedIds.some((id) => !pending.beforeCollectedIds.has(id))
+      || (state.activeCollected ?? 0) > pending.beforeCollected;
+  }
+
+  private bambooChopDistance(prop: DailyProp): number | null {
+    const position = this.client.getPosition?.();
+    if (!position || position.mapId !== (this.chopMapId ?? BAMBOO_MAP)) return null;
+    return Math.hypot(position.x - prop.x, position.y - (prop.y - TREE_TILE_SIZE / 2));
+  }
+
+  private bambooChopDetail(propId: string): string {
+    const prop = this.client.getProp(this.chopMapId ?? BAMBOO_MAP, propId);
+    return `prop=${propId} collected=${this.currentBambooCount()}/${REQUIRED_BAMBOO} distance=${prop ? this.bambooChopDistance(prop) ?? 'unknown' : 'unknown'}`;
+  }
+
+  private retryBambooChop(reason: string): void {
+    const propId = this.chopPropId ?? 'unknown';
+    const detail = this.bambooChopDetail(propId);
+    this.client.recordLog({ code: 'daily_step', detail: `chop_retry=${detail} reason=${reason}`, at: this.client.nowMs() });
+    if (this.chopAttempts >= MAX_CHOP_ATTEMPTS) {
+      this.fail('CHOP_NO_PROGRESS', detail);
+      return;
+    }
+    this.setStep('seed_walk_tree');
+  }
+
+  private finishBambooChop(propId: string, now: number): void {
+    if (propId !== 'unknown') this.collectedIds.add(propId);
+    const collected = this.currentBambooCount();
+    this.chopAttempts = 0;
+    this.chopPropId = null;
+    this.chopStartedAt = 0;
+    this.client.recordLog({ code: 'daily_step', detail: `chop_ok=${propId} collected=${collected}/${REQUIRED_BAMBOO} distance=${this.bambooChopDetail(propId).match(/distance=([^ ]+)/)?.[1] ?? 'unknown'}`, at: now });
+    if (collected >= REQUIRED_BAMBOO) this.setStep('seed_walk_complete');
+    else this.setStep('seed_walk_tree');
   }
 
   private prepareCollectWait(): void {
@@ -787,7 +977,9 @@ export class DailyQuests {
     const taskId = this.operation?.taskId;
     const reset = taskId === LINH_CHI_TASK
       ? state.activeSeedTask !== LINH_CHI_TASK
-      : state.activeSeedTask !== DUOC_MOC_TASK || (state.activeCollected ?? 0) === 0;
+      : state.activeSeedTask !== taskId
+        || taskId === DUOC_MOC_TASK && (state.activeCollected ?? 0) === 0
+        || taskId === TRUC_GIA_TASK && state.activeCollectedIds.length === 0 && (state.activeCollected ?? 0) === 0;
     if (reset) {
       if (this.operation) this.operation.runIndex += 1;
       this.chopAttempts = 0;
@@ -796,6 +988,9 @@ export class DailyQuests {
       this.resourceCoolingUntil.clear();
       this.resourceWaitUntil = 0;
       this.resourceWaitRounds = 0;
+      this.collectedIds.clear();
+      this.chopPropId = null;
+      this.chopMapId = null;
       this.setStep('seed_walk_npc');
       return;
     }
@@ -810,7 +1005,13 @@ export class DailyQuests {
   }
 
   private updateProgress(state: DailyClientState): void {
-    if (!this.operation || this.operation.taskId !== LINH_CHI_TASK) return;
+    if (!this.operation) return;
+    if (this.operation.taskId === TRUC_GIA_TASK) {
+      const collected = this.currentBambooCount(state);
+      this.operation.progress = { itemId: 'truc_tam', collected, required: REQUIRED_BAMBOO };
+      return;
+    }
+    if (this.operation.taskId !== LINH_CHI_TASK) return;
     const collected = state.namLinhChi;
     if (collected === null) {
       delete this.operation.progress;

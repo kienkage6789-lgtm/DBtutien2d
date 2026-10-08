@@ -1,5 +1,23 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — `truc_gia` trong nhiệm vụ hằng ngày: đo live, triển khai, chạy thử live qua dashboard
+
+Đo live chu trình `truc_gia` (docs/RESEARCH_DAILY_QUESTS.md mục 11) rồi giao Codex triển khai (đi theo map trước, liệt kê trúc từ map đã tải, chặt từng cây bằng `startChopping(prop, mapId)`, theo dõi `activeCollectedIds`, áp sát lại tối đa 3 lần rồi `CHOP_NO_PROGRESS`, tiếp tục việc dở). Nghiệm thu: build 3 package pass; test web 33; `daily-quests` 24 (có 1 test Codex fail do fixture: fake `completeSeedQuest` cấp thưởng `duoc_moc` 20/3 cho mọi việc không phải `linh_chi`; thưởng thật của `truc_gia` là 15 Linh Thạch + 1 Dược Công đã đo, kỳ vọng của test đúng, đã sửa fake), `vendor-runner` 19 (6 lần chạy ổn định), các test khác pass.
+
+Chạy thử live qua dashboard (nút "Làm" ở hàng "Trúc Tâm Dẫn Dược", hộp xác nhận trong giao diện, 1 lượt): khoảng 37,5 s, `duoc_vien` → `thanh_truc_lam` (chặt 4 trúc theo thứ tự gần nhất) → `duoc_vien` → giao việc: `done`, tiến độ `truc_tam 4/4`, Linh Thạch 1390 → 1405 (+15), Dược Công 25 → 26 (+1), hurt 0, không gục, không lỗi. Hôm nay (2026-10-09) `truc_gia` đã dùng 2/3 lượt.
+
+Quan sát: nhãn bước của `truc_gia` dùng lại tên bước của `duoc_moc` (`seed_wait_drop`, `seed_walk_tree`) trong khi trúc không có cành rơi; chỉ ảnh hưởng chữ hiển thị.
+
+Chưa xác minh: ngưỡng khoảng cách chính xác tới NPC/cây, khi cây đã bị người khác chặt (`hidden`), giới hạn 3 lượt/ngày ở server, `cau_ca`/`ho_tong_chau`/`dai_hoi`.
+
+## 2026-10-09 — Triển khai offline Dược Công `truc_gia`
+
+Thay đổi: mở rộng `DailyQuests`/`VendorRunner` cho `truc_gia`: đi theo map tới `thanh_truc_lam`, chỉ liệt kê `seed_bamboo_prop` của map đang tải, đi tới `(prop.x, prop.y + 16)`, chặt qua `SceneWorld.chopping` và theo dõi `activeCollectedIds`/ACK `seed.collect`; hỗ trợ tiếp tục việc dở, tối đa 3 lần áp sát/chặt lại mỗi cây và tiến độ `Trúc Tâm: n/4`. `duoc_moc` và `linh_chi` giữ nhánh cũ. API/docs/dashboard cập nhật tương ứng; không sửa vendor client hoặc `auto-supervisor.ts`.
+
+Lệnh đã chạy: rà soát offline bằng PowerShell/`apply_patch`; `git diff --check` không có lỗi nội dung (chỉ cảnh báo LF/CRLF); `typescript.transpileModule` cho 5 file TS/TSX thay đổi: syntax pass. `cd apps/server && npx tsx --test src/headless/daily-quests.test.ts` và `src/headless/vendor-runner.test.ts` đều bị chặn trước khi nạp test bởi `uv_os_get_passwd returned ENOMEM`; chưa chạy `pnpm build`.
+
+Chưa xác minh: build/typecheck và toàn bộ test; ngưỡng khoảng cách chính xác; cây bị người khác chặt/`hidden`; giới hạn 3 lượt/ngày phía server; `cau_ca`/`ho_tong_chau`/`dai_hoi`; không chạm game thật, không mở mạng, không đọc `data/`/`.env*`, không commit.
+
 ## 2026-10-09 — Chạy thử live `linh_chi` qua dashboard: tìm và sửa 3 lỗi mà test giả không bắt được
 
 Lần chạy đầu thất bại ngay (0,2 s, `NO_HARVESTABLE_PROP`) sau khi `seed.start` đã thành công (việc `linh_chi` đang dở trên server, lượt hôm nay `n = 1`). Nguyên nhân (fixture cũ luôn đặt nhân vật ở `tan_vien` và trả toạ độ cứng nên không lộ ra):

@@ -684,6 +684,7 @@ test('VendorRunner daily checkin waits for the matching ACK cmd and ignores anot
     await waitUntil(() => runner.getSnapshot().mapId === 'tan_vien');
     const status = runner.getDailyStatus();
     assert.ok(status.seedTasks.some((task) => task.id === 'duoc_moc'), 'official client seedTaskList must expose duoc_moc');
+    assert.equal(status.seedTasks.find((task) => task.id === 'truc_gia')?.supported, true, 'truc_gia must be supported');
     const operation = runner.startDailyCheckin();
     await waitUntil(() => FakeSocket.outgoing.some((packet) => packet.op === 'cmd' && packet.cmd === 'diemdanh'), 10_000);
     await waitUntil(() => runner.getSnapshot().daily?.status === 'done', 10_000);
@@ -863,6 +864,8 @@ test('VendorRunner rate-limits watchdog warnings instead of logging one per fram
 test('VendorRunner suy toạ độ prop của map khác từ ô MapData và chỉ liệt kê cây Linh Chi của map đã tải', async () => {
   FakeSocket.instances = [];
   FakeSocket.moves = [];
+  FakeSocket.respondToEnter = true;
+  FakeSocket.enterSpawns = { thanh_truc_lam: { x: 432, y: 927 } };
   FakeSocket.spawn = { x: 272, y: 860 };
   const runner = new VendorRunner({
     accountName: 'fixture-account',
@@ -893,8 +896,16 @@ test('VendorRunner suy toạ độ prop của map khác từ ô MapData và ch�
     assert.ok(loaded.length >= 1, 'map đã tải phải có cây Linh Chi');
     assert.ok(loaded.every((prop) => Number.isFinite(prop.x) && Number.isFinite(prop.y)));
     assert.deepEqual(internals.getDailyProps('duoc_vien', 'ling_chi_prop'), []);
+    const move = runner.moveTo({ targetMapId: 'thanh_truc_lam', requester: 'user' });
+    await waitUntil(() => runner.getSnapshot().moveTo?.operationId === move.operationId && runner.getSnapshot().moveTo?.status === 'arrived', 10_000);
+    const bamboo = internals.getDailyProps('thanh_truc_lam', 'seed_bamboo_prop');
+    assert.equal(bamboo.length, 4, 'loaded thanh_truc_lam must expose four bamboo props');
+    assert.ok(bamboo.every((prop) => Number.isFinite(prop.x) && Number.isFinite(prop.y)));
   } finally {
+    FakeSocket.mapId = 'tan_vien';
     FakeSocket.spawn = { x: 240, y: 192 };
+    FakeSocket.respondToEnter = false;
+    FakeSocket.enterSpawns = {};
     await runner.stop();
   }
 });

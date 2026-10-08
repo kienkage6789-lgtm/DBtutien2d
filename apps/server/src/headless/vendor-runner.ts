@@ -830,7 +830,7 @@ export class VendorRunner {
         return player && mapId && Number.isFinite(player.x) && Number.isFinite(player.y)
           ? { mapId, x: Number(player.x), y: Number(player.y) } : null;
       },
-      startChopping: (prop: DailyProp) => this.startDailyChopping(prop),
+      startChopping: (prop: DailyProp, mapId?: string) => this.startDailyChopping(prop, mapId),
       invokeCheckin: () => this.P?.Gateway?.cmd?.('diemdanh', {}, () => undefined),
       startSeedQuest: (taskId: string) => this.P?.Quest?.startSeedQuest?.(taskId),
       completeSeedQuest: () => this.P?.Quest?.completeSeedQuest?.(),
@@ -893,7 +893,7 @@ export class VendorRunner {
       const limitValue = Number.isInteger(rawLimit) ? Number(rawLimit)
         : Number.isInteger(info.limit) ? Number(info.limit)
         : Number.isInteger(info.dailyLimit) ? Number(info.dailyLimit)
-        : id === 'duoc_moc' || id === 'linh_chi' ? 3 : null;
+        : id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' ? 3 : null;
       const runsLeftValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsLeft) ? Number(rawEntry.raw.runsLeft)
         : typeof quest?.seedTaskRunsLeft === 'function' ? quest.seedTaskRunsLeft(id) : null;
       const runsLeft = Number.isInteger(runsLeftValue)
@@ -908,15 +908,18 @@ export class VendorRunner {
         limit: limitValue,
         runsToday: count,
         runsLeft,
-        supported: id === 'duoc_moc' || id === 'linh_chi',
+        supported: id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia',
         active: !!seed?.active && seed.task === id,
       };
     });
     const collectedValue = seed?.collected;
+    const activeCollectedIds = collectedValue && typeof collectedValue === 'object' && !Array.isArray(collectedValue)
+      ? Object.entries(collectedValue as Record<string, unknown>).filter(([, value]) => Boolean(value)).map(([id]) => id).sort()
+      : [];
     const activeCollected = typeof collectedValue === 'number' && Number.isFinite(collectedValue)
       ? collectedValue
       : collectedValue && typeof collectedValue === 'object' && !Array.isArray(collectedValue)
-        ? Object.values(collectedValue as Record<string, unknown>).filter(Boolean).length : null;
+        ? activeCollectedIds.length : null;
     const drops = Array.isArray(P?.SceneWorld?.drops) ? P.SceneWorld.drops.flatMap((drop: unknown) => {
       if (!drop || typeof drop !== 'object' || Array.isArray(drop)) return [];
       const value = drop as Record<string, unknown>;
@@ -948,7 +951,8 @@ export class VendorRunner {
       canhKho: countInventory('canh_kho'),
       namLinhChi: countInventory('nam_linh_chi'),
       activeCollected,
-      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : null,
+      activeCollectedIds,
+      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : seed?.active && seed.task === 'truc_gia' ? 4 : null,
       drops,
     };
   }
@@ -977,6 +981,7 @@ export class VendorRunner {
       y,
       ...(Number.isFinite(Number(found.r)) ? { r: Number(found.r) } : {}),
       ...(typeof found.chopTask === 'string' ? { chopTask: found.chopTask } : {}),
+      ...(typeof found.seedTask === 'string' ? { seedTask: found.seedTask } : {}),
       ...(typeof found.type === 'string' ? { type: found.type } : {}),
       ...(typeof found.hidden === 'boolean' ? { hidden: found.hidden } : {}),
     };
@@ -986,7 +991,7 @@ export class VendorRunner {
     const P = this.P;
     // Vị trí và trạng thái ẩn của cây Linh Chi đổi theo ngày (client chạy applyLinhChi trên map đã tải); dữ liệu tĩnh
     // của map khác không đúng, nên chỉ liệt kê khi nhân vật đang đứng trong map đó.
-    if (type === 'ling_chi_prop' && mapId !== this.getMapId()) return [];
+    if ((type === 'ling_chi_prop' || type === 'seed_bamboo_prop') && mapId !== this.getMapId()) return [];
     const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
     const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
     const seen = new Set<string>();
@@ -1001,8 +1006,8 @@ export class VendorRunner {
     return props;
   }
 
-  private startDailyChopping(prop: DailyProp): boolean {
-    const actual = this.getDailyProp('duoc_vien', prop.id);
+  private startDailyChopping(prop: DailyProp, mapId: string = 'duoc_vien'): boolean {
+    const actual = this.getDailyProp(mapId, prop.id);
     if (!actual || !this.P?.SceneWorld) return false;
     this.P.SceneWorld.chopping = { prop: actual, swing: 0, t: 10 };
     return true;
@@ -1058,6 +1063,7 @@ export class VendorRunner {
       ...(typeof packet.retryAfter === 'number' && Number.isFinite(packet.retryAfter) ? { retryAfter: packet.retryAfter } : {}),
       ...(typeof packet.regrowAfter === 'number' && Number.isFinite(packet.regrowAfter) ? { regrowAfter: packet.regrowAfter } : {}),
       ...(typeof packet.itemId === 'string' ? { itemId: packet.itemId } : {}),
+      ...(typeof packet.propId === 'string' ? { propId: packet.propId } : {}),
     });
   }
 
