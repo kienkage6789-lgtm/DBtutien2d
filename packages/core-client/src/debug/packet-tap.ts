@@ -75,6 +75,22 @@ export class PacketTap {
   }> = [];
   private readonly stationaryProbeYou: Array<Record<string, RedactedNumber | string>> = [];
   private readonly stationaryProbeCancellations: Array<{ at: number; reason: string }> = [];
+  private readonly approachProbePlans: Array<{
+    atMs: number;
+    monsterType: string | null;
+    distance: number | null;
+    pathLength: number | null;
+    replans: number;
+    action: string;
+    goalReason: string;
+  }> = [];
+  private approachProbeResult: {
+    status: string;
+    reason: string;
+    elapsedMs: number | null;
+    replans: number;
+    finalDistance: number | null;
+  } | null = null;
   private activeStationaryProbeBatch: {
     label: string;
     atStart: number;
@@ -275,6 +291,49 @@ export class PacketTap {
     });
   }
 
+  /** Store only redacted planning facts for the opt-in approach harness. */
+  recordApproachProbePlan(input: {
+    atMs: unknown;
+    monsterType: unknown;
+    distance: unknown;
+    pathLength: unknown;
+    replans: unknown;
+    action: unknown;
+    goalReason: unknown;
+  }): void {
+    if (this.flushed || this.approachProbePlans.length >= 100) return;
+    const numberOrNull = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    this.approachProbePlans.push({
+      atMs: numberOrNull(input.atMs) ?? 0,
+      monsterType: typeof input.monsterType === 'string' ? input.monsterType.slice(0, 80) : null,
+      distance: numberOrNull(input.distance),
+      pathLength: numberOrNull(input.pathLength),
+      replans: Math.max(0, Math.floor(numberOrNull(input.replans) ?? 0)),
+      action: typeof input.action === 'string' ? input.action.slice(0, 40) : 'unknown',
+      goalReason: typeof input.goalReason === 'string' ? input.goalReason.slice(0, 40) : 'unknown',
+    });
+  }
+
+  recordApproachProbeResult(input: {
+    status: unknown;
+    reason: unknown;
+    elapsedMs: unknown;
+    replans: unknown;
+    finalDistance: unknown;
+  }): void {
+    if (this.flushed) return;
+    const numberOrNull = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    this.approachProbeResult = {
+      status: typeof input.status === 'string' ? input.status.slice(0, 40) : 'unknown',
+      reason: typeof input.reason === 'string' ? input.reason.slice(0, 120) : 'unknown',
+      elapsedMs: numberOrNull(input.elapsedMs),
+      replans: Math.max(0, Math.floor(numberOrNull(input.replans) ?? 0)),
+      finalDistance: numberOrNull(input.finalDistance),
+    };
+  }
+
   flush(): void {
     if (this.flushed) return;
     this.flushed = true;
@@ -296,6 +355,10 @@ export class PacketTap {
         batches: this.stationaryProbeBatches,
         you: this.stationaryProbeYou,
         cancellations: this.stationaryProbeCancellations,
+      },
+      approachProbe: {
+        plans: this.approachProbePlans,
+        result: this.approachProbeResult,
       },
       numericFields: this.numericFields,
       entityArrays,

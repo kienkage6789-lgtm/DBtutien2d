@@ -92,6 +92,28 @@ export class SocketClient extends EventEmitter {
     this.packetTap?.recordStationaryProbeCancellation(reason);
   }
 
+  public recordApproachProbePlan(input: {
+    atMs: number;
+    monsterType: string | null;
+    distance: number;
+    pathLength: number | null;
+    replans: number;
+    action: string;
+    goalReason: string;
+  }): void {
+    this.packetTap?.recordApproachProbePlan(input);
+  }
+
+  public recordApproachProbeResult(input: {
+    status: string;
+    reason: string;
+    elapsedMs: number;
+    replans: number;
+    finalDistance: number;
+  }): void {
+    this.packetTap?.recordApproachProbeResult(input);
+  }
+
   public connect(): void {
     this.shouldAutoReconnect = true;
     this.cleanupSocket();

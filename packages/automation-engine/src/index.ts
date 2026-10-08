@@ -6,4 +6,5 @@ export * from './quest/quest-runner.js';
 export * from './bot-controller.js';
 export * from './training/state-machine.js';
 export * from './auto/target-selection.js';
+export * from './auto/approach.js';
 export * from './auto/skill-rotation.js';

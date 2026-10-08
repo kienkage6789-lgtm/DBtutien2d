@@ -1,5 +1,40 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — P2 verification addendum (offline)
+
+- Pure approach/tracker: pass; deterministic goal tests include all 62 `thanh_truc_lam` spawn points.
+- Target-selection and walk-path regression tests: pass (walk-path reports 19 waypoints).
+- Runner/probe tests: pass through offline esbuild transpilation with source-only shims; covers guards, abort cancellation, lock/cleanup, safe filters, one-shot, and no follow-up move after arrival.
+- Scoped TypeScript API check: pass for changed P2 and packet-tap/socket-client files; full package build remains blocked by pnpm/Corepack/EPERM tooling.
+- Full server-source diagnostic pass with workspace package paths: 18 existing dependency/type-root diagnostics, 0 in the watched P2/worker-pool files.
+- `git diff --check`: pass, with only LF/CRLF warnings.
+- No server, login, network, live game, or packet transmission was used; live timing, hurt, chase/leash, and stationary stability remain unverified.
+
+## 2026-10-08 — P2 approach: pure goal/tracker, runner và live harness (static-only)
+
+### Thay đổi
+
+- Đọc `AGENTS.md`, `AUTO_SPEC.md` mục 3–5/10–13 và Hướng lệch A3, `ARCHITECTURE.md`, hai mục session mới nhất và checklist `FIX_GUIDE.md` trước khi sửa.
+- Thêm `packages/automation-engine/src/auto/approach.ts`: `computeApproachGoal` deterministic với 16 điểm vòng, snap walkable bán kính 4 tile, `pathLength` tùy chọn và `ApproachTracker` với timeout 8 giây, replan 400 ms/24 px, target lost và unreachable hai lần.
+- Thêm `apps/server/src/orchestrator/approach-runner.ts`: runner 100 ms có dependency injection, lock một lần/account, vitals/context/connection/downed guard, abort khi hurt/HP giảm và hủy move-to trước replan/kết thúc. Không nối training, attack hoặc skill.
+- Thêm `apps/server/src/debug/approach-probe.ts` và wiring sau `welcome`: mặc định tắt, chỉ `TUTIEN_PROBE_APPROACH=1`, one-shot theo process sau 20 giây, lọc mục tiêu an toàn và đứng yên 3 giây sau arrived.
+- Mở rộng packet tap bằng record approach đã redact; không thêm packet game, route API, nút UI hay sửa vendor.
+- Thêm `docs/LIVE_SCENARIO_APPROACH.md` và cập nhật `AUTO_SPEC.md`, `ARCHITECTURE.md`, checklist này.
+
+### Lệnh đã chạy và kết quả thật
+
+- `pnpm build`: **bị chặn**, `pnpm` không có trong PATH.
+- `corepack pnpm --offline build`: **bị chặn**, Corepack cố resolve pnpm từ registry và gặp EACCES mạng; không coi build là pass.
+- `node node_modules/typescript/bin/tsc --noEmit -p ...` cho core/automation/server: **bị chặn**, TypeScript dưới `node_modules/.pnpm` gặp EPERM.
+- `node --experimental-strip-types --test packages/automation-engine/src/auto/approach.test.mjs`: **pass**, goal/tracker và 62 điểm sinh của `thanh_truc_lam`.
+- Chưa chạy server, chưa đăng nhập, chưa dùng mạng game, chưa gửi packet và chưa tạo live evidence.
+
+### Còn chờ xác minh / rủi ro
+
+- Test TypeScript của runner/probe và full build cần chạy lại ở môi trường có toolchain không bị EPERM.
+- Live P2 chưa xác minh thời gian tới tầm, `hurt`, quái đuổi/leash và độ ổn định đứng yên trong tầm.
+- Vẫn có rủi ro quái `aggro` gây sát thương khi approach; người vận hành phải dừng ngay khi có `hurt`.
+
 ## 2026-10-08 — Nghiệm thu của Claude Code sau các đợt Codex, và việc ngoài Codex
 
 Mục này đính chính các mục "build/test bị chặn" bên dưới: sandbox của Codex không build được, nên mọi đợt Codex đều được Claude Code build và chạy lại ngoài sandbox.

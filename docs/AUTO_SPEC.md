@@ -65,6 +65,14 @@ Mọi nhánh loại quái `dead` và quái `def.human`. Bộ lọc `ChinhDao.dan
 
 ## 5. Tầm đánh và tiếp cận
 
+### Thiết kế P2 — approach (pure + runner + live probe)
+
+P2 không nối vào state machine training và không có lệnh attack/skill. `computeApproachGoal` trong `packages/automation-engine/src/auto/approach.ts` tính `reachLimit = PLAYER.REACH + weaponReachBonus + (bodyRadius ?? 0)`, ưu tiên vị trí hiện tại nếu đã trong tầm và walkable, sau đó quét 16 điểm xác định trên vòng lùi `margin` quanh quái. Ứng viên được lọc bằng collision/hitbox 16×12 và, khi có, chọn theo độ dài đường thật; cuối cùng mới thử `findNearestWalkableTarget(..., 4)`. `none` trả `goal:null`; không truyền tọa độ quái bị chặn cho move-to.
+
+`ApproachTracker` dùng vị trí xác thực mới để báo `arrived`, giữ timeout 8 giây, lập kế hoạch lại không thường xuyên hơn 400 ms khi quái dịch ít nhất 24 px, mất mục tiêu khi quái chết hoặc rời vùng `TARGET_RANGE + TARGET_REACH_PAD + TARGET_KEEP_PAD`, và chỉ báo `unreachable` sau hai kết quả `none` liên tiếp. `ARRIVAL_CONFIRM_MS=0` vì mỗi tick đã dựa trên vị trí authoritative mới, nên không thêm dwell giả.
+
+`runApproach` chạy nhịp 100 ms, dùng `selectTarget` auto, vitals fresh ≤ `VITALS_ATTACK_MAX_AGE_MS`, snapshot quái/map fresh, và dependency-inject `startMoveTo`/cancel. Replan luôn hủy và chờ operation cũ trước khi đặt operation mới; mọi move vẫn đi qua `sendMove(..., 'walk', ...)`. Hurt, HP giảm, gục, mất kết nối/context, bot dừng hoặc timeout đều dừng và hủy move-to. Harness `TUTIEN_PROBE_APPROACH=1` chỉ chạy một lần sau 20 giây, lọc boss/human/tuSi/contact damage, khoảng cách 120–450 px, đường ≤480 px và aggro của quái khác; khi `arrived` chỉ đứng yên 3 giây.
+
 - **Tầm đánh thường [Đọc được]**: `scenes/world.js` kiểm tra `khoảng cách(C(player), mục tiêu) <= Player.reach + (target.def.bodyRadius || 0)` trong `onPlayerSlash`; `Player.reach = PLAYER.REACH (26) + reachBonus của vũ khí`. Riêng `systems/targeting.js` tạo entry quái với bán kính `PLAYER.REACH` và không cộng `bodyRadius` khi dựng danh sách, nên tầm chọn gần và tầm hit là hai phép kiểm tra khác nhau. Quan hệ chính xác của `C(player)` với hitbox/render anchor **[Chưa biết]**.
 - **Tầm kỹ năng [Đọc được]**: `def.range` của kỹ năng; `onPlayerSpell` cho phép dư `CAST_RANGE_SLACK` (40) khi chọn mục tiêu, kỹ năng có `autoFoe` tự đổi sang quái gần nhất nếu mục tiêu hiện tại xa hơn.
 - **Hết giờ tiếp cận**: `TARGET.APPROACH_TIME = 8` giây cho một lần đi tới mục tiêu chọn bằng tay. Với auto: tìm đường lại mỗi 0,4 giây, không có hết giờ rõ ràng; bot nên tự đặt giới hạn (đề xuất 8 giây rồi bỏ mục tiêu và đánh dấu "không tới được") **[Suy ra]**.
@@ -212,6 +220,8 @@ State machine training hiện có (`automation-engine`) đóng vai điều phố
 | B2 | `pickAutoSkill` + cooldown pure | ✅ luân phiên, ready/range/mp/sp, SPELL_GAP, cooldown riêng, loại `bienHinh`/`playerTargetOnly` |
 
 | P2 | `approach`: tìm đường tới tầm đánh, tìm lại mỗi 0,4 s, giới hạn 8 s | Test trên lưới của map farm; live: đi tới quái đứng yên, dừng đúng tầm |
+
+Trạng thái P2 hiện tại: phần hàm thuần `computeApproachGoal` + `ApproachTracker` đã có test độc lập, gồm fixture thật `thanh_truc_lam` với mọi điểm sinh; `runApproach` và harness approach đã có test dependency-injected. Live chưa chạy trong sandbox và chưa có bằng chứng server/game thật.
 | P3 | `attack` đánh thường qua ledger | Live trên 1 quái yếu: gửi đúng `attackTime`, `hp` quái giảm, nhận `kill`; không có đòn trùng |
 | P4 | Kỹ năng: `pickAuto`, cooldown cục bộ, kiểm tra mp/sp, `skill_res` | Live: luân phiên đúng thứ tự, tổng mp trừ khớp, không niệm khi thiếu mp |
 | P5 | Nghỉ/thiền theo ngưỡng; xử lý `hurt` khi thiền | Live: tự thiền khi hết mp rồi quay lại đánh |
@@ -259,6 +269,9 @@ Hệ quả cho P2: dự án chặt hơn vendor, nên không có nguy cơ đi xuy
 8. `TileMap.load` có nhánh ẩn prop theo quest/realm/harvest; grid sinh ra dùng profile prop đang hiện, nên farm qua các ô gần prop điều kiện cần đo live.
 9. `TileMap.enemySpawns` có thể mở rộng `_x2/_x3`; đây là tọa độ client-derived, chưa xác minh là toàn bộ điểm spawn/respawn server.
 10. Các lệch A3 đã làm rõ hướng (xem "Hướng lệch của A3"): vendor hít đích bị chặn về điểm gần nhất còn dự án trả null; đường dự án dài hơn 3 đến 7 %. Không phải lỗi va chạm.
+
+11. Quái có đuổi theo bot trong lúc approach hay leash về spawn theo đúng runtime server không: **[Chưa biết]**, cần live evidence.
+12. Sau khi tới tầm, vị trí đứng yên có ổn định hay bị quái đẩy/di chuyển và khoảng cách có giữ trong reach không: **[Chưa biết]**, chưa được suy ra từ dữ liệu tĩnh.
 
 ## Phụ lục P0 — Ý nghĩa trường quái trên wire
 

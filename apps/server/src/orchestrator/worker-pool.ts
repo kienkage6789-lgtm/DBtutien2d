@@ -18,9 +18,11 @@ import {
 } from './portal-navigation.js';
 import type { PortalEdge } from '../config/portal-catalog.js';
 import { randomUUID } from 'node:crypto';
-import { findWalkPath, isWalkSegmentClear } from './walk-path.js';
+import { findNearestWalkableTarget, findWalkPath, isWalkSegmentClear } from './walk-path.js';
 import { getWalkGrid, isWalkableTile, WALK_TILE_SIZE } from '../config/walk-grid.js';
 import { StationaryProbe, type StationaryProbeSnapshot } from '../debug/stationary-probe.js';
+import { ApproachProbe } from '../debug/approach-probe.js';
+import type { ApproachSnapshot } from './approach-runner.js';
 import { refreshVitals as runVitalsRefresh, type VitalsRefreshResult } from './vitals-refresh.js';
 
 export interface TrainingRuntimeInfo {
@@ -557,6 +559,7 @@ const emptyNavigation = (): NavigationRuntimeInfo => ({
 export class WorkerPool {
   private activeBots: Map<string, ActiveBot> = new Map();
   private readonly stationaryProbe = new StationaryProbe();
+  private readonly approachProbe = new ApproachProbe();
   private lastMoveToByAccount: Map<string, MoveToRuntimeInfo> = new Map();
   private observedMaps: Map<string, ObservedMap> = new Map();
   private lastWorldSnapshotRejectLogAt: Map<string, number> = new Map();
@@ -744,6 +747,62 @@ export class WorkerPool {
             recordCancellation: (reason) => client.socket.recordStationaryProbeCancellation(reason),
           };
         });
+        void this.approachProbe.schedule(() => ({
+          getSnapshot: () => this.getApproachSnapshot(entry),
+          isConnected: () => this.activeBots.get(accountId) === entry && client.isConnected(),
+          startMoveTo: (input) => {
+            this.validateMoveToTarget(input.mapId, input.goal.x, input.goal.y);
+            const started = this.startMoveTo(
+              accountId,
+              entry,
+              input.requestId,
+              input.mapId,
+              input.khu,
+              input.goal.x,
+              input.goal.y,
+              input.arrivalRadius,
+              input.shouldContinue,
+            );
+            return { operationId: started.operation.operationId, promise: started.promise };
+          },
+          cancelMoveTo: (operationId, reason) => this.cancelMoveToAndWait(accountId, entry, operationId, reason),
+          isWalkablePoint: (mapId, point) => isWalkSegmentClear(mapId, point, point),
+          nearestWalkable: (mapId, x, y, radiusTiles) => findNearestWalkableTarget(mapId, x, y, radiusTiles),
+          pathLength: (mapId, from, to) => {
+            const path = findWalkPath(mapId, from, {
+              tx: Math.floor(to.x / WALK_TILE_SIZE),
+              ty: Math.floor(to.y / WALK_TILE_SIZE),
+            });
+            if (path === null) return null;
+            let length = 0;
+            let previous = from;
+            for (const waypoint of path) {
+              length += Math.hypot(waypoint.x - previous.x, waypoint.y - previous.y);
+              previous = waypoint;
+            }
+            return length + Math.hypot(to.x - previous.x, to.y - previous.y);
+          },
+          onHurt: (listener) => {
+            client.on('hurt', listener);
+            return () => client.off('hurt', listener);
+          },
+          wait: async (ms) => { await sleep(ms); },
+          recordPlan: (record) => client.socket.recordApproachProbePlan(record),
+          recordResult: (record) => client.socket.recordApproachProbeResult({
+            status: record.status,
+            reason: record.reason,
+            elapsedMs: record.elapsedMs,
+            replans: record.replans,
+            finalDistance: record.finalDistance,
+          }),
+          recordCancellation: (reason) => client.socket.recordApproachProbeResult({
+            status: 'cancelled',
+            reason,
+            elapsedMs: 0,
+            replans: 0,
+            finalDistance: Number.POSITIVE_INFINITY,
+          }),
+        }));
       });
 
       client.on('statusChange', (status: string) => {
@@ -1397,6 +1456,56 @@ export class WorkerPool {
       position,
       dir: Number.isFinite(entry.client.state.dir) ? entry.client.state.dir : null,
     } satisfies StationaryProbeSnapshot;
+  }
+
+  private getApproachSnapshot(entry: ActiveBot): ApproachSnapshot {
+    const now = Date.now();
+    const mapContextIsCurrent = this.hasCurrentMapContext(entry, now);
+    const monstersFresh = entry.dataStatus.monsters
+      && entry.monstersContext.fresh
+      && entry.monstersContext.observedAt !== null
+      && now - entry.monstersContext.observedAt <= 5_000
+      && mapContextIsCurrent;
+    const position = entry.dataStatus.location
+      && typeof entry.location.x === 'number' && Number.isFinite(entry.location.x)
+      && typeof entry.location.y === 'number' && Number.isFinite(entry.location.y)
+      ? { x: entry.location.x, y: entry.location.y }
+      : null;
+    return {
+      inGame: entry.client.isConnected(),
+      mapContextIsCurrent,
+      mapId: typeof entry.mapContext.mapId === 'string' ? entry.mapContext.mapId : null,
+      khu: typeof entry.mapContext.khu === 'number' ? entry.mapContext.khu : null,
+      position,
+      downed: entry.client.state.downed,
+      moveToStatus: entry.moveTo?.status ?? null,
+      moveToOperationId: entry.moveTo?.operationId ?? null,
+      navigationActive: !!entry.navigationPromise
+        || ['planning', 'moving_to_portal', 'waiting_map_confirmation'].includes(entry.navigation.phase),
+      botRunning: true,
+      vitals: {
+        status: entry.vitals.status,
+        observedAt: entry.vitals.observedAt,
+        hp: entry.vitals.hp,
+      },
+      monsters: monstersFresh ? entry.monsters : [],
+      monstersFresh,
+      monstersObservedAt: monstersFresh ? entry.monstersContext.observedAt : null,
+    } satisfies ApproachSnapshot;
+  }
+
+  private async cancelMoveToAndWait(
+    accountId: string,
+    entry: ActiveBot,
+    operationId: string,
+    reason: string,
+  ): Promise<void> {
+    if (entry.moveTo?.operationId !== operationId) return;
+    const promise = entry.moveToPromise;
+    if (entry.moveTo && ['accepted', 'running'].includes(entry.moveTo.status)) {
+      this.setMoveToStatus(accountId, entry, 'cancelled', reason);
+    }
+    await promise?.catch(() => undefined);
   }
 
   private async runMoveTo(

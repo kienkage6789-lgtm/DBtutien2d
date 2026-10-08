@@ -40,7 +40,7 @@ Nguồn tham chiếu protocol: `vendor/tutien2d-public-client/2026-10-06` (clien
 |---|---|---|
 | `packages/core-client` | Kết nối, đăng nhập (Supabase), nhận/parse gói, giữ trạng thái, gửi lệnh | `client.ts` (TuTienClient, hàm gửi lệnh), `connection/socket-client.ts` (socket, hello, ping, reconnect, `processPacket`), `state/game-state.ts` (GameStateStore, `normalizeVitals`), `state/snap2-reducer.ts`, `operation-ledger.ts`, `debug/packet-tap.ts` |
 | | Dữ liệu và parser phục vụ auto | `state/auto-data.ts`, `state/combat-packets.ts`, `state/derived-vitals.ts`, `vitals-policy.ts`, `*.generated.ts` |
-| `packages/automation-engine` | Vòng lặp bot theo tick, các module nghiệp vụ | `bot-controller.ts`, `training/state-machine.ts`, `inventory/{seller,restocker}.ts`, `quest/quest-runner.ts`, `farm/farm-manager.ts`, `auto/{target-selection,skill-rotation}.ts` |
+| `packages/automation-engine` | Vòng lặp bot theo tick, các module nghiệp vụ | `bot-controller.ts`, `training/state-machine.ts`, `inventory/{seller,restocker}.ts`, `quest/quest-runner.ts`, `farm/farm-manager.ts`, `auto/{target-selection,approach,skill-rotation}.ts` |
 | `apps/server` | Điều phối nhiều tài khoản, REST, WS cho dashboard, lưu trữ, bảo mật | `orchestrator/worker-pool.ts` (rất lớn), `api/routes.ts`, `ws/hub.ts`, `db/database.ts`, `security/*`, `config.ts` |
 | `apps/web` | Dashboard | `App.tsx`, `hooks/useRealtime.ts`, `lib/{api,auth,context,minimap}.ts`, `components/*` |
 
@@ -64,6 +64,8 @@ Phụ thuộc: `web → core-client` (chỉ lấy hằng số chính sách vital
 - **`BotController` (tick) → state machine training → executor** do `worker-pool` cấp (`setTrainingMovementExecutor`, `setVitalsRefreshRequester`). State machine thuần hàm, các pha: `SYNCING → ENTERING_MAP → WAITING_MAP_CONFIRM → WAITING_KHU → MOVING_TO_AREA → TRAINING → RECOVERING/BLOCKED/STOPPED`.
 - **Gói gửi lên game**: `sendMove` (raw, không qua jitter, nhịp 10 Hz), `attackMob`/`castSkill` (raw), `enterMap`, các lệnh RPC `sendCmd` có `rid` và chờ `ack` (bán đồ, ăn, đột phá...). Hành động kiểu người chơi đi qua `antiDetection.enqueue` (trễ ngẫu nhiên).
 - **Không có ACK** cho `attack`/`skill`/`enter`; `move` có ACK gián tiếp qua `you` (xem mục 6). `OperationLedger` chặn gửi lặp attack/skill trong cửa sổ chờ; không tự retry.
+
+**P2 approach**: `approach.ts` là lớp decision thuần của automation-engine; `approach-runner.ts` là adapter có clock/snapshot/collision/move-to được tiêm vào. Runner giữ lock theo account, tick 100 ms, hủy operation cũ trước replan và không gọi attack/skill. Nó chưa được nối vào state machine training.
 
 ## 5. Mô hình độ tươi (freshness) **[Code]**
 
@@ -108,7 +110,7 @@ Nguyên tắc: dữ liệu chưa biết hiển thị là chưa biết (`null`/`�
 
 Các script chạy vendor trong `node:vm` với đối tượng giả, không mạng; sinh lại phải cho kết quả giống hệt (đã kiểm tra). Khi vendor đổi phiên bản phải sinh lại và đối chiếu.
 
-Công cụ chẩn đoán (mặc định tắt): packet tap (`TUTIEN_PACKET_TAP=<giây>`, ghi cấu trúc đã redact vào `docs/evidence/`, không ghi token, tên, id); stationary probe (`TUTIEN_PROBE_STATIONARY=1|offset`, gửi tối đa 10/14 move đứng yên một lần).
+Công cụ chẩn đoán (mặc định tắt): packet tap (`TUTIEN_PACKET_TAP=<giây>`, ghi cấu trúc đã redact vào `docs/evidence/`, không ghi token, tên, id); stationary probe (`TUTIEN_PROBE_STATIONARY=1|offset`, gửi tối đa 10/14 move đứng yên một lần); approach probe (`TUTIEN_PROBE_APPROACH=1`, chờ 20 giây, chọn một quái an toàn, đi một lần tới tầm rồi đứng yên 3 giây). Approach probe chỉ ghi loại quái và số liệu plan/result đã redact vào packet tap.
 
 ## 10. Kiểm thử và quy trình nghiệm thu
 
@@ -140,4 +142,4 @@ Công cụ chẩn đoán (mặc định tắt): packet tap (`TUTIEN_PACKET_TAP=<
 
 ## 14. Tài liệu liên quan
 
-`AGENTS.md` · `AUTO_SPEC.md` (vòng lặp auto) · `UI_FEATURE_INVENTORY.md` (chức năng client) · `FIX_GUIDE.md` (sửa lỗi và checklist) · `CONTROL_PLANE_API.md`, `API_REFERENCE.md` (API) · `PORTAL_NAVIGATION.md`, `MINIMAP_NAVIGATION.md` · `VITALS_SYNC_FIX.md` · `TRAINING_PROTOCOL_GAPS.md` · `SESSION_LOG.md` (nhật ký, mới nhất ở đầu).
+`AGENTS.md` · `AUTO_SPEC.md` (vòng lặp auto) · `LIVE_SCENARIO_APPROACH.md` (kịch bản live P2) · `UI_FEATURE_INVENTORY.md` (chức năng client) · `FIX_GUIDE.md` (sửa lỗi và checklist) · `CONTROL_PLANE_API.md`, `API_REFERENCE.md` (API) · `PORTAL_NAVIGATION.md`, `MINIMAP_NAVIGATION.md` · `VITALS_SYNC_FIX.md` · `TRAINING_PROTOCOL_GAPS.md` · `SESSION_LOG.md` (nhật ký, mới nhất ở đầu).

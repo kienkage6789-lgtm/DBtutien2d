@@ -1337,3 +1337,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 6. [x] A3 audit tĩnh: 11 map có spawn × 20 truy vấn = 220; không có lỗi rectangle safety; mismatch đường được ghi tài liệu, chưa sửa thuật toán.
 7. [~] Full `pnpm build` và toàn bộ test TypeScript server/core còn chờ môi trường toolchain: `pnpm` không có PATH, Corepack bị EACCES khi resolve registry, TypeScript dưới `.pnpm` bị EPERM; không đánh dấu build pass khi chưa chạy được.
 8. [ ] Đo live respawn/leash, prop điều kiện, server cooldown và xác nhận P2 approach trước khi nối vào state machine.
+
+## K. P2 approach — checklist static/live
+
+1. [x] Pure `computeApproachGoal` + `ApproachTracker`: deterministic, chỉ trả goal walkable hoặc `none`; test fixture `thanh_truc_lam` quét 62 điểm sinh.
+2. [x] `runApproach`: dependency injection, guard vitals/context/connection, lock theo account, cancel-and-wait trước replan và không nối training/attack/skill.
+3. [x] `approach-probe`: `TUTIEN_PROBE_APPROACH=1`, one-shot sau 20 giây, lọc boss/human/tuSi/contact/khoảng cách/path/aggro, arrived thì đứng yên 3 giây; packet tap redact.
+4. [x] Tài liệu `docs/LIVE_SCENARIO_APPROACH.md` đã mô tả điều kiện, API map/enter, vitals/refresh, tiêu chí thành công và dừng khẩn.
+5. [~] Test TypeScript/server và `pnpm build` bị chặn bởi toolchain sandbox (`pnpm` thiếu PATH, Corepack EACCES, TypeScript EPERM); live P2 chưa chạy.
+6. [ ] Xác minh live: tới tầm ≤8 giây, không `hurt`, không xuyên vật cản, không move sau arrived; đo quái đuổi/leash và độ ổn định đứng yên.
