@@ -1409,3 +1409,13 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 5. [x] FakeSocket/test source bao phủ success, cooldown client/server, already-here, target/map split, Auto, walkTo, timeout, list và malformed list; contract mapping lỗi mới đã thêm.
 6. [~] `git diff --check` pass; `pnpm build`, Vitest và các lệnh `tsx --test` chưa chạy trong sandbox phiên này, cần chạy ở môi trường người giao việc.
 7. [ ] Chưa xác minh live: khu đầy, map có quái, giới hạn dài hạn, cooldown chính xác ngoài khoảng 5 giây và quy tắc khoảng cách Bảng Khu ở map khác.
+
+## S. Module nhiệm vụ hằng ngày bản 1 — checklist 2026-10-08
+
+1. [x] `DailyQuests` thuần với điểm danh và `duoc_moc`: state machine theo frame, ACK theo `cmd`, timeout, cancel/down/reconnect/Auto và giới hạn chặt không rơi cành.
+2. [x] Nối `VendorRunner`, snapshot/runtime, WorkerPool và API `GET|POST /daily`; giữ nguyên `quest-probe`/`khu-probe`, không sửa `auto-supervisor.ts` hoặc `vendor/`.
+3. [x] Dashboard `DailyControl`, kiểu API, realtime sanitize; việc chưa hỗ trợ hiển thị mờ, khóa theo bot/map/Auto/thao tác/stage.
+4. [x] Thêm test source cho state machine và contract lỗi.
+5. [~] `pnpm build`, Vitest và test server chưa chạy trong sandbox phiên này; cần chạy trong môi trường người giao việc.
+6. [ ] Chưa xác minh live lại ngưỡng đứng cạnh NPC, giới hạn 3 lượt phía server, các việc còn lại và hành vi rời việc giữa chừng.
+7. [~] Fixture `VendorRunner + FakeSocket` đã kiểm tra điểm danh và ACK đúng `cmd` (18/18 bundle offline); chưa mô phỏng trọn `duoc_moc` với map/props/ACK `seed.collect`/thưởng như server thật.

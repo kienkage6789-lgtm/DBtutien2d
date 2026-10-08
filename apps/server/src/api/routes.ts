@@ -8,6 +8,7 @@ import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
 import { moveToErrorResponse } from './move-to-errors.js';
 import { khuErrorResponse } from './khu-errors.js';
+import { dailyErrorResponse } from './daily-errors.js';
 
 export const apiRouter: Router = Router();
 
@@ -303,6 +304,26 @@ apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
   }
 });
 
+// THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md).
+apiRouter.post('/accounts/:id/quest-probe', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+    if (typeof body.act !== 'string') throw new Error('TARGET_INVALID');
+    res.json({ success: true, data: workerPool.questProbe(accountId, body.act, {
+      ...(typeof body.taskId === 'string' ? { taskId: body.taskId } : {}),
+      ...(typeof body.propId === 'string' ? { propId: body.propId } : {}),
+    }) });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
 // THỬ NGHIỆM đo giao thức đổi khu; giữ nguyên song song với API có kiểm tra an toàn (docs/RESEARCH_KHU_CHANGE.md).
 apiRouter.get('/accounts/:id/khu-probe', (req: Request, res: Response) => {
   const accountId = String(req.params.id);
@@ -367,6 +388,92 @@ apiRouter.post('/accounts/:id/move-to/cancel', (req: Request, res: Response) => 
     res.json({ success: true, data });
   } catch (error) {
     const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.get('/accounts/:id/daily', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const data = workerPool.getDaily(accountId);
+    res.json({ success: true, data: { ...data.status, current: data.current } });
+  } catch (error) {
+    const response = dailyErrorResponse(error);
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/daily/checkin', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body;
+  if (body !== undefined && (body === null || typeof body !== 'object' || Array.isArray(body) || Object.keys(body as object).length !== 0)) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false });
+    return;
+  }
+  try {
+    res.status(202).json({ success: true, data: workerPool.startDailyCheckin(accountId) });
+  } catch (error) {
+    const response = dailyErrorResponse(error);
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/daily/seed', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  const allowed = new Set(['taskId', 'runs', 'abortOnHurt', 'maxHurt']);
+  const valid = !!body
+    && Object.keys(body).every((key) => allowed.has(key))
+    && typeof body.taskId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(body.taskId)
+    && (body.runs === undefined || (Number.isInteger(body.runs) && Number(body.runs) >= 1 && Number(body.runs) <= 3))
+    && (body.abortOnHurt === undefined || typeof body.abortOnHurt === 'boolean')
+    && (body.maxHurt === undefined || (Number.isInteger(body.maxHurt) && Number(body.maxHurt) >= 1 && Number(body.maxHurt) <= 50));
+  if (!valid) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false });
+    return;
+  }
+  try {
+    const runs = body.runs === undefined ? 1 : Number(body.runs);
+    const data = workerPool.startDailySeed(accountId, body.taskId as string, runs, {
+      ...(body.abortOnHurt === undefined ? {} : { abortOnHurt: body.abortOnHurt as boolean }),
+      ...(body.maxHurt === undefined ? {} : { maxHurt: body.maxHurt as number }),
+    });
+    res.status(202).json({ success: true, data });
+  } catch (error) {
+    const response = dailyErrorResponse(error);
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/daily/cancel', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).length !== 1 || typeof body.operationId !== 'string' || body.operationId.length < 1 || body.operationId.length > 128) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false });
+    return;
+  }
+  try {
+    res.json({ success: true, data: workerPool.cancelDaily(accountId, body.operationId) });
+  } catch (error) {
+    const response = dailyErrorResponse(error);
     res.status(response.status).json(response.body);
   }
 });

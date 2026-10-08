@@ -19,6 +19,46 @@ export interface MoveToOperation {
   };
 }
 
+export type DailyOperationStatus = 'accepted' | 'running' | 'done' | 'failed' | 'cancelled';
+export type DailyOperationKind = 'checkin' | 'seed';
+
+export interface DailyOperation {
+  operationId: string;
+  kind: DailyOperationKind;
+  taskId?: string;
+  status: DailyOperationStatus;
+  step: string;
+  runIndex: number;
+  runsTotal: number;
+  reason?: string;
+  why?: string;
+  rewards?: { stones: number; duocCong: number };
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface DailySeedTask {
+  id: string;
+  name: string;
+  kind: string;
+  limit: number | null;
+  runsToday: number | null;
+  runsLeft: number | null;
+  supported: boolean;
+  active: boolean;
+}
+
+export interface DailyStatus {
+  today: string | null;
+  stage: number | null;
+  checkin: { done: boolean; total: number | null };
+  seedTasks: DailySeedTask[];
+  activeSeedTask: string | null;
+  stones: number | null;
+  duocCong: number | null;
+  canhKho: number | null;
+}
+
 export interface ReachableMap {
   mapId: string;
   name?: string;
@@ -58,6 +98,8 @@ export interface VendorRuntimeSnapshot {
   downed: boolean | null;
   consoleErrors: string[];
   moveTo: MoveToOperation | null;
+  daily: DailyOperation | null;
+  dailyStatus: DailyStatus | null;
   khuList: KhuList | null;
 }
 
@@ -116,6 +158,8 @@ export interface AccountRuntime {
   x: number | null;
   y: number | null;
   moveTo: MoveToOperation | null;
+  daily: DailyOperation | null;
+  dailyStatus: DailyStatus | null;
   latencyMs: number;
   activity: string;
   soKhu: number | null;

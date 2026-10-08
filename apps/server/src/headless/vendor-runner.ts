@@ -15,6 +15,15 @@ import {
   type WalkOperation,
   type WalkRequest,
 } from './walk-navigator.js';
+import {
+  DailyError,
+  DailyQuests,
+  type DailyAck,
+  type DailyClientState,
+  type DailyOperation,
+  type DailyProp,
+  type DailyStatus,
+} from './daily-quests.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
 import {
   cooldownSecondsFromToast,
@@ -141,6 +150,8 @@ export interface VendorRunnerSnapshot {
     observedAt: number | null;
   };
   moveTo: WalkOperation | null;
+  daily: DailyOperation | null;
+  dailyStatus: DailyStatus | null;
   logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }>;
 }
 
@@ -275,6 +286,7 @@ export class VendorRunner {
   private tokenManager: VendorTokenManagerLike | null = null;
   private supervisor: AutoSupervisor | null = null;
   private readonly walkNavigator: WalkNavigator;
+  private readonly dailyQuests: DailyQuests;
   private supervisorUnsubscribe: (() => void) | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -324,6 +336,8 @@ export class VendorRunner {
   private currentSocket: CountingWebSocket | null = null;
   private readonly packets = emptyPacketCounts();
   private readonly logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }> = [];
+  private dailyStatusCache: { status: DailyStatus; at: number } | null = null;
+  private dailyAckWaiter: { command: string; resolve: (ack: DailyAck) => void; timer: ReturnType<typeof setTimeout> | null } | null = null;
   /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
   private readonly watchdogLoggedAt = new Map<string, number>();
   private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
@@ -345,6 +359,7 @@ export class VendorRunner {
       watchdogRestart: input.watchdogRestart ?? false,
     };
     this.walkNavigator = new WalkNavigator(this.createWalkClient());
+    this.dailyQuests = new DailyQuests(this.createDailyClient());
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
@@ -372,6 +387,7 @@ export class VendorRunner {
       this.observedSoKhu = null;
       this.khuList = null;
       this.lastKhuChangeAt = null;
+      this.dailyStatusCache = null;
       this.startLoop();
       await this.connectAndBuild(false);
     } catch (error) {
@@ -385,6 +401,7 @@ export class VendorRunner {
   }
 
   public async stop(): Promise<void> {
+    this.cancelDailyForReason('runner_stopped');
     this.cancelMoveTo('runner_stopped');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('runner_stop');
@@ -410,6 +427,7 @@ export class VendorRunner {
 
   public async startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot> {
     if (this.lifecycle === 'stopped' || this.lifecycle === 'error' || !this.P || !this.env) throw new Error('VENDOR_NOT_RUNNING');
+    this.cancelDailyForReason('auto_started');
     const player = this.getPlayer();
     if (!player) throw new Error('VENDOR_NOT_IN_GAME');
     if (!this.isMapReady()) throw new Error('VENDOR_MAP_NOT_READY');
@@ -509,11 +527,14 @@ export class VendorRunner {
       playersContext: world.playersContext,
       vitals,
       moveTo: this.walkNavigator.getOperation(),
+      daily: this.dailyQuests.getOperation(),
+      dailyStatus: this.getDailyStatusSnapshot(),
       logs: this.logs.map((entry) => ({ ...entry })),
     };
   }
 
   public moveTo(request: WalkRequest): WalkOperation {
+    if (request.requester === 'user' && this.dailyQuests.isActive()) throw new DailyError('OPERATION_IN_PROGRESS');
     return this.walkNavigator.walkTo(request);
   }
 
@@ -568,6 +589,7 @@ export class VendorRunner {
     const player = this.getPlayer();
     if (this.isDown(player)) throw new KhuError('CHARACTER_DOWN');
     if (this.autoRequested || (this.supervisor?.getPhase() ?? 'idle') !== 'idle') throw new KhuError('AUTO_ACTIVE');
+    if (this.dailyQuests.isActive()) throw new KhuError('OPERATION_IN_PROGRESS');
     const currentMove = this.walkNavigator.getOperation();
     if (currentMove && (currentMove.status === 'accepted' || currentMove.status === 'running')) {
       throw new KhuError('OPERATION_IN_PROGRESS');
@@ -787,6 +809,212 @@ export class VendorRunner {
     };
   }
 
+  private createDailyClient() {
+    return {
+      nowMs: () => Date.now(),
+      isInGame: () => this.connectionState() === 'IN_GAME',
+      isMapReady: () => this.isMapReady(),
+      isDown: () => this.isDown(this.getPlayer()),
+      isAutoActive: () => this.autoRequested || !!this.P?.SceneWorld?.autoOn,
+      getSupervisorPhase: () => this.supervisor?.getPhase() ?? 'idle',
+      getHurtCount: () => this.hurtCount,
+      getWalkOperation: () => this.walkNavigator.getOperation(),
+      walkTo: (request: WalkRequest) => this.walkNavigator.walkTo(request),
+      cancelWalk: (operationId: string, reason: string) => { this.walkNavigator.cancel(operationId, reason); },
+      readDailyState: () => this.readDailyState(),
+      getProp: (mapId: string, propId: string) => this.getDailyProp(mapId, propId),
+      startChopping: (prop: DailyProp) => this.startDailyChopping(prop),
+      invokeCheckin: () => this.P?.Gateway?.cmd?.('diemdanh', {}, () => undefined),
+      startSeedQuest: (taskId: string) => this.P?.Quest?.startSeedQuest?.(taskId),
+      completeSeedQuest: () => this.P?.Quest?.completeSeedQuest?.(),
+      issueCommand: (command: string, action: () => unknown) => this.issueDailyCommand(command, action),
+      watchCommand: (command: string) => this.watchDailyCommand(command),
+      cancelPendingCommand: (command: string) => this.cancelDailyAck(command),
+      collectSeedMaterial: (taskId: string, propId: string) => this.P?.Quest?.collectSeedMaterial?.(taskId, propId),
+      cancelSeedQuest: () => this.P?.Quest?.cancelSeedQuest?.(),
+      recordLog: (event: { code: string; reasonCode?: string; detail?: string; at: number }) => this.recordLog(event.code, event),
+    };
+  }
+
+  private assertDailyRuntimeReady(): void {
+    if (this.connectionState() !== 'IN_GAME' || !this.getPlayer()) throw new DailyError('NOT_IN_GAME');
+    if (!this.isMapReady()) throw new DailyError('VENDOR_MAP_NOT_READY');
+  }
+
+  private getDailyStatusSnapshot(): DailyStatus | null {
+    if (this.connectionState() !== 'IN_GAME' || !this.isMapReady()) return this.dailyStatusCache?.status ?? null;
+    if (!this.dailyStatusCache || Date.now() - this.dailyStatusCache.at >= 1_000) {
+      try { this.dailyStatusCache = { status: this.dailyQuests.getStatus(), at: Date.now() }; } catch { return this.dailyStatusCache?.status ?? null; }
+    }
+    return this.dailyStatusCache.status;
+  }
+
+  private readDailyState(): DailyClientState {
+    const P = this.P;
+    const quest = P?.Quest;
+    const seed = quest?.seedQuest;
+    const todayValue = typeof quest?.today === 'function' ? quest.today() : null;
+    const today = typeof todayValue === 'string' ? todayValue : null;
+    const checkinDone = !!(P?.DiemDanh && typeof P.DiemDanh.daNhan === 'function' && P.DiemDanh.daNhan(P));
+    const totalValue = P?.DiemDanh && typeof P.DiemDanh.tong === 'function' ? P.DiemDanh.tong(P) : null;
+    const rawList = typeof quest?.seedTaskList === 'function' ? quest.seedTaskList() : [];
+    const rawEntries = Array.isArray(rawList) ? rawList.flatMap((entry: unknown) => {
+      if (typeof entry === 'string') return [{ id: entry, definition: null as Record<string, unknown> | null, raw: null as Record<string, unknown> | null }];
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const raw = entry as Record<string, unknown>;
+      const definition = raw.def && typeof raw.def === 'object' && !Array.isArray(raw.def)
+        ? raw.def as Record<string, unknown> : raw;
+      const id = typeof definition.id === 'string' ? definition.id : null;
+      return id ? [{ id, definition, raw }] : [];
+    }) : [];
+    const taskIds = rawEntries.map((entry) => entry.id);
+    const daily = seed?.daily && typeof seed.daily === 'object' ? seed.daily as Record<string, unknown> : {};
+    for (const id of Object.keys(daily)) if (!taskIds.includes(id)) taskIds.push(id);
+    const tasks = taskIds.map((id): DailyStatus['seedTasks'][number] => {
+      const rawEntry = rawEntries.find((entry) => entry.id === id);
+      const infoRaw = seed?.active && seed.task === id && typeof quest?.seedTaskInfo === 'function'
+        ? quest.seedTaskInfo() : rawEntry?.definition ?? null;
+      const info = infoRaw && typeof infoRaw === 'object' ? infoRaw as Record<string, unknown> : {};
+      const countRaw = daily[id];
+      const countValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsToday) ? Number(rawEntry.raw.runsToday)
+        : countRaw && typeof countRaw === 'object' && Number.isInteger((countRaw as Record<string, unknown>).n)
+        && typeof (countRaw as Record<string, unknown>).day === 'string'
+        && today !== null && (countRaw as Record<string, unknown>).day === today ? Number((countRaw as Record<string, unknown>).n) : null;
+      const count = today === null ? null : countValue ?? 0;
+      const rawLimit = rawEntry?.raw?.dailyLimit;
+      const limitValue = Number.isInteger(rawLimit) ? Number(rawLimit)
+        : Number.isInteger(info.limit) ? Number(info.limit)
+        : Number.isInteger(info.dailyLimit) ? Number(info.dailyLimit)
+        : id === 'duoc_moc' ? 3 : null;
+      const runsLeftValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsLeft) ? Number(rawEntry.raw.runsLeft)
+        : typeof quest?.seedTaskRunsLeft === 'function' ? quest.seedTaskRunsLeft(id) : null;
+      const runsLeft = Number.isInteger(runsLeftValue)
+        ? Math.max(0, Number(runsLeftValue))
+        : limitValue === null || count === null ? null : Math.max(0, limitValue - count);
+      const name = typeof info.name === 'string' ? info.name : id;
+      const kind = typeof info.kind === 'string' ? info.kind : 'collect';
+      return {
+        id,
+        name,
+        kind,
+        limit: limitValue,
+        runsToday: count,
+        runsLeft,
+        supported: id === 'duoc_moc',
+        active: !!seed?.active && seed.task === id,
+      };
+    });
+    const collectedValue = seed?.collected;
+    const activeCollected = typeof collectedValue === 'number' && Number.isFinite(collectedValue)
+      ? collectedValue
+      : collectedValue && typeof collectedValue === 'object' && !Array.isArray(collectedValue)
+        ? Object.values(collectedValue as Record<string, unknown>).filter(Boolean).length : null;
+    const drops = Array.isArray(P?.SceneWorld?.drops) ? P.SceneWorld.drops.flatMap((drop: unknown) => {
+      if (!drop || typeof drop !== 'object' || Array.isArray(drop)) return [];
+      const value = drop as Record<string, unknown>;
+      const x = Number(value.x);
+      const y = Number(value.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+      return [{
+        ...(typeof value.task === 'string' ? { task: value.task } : {}),
+        ...(typeof value.materialId === 'string' ? { materialId: value.materialId } : {}),
+        ...(typeof value.state === 'string' ? { state: value.state } : {}),
+        x,
+        y,
+      }];
+    }) : [];
+    const countInventory = (id: string): number | null => {
+      const value = P?.Inventory?.count?.(id);
+      return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    };
+    const stones = typeof P?.Progress?.stones === 'number' && Number.isFinite(P.Progress.stones) ? P.Progress.stones : null;
+    const duocCong = typeof P?.Progress?.duocCong === 'number' && Number.isFinite(P.Progress.duocCong) ? P.Progress.duocCong : null;
+    return {
+      today,
+      stage: typeof quest?.stage === 'number' && Number.isFinite(quest.stage) ? quest.stage : null,
+      checkin: { done: checkinDone, total: typeof totalValue === 'number' && Number.isFinite(totalValue) ? totalValue : null },
+      seedTasks: tasks,
+      activeSeedTask: typeof seed?.task === 'string' && seed.active ? seed.task : null,
+      stones,
+      duocCong,
+      canhKho: countInventory('canh_kho'),
+      activeCollected,
+      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : null,
+      drops,
+    };
+  }
+
+  private getDailyProp(mapId: string, propId: string): DailyProp | null {
+    const P = this.P;
+    const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
+    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
+    const found = candidates.find((candidate: unknown) => candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).id === propId) as Record<string, unknown> | undefined;
+    if (!found || typeof found.id !== 'string' || !Number.isFinite(Number(found.x)) || !Number.isFinite(Number(found.y))) return null;
+    return {
+      id: found.id,
+      x: Number(found.x),
+      y: Number(found.y),
+      ...(Number.isFinite(Number(found.r)) ? { r: Number(found.r) } : {}),
+      ...(typeof found.chopTask === 'string' ? { chopTask: found.chopTask } : {}),
+    };
+  }
+
+  private startDailyChopping(prop: DailyProp): boolean {
+    const actual = this.getDailyProp('duoc_vien', prop.id);
+    if (!actual || !this.P?.SceneWorld) return false;
+    this.P.SceneWorld.chopping = { prop: actual, swing: 0, t: 10 };
+    return true;
+  }
+
+  private issueDailyCommand(command: string, action: () => unknown): Promise<DailyAck> {
+    if (this.dailyAckWaiter) return Promise.resolve({ cmd: command, ok: false, why: 'OPERATION_IN_PROGRESS' });
+    return new Promise<DailyAck>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.dailyAckWaiter?.command !== command) return;
+        this.dailyAckWaiter = null;
+        resolve({ cmd: command, ok: false, why: 'ACK_TIMEOUT' });
+      }, 5_000);
+      this.dailyAckWaiter = { command, resolve, timer };
+      try {
+        const result = action();
+        if (result === false) this.settleDailyAck({ op: 'ack', cmd: command, ok: false, why: 'CLIENT_REFUSED' });
+      } catch {
+        this.settleDailyAck({ op: 'ack', cmd: command, ok: false, why: 'COMMAND_FAILED' });
+      }
+    });
+  }
+
+  private watchDailyCommand(command: string): Promise<DailyAck> {
+    if (this.dailyAckWaiter) return Promise.resolve({ cmd: command, ok: false, why: 'OPERATION_IN_PROGRESS' });
+    return new Promise<DailyAck>((resolve) => {
+      this.dailyAckWaiter = { command, resolve, timer: null };
+    });
+  }
+
+  private cancelDailyAck(command: string): void {
+    if (!this.dailyAckWaiter || this.dailyAckWaiter.command !== command) return;
+    const waiter = this.dailyAckWaiter;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    this.dailyAckWaiter = null;
+    waiter.resolve({ cmd: command, ok: false, why: 'CANCELLED' });
+  }
+
+  private settleDailyAck(packet: Record<string, unknown>): void {
+    const waiter = this.dailyAckWaiter;
+    if (!waiter || packet.cmd !== waiter.command) return;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    this.dailyAckWaiter = null;
+    waiter.resolve({
+      cmd: waiter.command,
+       ...(typeof packet.rid === 'string' || typeof packet.rid === 'number' ? { rid: packet.rid } : {}),
+      ok: packet.ok === true,
+      ...(typeof packet.why === 'string' ? { why: packet.why } : {}),
+      ...(typeof packet.toast === 'string' ? { toast: packet.toast } : {}),
+      ...(typeof packet.stones === 'number' && Number.isFinite(packet.stones) ? { stones: packet.stones } : {}),
+      ...(typeof packet.duocCong === 'number' && Number.isFinite(packet.duocCong) ? { duocCong: packet.duocCong } : {}),
+    });
+  }
+
   private getMapIdsFromClient(): string[] {
     const mapData = this.P?.MapData;
     if (!mapData || typeof mapData !== 'object') return [];
@@ -871,6 +1099,7 @@ export class VendorRunner {
     try {
       if (this.P.Game.scene?.update) this.P.Game.scene.update(dt);
       this.walkNavigator.tick();
+      this.dailyQuests.tick();
       this.supervisor?.tick();
       this.probeVitals(now);
       this.checkVitalsConfirmation(now);
@@ -995,6 +1224,7 @@ export class VendorRunner {
 
   private handleSocketClosed(): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
+    this.cancelDailyForReason('reconnecting');
     this.cancelMoveTo('reconnecting');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('connection_closed');
@@ -1104,6 +1334,7 @@ export class VendorRunner {
     const pick = (keys: string[]) => Object.fromEntries(keys.filter((key) => key in packet).map((key) => [key, packet[key]]));
     if (op === 'khu') data = pick(['mapId', 'khu', 'soKhu', 'dem', 'toiDa', 'tran']);
     else if (op === 'map') data = pick(['mapId', 'khu', 'soKhu', 'x', 'y', 'ep']);
+    else if (op === 'ack') data = { keys: Object.keys(packet).slice(0, 14), ...pick(['rid', 'ok', 'why', 'toast', 'retryAfter', 'regrowAfter', 'du', 'stones', 'tong', 'duocCong']) };
     else data = { keys: Object.keys(packet).slice(0, 12), ...pick(['toast', 'text', 'kind', 'ok', 'err', 'error', 'msg', 'code', 'reason']) };
     this.khuProbeEvents.push({ at: Date.now(), op, data });
     if (this.khuProbeEvents.length > 80) this.khuProbeEvents.shift();
@@ -1126,6 +1357,144 @@ export class VendorRunner {
     return { sent, at, x, y, mapId: this.getMapId(), khu: this.observedKhu };
   }
 
+  /**
+   * THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md). Chỉ gọi các hàm/đường lệnh của chính client:
+   * status (chỉ đọc), diemdanh (Gateway.cmd), seed.start/seed.complete/seed.cancel (Quest.* của client, bindIntents phát lệnh),
+   * harvest (Gateway.cmd resource.harvest như client). Không có kiểm tra an toàn nào ngoài đang trong game.
+   */
+  public questProbe(act: string, params: { taskId?: string; propId?: string } = {}): { act: string; at: number; result: unknown } {
+    const P = this.P;
+    const player = this.getPlayer();
+    if (this.connectionState() !== 'IN_GAME' || !player || !P?.Gateway) throw new Error('NOT_IN_GAME');
+    this.khuProbeActive = true;
+    const at = Date.now();
+    const safeId = (value: unknown): string => {
+      if (typeof value !== 'string' || !/^[a-zA-Z0-9_.-]{1,64}$/.test(value)) throw new Error('TARGET_INVALID');
+      return value;
+    };
+    const read = (): Record<string, unknown> => {
+      const Quest = P.Quest;
+      const seed = Quest?.seedQuest;
+      return {
+        mapId: this.getMapId(),
+        x: Number.isFinite(player.x) ? Math.round(player.x) : null,
+        y: Number.isFinite(player.y) ? Math.round(player.y) : null,
+        stage: typeof Quest?.stage === 'number' ? Quest.stage : null,
+        today: typeof Quest?.today === 'function' ? Quest.today() : null,
+        diemDanh: P.DiemDanh ? { daNhan: !!P.DiemDanh.daNhan(P), tong: P.DiemDanh.tong(P) } : null,
+        seedQuest: seed ? { active: !!seed.active, task: seed.task ?? null, collected: seed.collected ? Object.keys(seed.collected).length : 0, daily: seed.daily ?? {} } : null,
+        stones: typeof P.Progress?.stones === 'number' ? P.Progress.stones : null,
+        duocCong: typeof P.Progress?.duocCong === 'number' ? P.Progress.duocCong : null,
+        namLinhChi: typeof P.Inventory?.count === 'function' ? P.Inventory.count('nam_linh_chi') : null,
+        canhKho: typeof P.Inventory?.count === 'function' ? P.Inventory.count('canh_kho') : null,
+        chopping: !!P.SceneWorld?.chopping,
+        drops: Array.isArray(P.SceneWorld?.drops)
+          ? P.SceneWorld.drops.slice(0, 12).map((drop: Record<string, unknown>) => ({
+            kind: drop.kind ?? null, task: drop.task ?? null, materialId: drop.materialId ?? null, itemId: drop.itemId ?? null,
+            state: drop.state ?? null, x: Number.isFinite(drop.x) ? Math.round(Number(drop.x)) : null, y: Number.isFinite(drop.y) ? Math.round(Number(drop.y)) : null,
+          })) : null,
+      };
+    };
+    this.khuProbeEvents.push({ at, op: '_sent', data: { quest: act, ...params, before: read() } });
+    const cb = (name: string) => (response: Record<string, unknown> | undefined) => {
+      this.khuProbeEvents.push({ at: Date.now(), op: '_cb', data: { cmd: name, ok: response?.ok ?? null, why: response?.why ?? null, toast: response?.toast ?? null, keys: response ? Object.keys(response).slice(0, 14) : [] } });
+    };
+    let result: unknown = null;
+    switch (act) {
+      case 'status': result = read(); break;
+      case 'diemdanh': P.Gateway.cmd('diemdanh', {}, cb('diemdanh')); result = { sent: true }; break;
+      case 'seed.start': {
+        const taskId = safeId(params.taskId);
+        const outBefore = this.packets.commands['seed.start'] ?? 0;
+        const started = P.Quest?.startSeedQuest?.(taskId);
+        result = { local: started ? 'started' : 'refused', cmdSent: (this.packets.commands['seed.start'] ?? 0) > outBefore };
+        break;
+      }
+      case 'seed.complete': {
+        const outBefore = this.packets.commands['seed.complete'] ?? 0;
+        const done = P.Quest?.completeSeedQuest?.();
+        result = { local: done ? 'completed' : 'refused', cmdSent: (this.packets.commands['seed.complete'] ?? 0) > outBefore };
+        break;
+      }
+      case 'seed.cancel': {
+        const outBefore = this.packets.commands['seed.cancel'] ?? 0;
+        const cancelled = P.Quest?.cancelSeedQuest?.();
+        result = { local: cancelled ? 'cancelled' : 'refused', cmdSent: (this.packets.commands['seed.cancel'] ?? 0) > outBefore };
+        break;
+      }
+      case 'harvest': P.Gateway.cmd('resource.harvest', { propId: safeId(params.propId) }, cb('resource.harvest')); result = { sent: true }; break;
+      case 'props': {
+        const map = P.SceneWorld?.map;
+        const all = [...(map?.props ?? []), ...(map?.flatProps ?? [])];
+        result = all.filter((prop: Record<string, unknown>) => prop.chopTask || prop.seedTask || prop.type === 'khu_board' || prop.type === 'npc')
+          .slice(0, 60).map((prop: Record<string, unknown>) => ({
+            id: prop.id, type: prop.type, task: prop.chopTask ?? prop.seedTask ?? null, hidden: !!prop.hidden,
+            x: Number.isFinite(prop.x) ? Math.round(Number(prop.x)) : null, y: Number.isFinite(prop.y) ? Math.round(Number(prop.y)) : null, r: prop.r ?? null,
+          }));
+        break;
+      }
+      case 'chop': {
+        // Giống ea() của client: đặt trạng thái đang chặt; vòng cập nhật của client lo nhịp chặt, rơi cành và kiểm tra khoảng cách.
+        const id = safeId(params.propId);
+        const map = P.SceneWorld?.map;
+        const prop = [...(map?.props ?? []), ...(map?.flatProps ?? [])].find((candidate: Record<string, unknown>) => candidate.id === id);
+        if (!prop) { result = { started: false, why: 'prop_not_found' }; break; }
+        if (!P.SceneWorld.chopping || P.SceneWorld.chopping.prop !== prop) P.SceneWorld.chopping = { prop, swing: 0, t: 10 };
+        result = { started: true };
+        break;
+      }
+      case 'seed.collect': {
+        const outBefore = this.packets.commands['seed.collect'] ?? 0;
+        const ok = P.Quest?.collectSeedMaterial?.(safeId(params.taskId), safeId(params.propId));
+        result = { local: ok ? 'collected' : 'refused', cmdSent: (this.packets.commands['seed.collect'] ?? 0) > outBefore };
+        break;
+      }
+      default: throw new Error('TARGET_INVALID');
+    }
+    return { act, at, result };
+  }
+
+  public getDailyStatus(force = true): DailyStatus {
+    this.assertDailyRuntimeReady();
+    if (force || !this.dailyStatusCache || Date.now() - this.dailyStatusCache.at >= 1_000) {
+      this.dailyStatusCache = { status: this.dailyQuests.getStatus(), at: Date.now() };
+    }
+    return this.dailyStatusCache.status;
+  }
+
+  public getDailySnapshot(force = true): { status: DailyStatus; current: DailyOperation | null } {
+    return { status: this.getDailyStatus(force), current: this.dailyQuests.getOperation() };
+  }
+
+  public startDailyCheckin(): DailyOperation {
+    this.assertDailyRuntimeReady();
+    const operation = this.dailyQuests.startCheckin();
+    this.dailyStatusCache = null;
+    return operation;
+  }
+
+  public startDailySeed(taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): DailyOperation {
+    this.assertDailyRuntimeReady();
+    const operation = this.dailyQuests.startSeedTask(taskId, runs, options);
+    this.dailyStatusCache = null;
+    return operation;
+  }
+
+  public cancelDaily(operationId: string, reason = 'user_cancelled'): DailyOperation {
+    if (!this.dailyQuests.cancel(operationId, reason)) throw new DailyError('OPERATION_NOT_FOUND');
+    const operation = this.dailyQuests.getOperation();
+    if (!operation) throw new DailyError('OPERATION_NOT_FOUND');
+    this.dailyStatusCache = null;
+    return operation;
+  }
+
+  private cancelDailyForReason(reason: string): void {
+    const operation = this.dailyQuests.getOperation();
+    if (!operation || !['accepted', 'running'].includes(operation.status)) return;
+    this.dailyQuests.cancel(operation.operationId, reason);
+    this.dailyStatusCache = null;
+  }
+
   public getKhuProbe(): { events: Array<{ at: number; op: string; data?: unknown }>; mapId: string | null; khu: number | null; soKhu: number | null } {
     return { events: this.khuProbeEvents.map((event) => ({ ...event })), mapId: this.getMapId(), khu: this.observedKhu, soKhu: this.observedSoKhu };
   }
@@ -1133,6 +1502,10 @@ export class VendorRunner {
   private recordIncoming(packet: Record<string, unknown>): void {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
+    if (op === 'ack') this.settleDailyAck(packet);
+    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete))(?::refused)?$/.test(packet.reason)) {
+      this.recordLog('daily_state_observed', { reasonCode: packet.reason });
+    }
     if (this.khuProbeActive) this.recordKhuProbeEvent(op, packet);
     if (op === 'map') {
       const previousMapId = this.observedMapId;

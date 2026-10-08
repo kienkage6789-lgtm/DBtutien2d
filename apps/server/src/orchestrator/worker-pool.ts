@@ -8,6 +8,7 @@ import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
+import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
 
@@ -69,6 +70,8 @@ export interface AccountRuntimeInfo {
   x: number | null;
   y: number | null;
   moveTo: VendorRunnerSnapshot['moveTo'];
+  daily: DailyOperation | null;
+  dailyStatus: DailyStatus | null;
   latencyMs: number;
   activity: string;
   soKhu: number | null;
@@ -330,6 +333,36 @@ export class WorkerPool {
     return operation;
   }
 
+  public getDaily(accountId: string): { status: DailyStatus; current: DailyOperation | null } {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    return active.runner.getDailySnapshot(true);
+  }
+
+  public startDailyCheckin(accountId: string): DailyOperation {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    const operation = active.runner.startDailyCheckin();
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return operation;
+  }
+
+  public startDailySeed(accountId: string, taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): DailyOperation {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    const operation = active.runner.startDailySeed(taskId, runs, options);
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return operation;
+  }
+
+  public cancelDaily(accountId: string, operationId: string): DailyOperation {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    const operation = active.runner.cancelDaily(operationId);
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return operation;
+  }
+
   public async changeKhu(accountId: string, khu: number): Promise<AccountRuntimeInfo> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
@@ -344,6 +377,13 @@ export class WorkerPool {
     if (!active) throw new Error('NOT_IN_GAME');
     if (refresh) await active.runner.requestKhuList();
     return active.runner.getKhuInfo();
+  }
+
+  /** THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md). */
+  public questProbe(accountId: string, act: string, params: { taskId?: string; propId?: string }) {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    return active.runner.questProbe(act, params);
   }
 
   /** THỬ NGHIỆM đo giao thức đổi khu (docs/RESEARCH_KHU_CHANGE.md). */
@@ -411,6 +451,8 @@ export class WorkerPool {
       x: null,
       y: null,
       moveTo: null,
+      daily: null,
+      dailyStatus: null,
       latencyMs: 0,
       activity: 'idle',
       soKhu: null,
@@ -497,6 +539,8 @@ export class WorkerPool {
       x: snapshot.x,
       y: snapshot.y,
       moveTo: snapshot.moveTo,
+      daily: snapshot.daily,
+      dailyStatus: snapshot.dailyStatus,
       latencyMs: 0,
       activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
       soKhu: snapshot.soKhu,

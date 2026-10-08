@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeMoveTo } from './useRealtime';
+import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeMoveTo } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -101,5 +101,21 @@ describe('mergeAccountRuntime vitals freshness', () => {
     expect(malformed?.khuList).toEqual(khuList);
     const cleared = mergeAccountRuntime(malformed!, { ...base, mapContext: { mapId: 'tan_vien', khu: 1, soKhu: 20, observedAt: 1_002, fresh: true }, khuList: null });
     expect(cleared?.khuList).toBeNull();
+  });
+
+  it('sanitizes daily operation/status and leaves malformed daily undefined', () => {
+    const operation = {
+      operationId: 'daily-1', kind: 'seed', status: 'running', step: 'seed_chop', runIndex: 1, runsTotal: 2,
+      startedAt: 1, updatedAt: 2,
+    };
+    expect(sanitizeDaily(operation)).toEqual(operation);
+    expect(sanitizeDaily({ ...operation, status: 'unknown' })).toBeUndefined();
+    const status = {
+      today: '2026-10-08', stage: 21, checkin: { done: false, total: 0 }, activeSeedTask: null,
+      stones: 10, duocCong: 2, canhKho: 0,
+      seedTasks: [{ id: 'duoc_moc', name: 'Việc Dược Công', kind: 'collect', limit: 3, runsToday: 1, runsLeft: 2, supported: true, active: false }],
+    };
+    expect(sanitizeDailyStatus(status)).toEqual(status);
+    expect(sanitizeDailyStatus({ ...status, seedTasks: [{ ...status.seedTasks[0], runsLeft: '2' }] })).toBeUndefined();
   });
 });

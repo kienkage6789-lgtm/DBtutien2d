@@ -1,9 +1,10 @@
-import type { AccountRuntime, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired } from './auth';
 
 const API_BASE = '/api';
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -299,6 +300,124 @@ export async function cancelMoveTo(accountId: string, operationId: string): Prom
   const operation = parseMoveToOperation(json?.data);
   if (!response.ok || json?.success !== true || !operation) throw moveToError(json, response);
   return operation;
+}
+
+export class DailyApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly errorCode: string,
+    public readonly httpStatus: number,
+    public readonly retryable = false,
+  ) {
+    super(message);
+    this.name = 'DailyApiError';
+  }
+}
+
+const DAILY_STATUSES = new Set<DailyOperation['status']>(['accepted', 'running', 'done', 'failed', 'cancelled']);
+const DAILY_KINDS = new Set<DailyOperation['kind']>(['checkin', 'seed']);
+
+function parseDailyOperation(value: unknown): DailyOperation | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.operationId !== 'string' || !item.operationId
+    || typeof item.kind !== 'string' || !DAILY_KINDS.has(item.kind as DailyOperation['kind'])
+    || typeof item.status !== 'string' || !DAILY_STATUSES.has(item.status as DailyOperation['status'])
+    || typeof item.step !== 'string' || !Number.isInteger(item.runIndex) || Number(item.runIndex) < 1
+    || !Number.isInteger(item.runsTotal) || Number(item.runsTotal) < 1
+    || !isFiniteNumber(item.startedAt) || !isFiniteNumber(item.updatedAt)) return undefined;
+  const rewards = item.rewards && typeof item.rewards === 'object' && !Array.isArray(item.rewards) ? item.rewards as Record<string, unknown> : null;
+  const parsedRewards = rewards && isFiniteNumber(rewards.stones) && isFiniteNumber(rewards.duocCong)
+    ? { stones: Number(rewards.stones), duocCong: Number(rewards.duocCong) } : undefined;
+  return {
+    operationId: item.operationId,
+    kind: item.kind as DailyOperation['kind'],
+    ...(typeof item.taskId === 'string' ? { taskId: item.taskId } : {}),
+    status: item.status as DailyOperation['status'],
+    step: item.step,
+    runIndex: Number(item.runIndex),
+    runsTotal: Number(item.runsTotal),
+    ...(typeof item.reason === 'string' ? { reason: item.reason } : {}),
+    ...(typeof item.why === 'string' ? { why: item.why } : {}),
+    ...(parsedRewards ? { rewards: parsedRewards } : {}),
+    startedAt: Number(item.startedAt),
+    updatedAt: Number(item.updatedAt),
+  };
+}
+
+function parseDailyTask(value: unknown): DailySeedTask | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const nullableNumber = (candidate: unknown): candidate is number | null => candidate === null || Number.isInteger(candidate) && Number(candidate) >= 0;
+  return typeof item.id === 'string' && typeof item.name === 'string' && typeof item.kind === 'string'
+    && nullableNumber(item.limit) && nullableNumber(item.runsToday) && nullableNumber(item.runsLeft)
+    && typeof item.supported === 'boolean' && typeof item.active === 'boolean'
+    ? { id: item.id, name: item.name, kind: item.kind, limit: item.limit as number | null, runsToday: item.runsToday as number | null, runsLeft: item.runsLeft as number | null, supported: item.supported, active: item.active }
+    : null;
+}
+
+export function parseDailyStatus(value: unknown): DailyStatus | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const checkin = item.checkin;
+  const parsedTasks = Array.isArray(item.seedTasks) ? item.seedTasks.map(parseDailyTask).filter((task): task is DailySeedTask => task !== null) : null;
+  if ((item.today !== null && typeof item.today !== 'string') || (item.stage !== null && !isFiniteNumber(item.stage))
+    || !checkin || typeof checkin !== 'object' || Array.isArray(checkin)
+    || typeof (checkin as Record<string, unknown>).done !== 'boolean'
+    || ((checkin as Record<string, unknown>).total !== null && !isFiniteNumber((checkin as Record<string, unknown>).total))
+    || !parsedTasks || parsedTasks.length !== (item.seedTasks as unknown[]).length
+    || (item.activeSeedTask !== null && typeof item.activeSeedTask !== 'string')
+    || !['stones', 'duocCong', 'canhKho'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
+  return {
+    today: item.today as string | null,
+    stage: item.stage as number | null,
+    checkin: { done: (checkin as Record<string, unknown>).done as boolean, total: (checkin as Record<string, unknown>).total as number | null },
+    seedTasks: parsedTasks,
+    activeSeedTask: item.activeSeedTask as string | null,
+    stones: item.stones as number | null,
+    duocCong: item.duocCong as number | null,
+    canhKho: item.canhKho as number | null,
+  };
+}
+
+function dailyError(json: Record<string, unknown> | null, response: Response): DailyApiError {
+  const code = typeof json?.errorCode === 'string' ? json.errorCode : typeof json?.error === 'string' ? json.error : 'DAILY_FAILED';
+  const message = typeof json?.error === 'string' ? json.error : `Không thể chạy nhiệm vụ hằng ngày (HTTP ${response.status}).`;
+  return new DailyApiError(message, code, response.status, json?.retryable === true);
+}
+
+export async function fetchDaily(accountId: string): Promise<{ status: DailyStatus; current: DailyOperation | null }> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/daily`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const status = parseDailyStatus(json?.data);
+  const current = parseDailyOperation(json?.data && typeof json.data === 'object' && !Array.isArray(json.data) ? (json.data as Record<string, unknown>).current : undefined);
+  if (!response.ok || json?.success !== true || !status || current === undefined) throw dailyError(json, response);
+  return { status, current };
+}
+
+async function postDaily(path: string, body: Record<string, unknown>): Promise<DailyOperation> {
+  const response = await apiFetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const operation = parseDailyOperation(json?.data);
+  if (!response.ok || json?.success !== true || !operation) throw dailyError(json, response);
+  return operation;
+}
+
+export function startDailyCheckin(accountId: string): Promise<DailyOperation> {
+  return postDaily(`/accounts/${encodeURIComponent(accountId)}/daily/checkin`, {});
+}
+
+export function startDailySeed(accountId: string, taskId: string, options: { runs?: number; abortOnHurt?: boolean; maxHurt?: number } = {}): Promise<DailyOperation> {
+  return postDaily(`/accounts/${encodeURIComponent(accountId)}/daily/seed`, { taskId, ...options });
+}
+
+export function cancelDaily(accountId: string, operationId: string): Promise<DailyOperation> {
+  return postDaily(`/accounts/${encodeURIComponent(accountId)}/daily/cancel`, { operationId });
 }
 
 export async function startAllBots(): Promise<AccountRuntime[]> {

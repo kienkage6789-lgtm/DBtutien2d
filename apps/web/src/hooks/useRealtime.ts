@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { AccountRuntime, LogEntry, MoveToOperation } from '../types';
+import { AccountRuntime, DailyOperation, DailySeedTask, DailyStatus, LogEntry, MoveToOperation } from '../types';
 import { fetchAccounts, fetchLogs } from '../lib/api';
 import { isContextNewer, isOlderEpoch, sanitizeEntityContext, sanitizeMapContext } from '../lib/context';
 import { sanitizeKhuList } from '../lib/khu';
@@ -9,6 +9,8 @@ const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped'
 const VITAL_STATUSES = new Set<NonNullable<AccountRuntime['vitals']>['status']>(['unknown', 'fresh', 'stale', 'invalid', 'conflict']);
 const VITAL_SOURCES = new Set<NonNullable<AccountRuntime['vitals']>['source']>(['client', null]);
 const MOVE_TO_STATUSES = new Set<MoveToOperation['status']>(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
+const DAILY_STATUSES = new Set<DailyOperation['status']>(['accepted', 'running', 'done', 'failed', 'cancelled']);
+const DAILY_KINDS = new Set<DailyOperation['kind']>(['checkin', 'seed']);
 
 const hasOwn = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -114,6 +116,70 @@ export function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undef
   return result;
 }
 
+export function sanitizeDaily(value: unknown): DailyOperation | null | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.operationId !== 'string' || !item.operationId
+    || typeof item.kind !== 'string' || !DAILY_KINDS.has(item.kind as DailyOperation['kind'])
+    || typeof item.status !== 'string' || !DAILY_STATUSES.has(item.status as DailyOperation['status'])
+    || typeof item.step !== 'string' || !Number.isInteger(item.runIndex) || Number(item.runIndex) < 1
+    || !Number.isInteger(item.runsTotal) || Number(item.runsTotal) < 1
+    || !isFiniteNumber(item.startedAt) || !isFiniteNumber(item.updatedAt)) return undefined;
+  const rewards = item.rewards && typeof item.rewards === 'object' && !Array.isArray(item.rewards) ? item.rewards as Record<string, unknown> : null;
+  const parsedRewards = rewards && isFiniteNumber(rewards.stones) && isFiniteNumber(rewards.duocCong)
+    ? { stones: Number(rewards.stones), duocCong: Number(rewards.duocCong) } : undefined;
+  return {
+    operationId: item.operationId,
+    kind: item.kind as DailyOperation['kind'],
+    ...(typeof item.taskId === 'string' ? { taskId: item.taskId } : {}),
+    status: item.status as DailyOperation['status'],
+    step: item.step,
+    runIndex: Number(item.runIndex),
+    runsTotal: Number(item.runsTotal),
+    ...(typeof item.reason === 'string' ? { reason: item.reason } : {}),
+    ...(typeof item.why === 'string' ? { why: item.why } : {}),
+    ...(parsedRewards ? { rewards: parsedRewards } : {}),
+    startedAt: Number(item.startedAt),
+    updatedAt: Number(item.updatedAt),
+  };
+}
+
+function sanitizeDailyTask(value: unknown): DailySeedTask | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const nullableNumber = (candidate: unknown): candidate is number | null => candidate === null || Number.isInteger(candidate) && Number(candidate) >= 0;
+  return typeof item.id === 'string' && typeof item.name === 'string' && typeof item.kind === 'string'
+    && nullableNumber(item.limit) && nullableNumber(item.runsToday) && nullableNumber(item.runsLeft)
+    && typeof item.supported === 'boolean' && typeof item.active === 'boolean'
+    ? { id: item.id, name: item.name, kind: item.kind, limit: item.limit as number | null, runsToday: item.runsToday as number | null, runsLeft: item.runsLeft as number | null, supported: item.supported, active: item.active }
+    : null;
+}
+
+export function sanitizeDailyStatus(value: unknown): DailyStatus | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const checkin = item.checkin;
+  const tasks = Array.isArray(item.seedTasks) ? item.seedTasks.map(sanitizeDailyTask).filter((task): task is DailySeedTask => task !== null) : null;
+  if ((item.today !== null && typeof item.today !== 'string') || (item.stage !== null && !isFiniteNumber(item.stage))
+    || !checkin || typeof checkin !== 'object' || Array.isArray(checkin)
+    || typeof (checkin as Record<string, unknown>).done !== 'boolean'
+    || ((checkin as Record<string, unknown>).total !== null && !isFiniteNumber((checkin as Record<string, unknown>).total))
+    || !tasks || tasks.length !== (item.seedTasks as unknown[]).length
+    || (item.activeSeedTask !== null && typeof item.activeSeedTask !== 'string')
+    || !['stones', 'duocCong', 'canhKho'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
+  return {
+    today: item.today as string | null,
+    stage: item.stage as number | null,
+    checkin: { done: (checkin as Record<string, unknown>).done as boolean, total: (checkin as Record<string, unknown>).total as number | null },
+    seedTasks: tasks,
+    activeSeedTask: item.activeSeedTask as string | null,
+    stones: item.stones as number | null,
+    duocCong: item.duocCong as number | null,
+    canhKho: item.canhKho as number | null,
+  };
+}
+
 const WORLD_NUMBER_FIELDS = new Set<string>(['khu', 'x', 'y', 'soKhu']);
 const WORLD_STRING_FIELDS = new Set<string>(['mapId']);
 
@@ -147,6 +213,18 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   } else if (payload.status === 'stopped' || payload.status === 'error') {
     next.moveTo = null;
   }
+  if (hasOwn(payload, 'daily')) {
+    const daily = sanitizeDaily(payload.daily);
+    if (daily !== undefined) next.daily = daily;
+  } else if (payload.status === 'stopped' || payload.status === 'error') {
+    next.daily = null;
+  }
+  if (hasOwn(payload, 'dailyStatus')) {
+    const dailyStatus = sanitizeDailyStatus(payload.dailyStatus);
+    if (dailyStatus !== undefined) next.dailyStatus = dailyStatus;
+  } else if (payload.status === 'stopped' || payload.status === 'error') {
+    next.dailyStatus = null;
+  }
   if (hasOwn(payload, 'vendor')) {
     if (payload.vendor && typeof payload.vendor === 'object' && !Array.isArray(payload.vendor)) {
       const vendor = { ...(payload.vendor as Record<string, unknown>) };
@@ -159,6 +237,16 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
         const khuList = sanitizeKhuList(vendor.khuList);
         if (khuList === undefined) delete vendor.khuList;
         else vendor.khuList = khuList;
+      }
+      if (hasOwn(vendor, 'daily')) {
+        const daily = sanitizeDaily(vendor.daily);
+        if (daily === undefined) delete vendor.daily;
+        else vendor.daily = daily;
+      }
+      if (hasOwn(vendor, 'dailyStatus')) {
+        const dailyStatus = sanitizeDailyStatus(vendor.dailyStatus);
+        if (dailyStatus === undefined) delete vendor.dailyStatus;
+        else vendor.dailyStatus = dailyStatus;
       }
       next.vendor = vendor as unknown as AccountRuntime['vendor'];
     } else {

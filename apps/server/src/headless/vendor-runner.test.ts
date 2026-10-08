@@ -39,10 +39,11 @@ class FakeSocket implements VendorSocketLike {
   public static respondToEnter = false;
   public static enterDelayMs = 25;
   public static enterSpawns: Record<string, { x: number; y: number }> = {};
+  public static dailyAckResponses = false;
   /** Điểm xuất hiện trong gói `map`; mặc định cũ nằm trong ô bị chặn của tan_vien nên không đi bộ được. */
   public static spawn = { x: 240, y: 192 };
   public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
-  public static outgoing: Array<{ op?: string; act?: string; khu?: number; mapId?: string }> = [];
+  public static outgoing: Array<{ op?: string; act?: string; khu?: number; mapId?: string; cmd?: string; rid?: number }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
   public static readonly CONNECTING = 0;
@@ -65,8 +66,8 @@ class FakeSocket implements VendorSocketLike {
   }
 
   public send(data: string): void {
-    const packet = JSON.parse(data) as { op?: string; act?: string; khu?: number; mapId?: string; seq?: number; st?: string; x?: number; y?: number };
-    FakeSocket.outgoing.push({ op: packet.op, act: packet.act, khu: packet.khu, mapId: packet.mapId });
+    const packet = JSON.parse(data) as { op?: string; act?: string; khu?: number; mapId?: string; cmd?: string; rid?: number; seq?: number; st?: string; x?: number; y?: number };
+    FakeSocket.outgoing.push({ op: packet.op, act: packet.act, khu: packet.khu, mapId: packet.mapId, cmd: packet.cmd, rid: packet.rid });
     if (packet.op === 'move' && typeof packet.seq === 'number') {
       FakeSocket.moves.push({ seq: packet.seq, st: packet.st, x: packet.x, y: packet.y });
       const moveCount = FakeSocket.moves.length;
@@ -113,6 +114,12 @@ class FakeSocket implements VendorSocketLike {
         queueMicrotask(() => this.emit({ op: 'toast', text: `Đã sang khu ${target}.`, kind: 'success' }));
         queueMicrotask(() => this.emitKhu());
       }
+    }
+    if (packet.op === 'cmd' && FakeSocket.dailyAckResponses && typeof packet.cmd === 'string') {
+      const command = packet.cmd;
+      queueMicrotask(() => this.emit({ op: 'ack', cmd: 'seed.start', rid: packet.rid, ok: true }));
+      queueMicrotask(() => this.emit({ op: 'ack', cmd: command, rid: packet.rid, ok: true, toast: 'fixture daily ack' }));
+      queueMicrotask(() => this.emit({ op: 'state', reason: command }));
     }
     if (packet.op !== 'hello') return;
     queueMicrotask(() => {
@@ -163,6 +170,7 @@ function resetKhuFixture(): void {
   FakeSocket.spawn = { x: 240, y: 192 };
   FakeSocket.outgoing = [];
   FakeSocket.moves = [];
+  FakeSocket.dailyAckResponses = false;
 }
 
 function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRunner>[0]> = {}): VendorRunner {
@@ -660,6 +668,33 @@ test('VendorRunner completes a portal leg when the fixture server replies to ent
     FakeSocket.respondToEnter = false;
     FakeSocket.enterSpawns = {};
     FakeSocket.outgoing = [];
+  }
+});
+
+test('VendorRunner daily checkin waits for the matching ACK cmd and ignores another command', async () => {
+  resetKhuFixture();
+  FakeSocket.instances = [];
+  FakeSocket.outgoing = [];
+  FakeSocket.spawn = { x: 1057, y: 646 };
+  FakeSocket.emitYou = false;
+  FakeSocket.dailyAckResponses = true;
+  const runner = createKhuRunner({ loopIntervalMs: 5 });
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().mapId === 'tan_vien');
+    const status = runner.getDailyStatus();
+    assert.ok(status.seedTasks.some((task) => task.id === 'duoc_moc'), 'official client seedTaskList must expose duoc_moc');
+    const operation = runner.startDailyCheckin();
+    await waitUntil(() => FakeSocket.outgoing.some((packet) => packet.op === 'cmd' && packet.cmd === 'diemdanh'), 10_000);
+    await waitUntil(() => runner.getSnapshot().daily?.status === 'done', 10_000);
+    assert.equal(runner.getSnapshot().daily?.operationId, operation.operationId);
+    assert.equal(runner.getSnapshot().daily?.rewards?.stones, 10);
+    assert.equal(FakeSocket.outgoing.filter((packet) => packet.op === 'cmd' && packet.cmd === 'diemdanh').length, 1);
+  } finally {
+    await runner.stop();
+    resetKhuFixture();
+    FakeSocket.emitYou = true;
+    FakeSocket.dailyAckResponses = false;
   }
 });
 

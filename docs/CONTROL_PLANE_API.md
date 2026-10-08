@@ -29,6 +29,10 @@ Cập nhật: 2026-10-08. API này là control-plane nội bộ của dashboard,
 | `POST` | `/api/accounts/:id/khu` | Đổi sang khu `{ "khu": N }` của map hiện tại |
 | `POST` | `/api/accounts/:id/move-to` | Nhận tọa độ `{x,y}` và bắt đầu đi trong map hiện tại |
 | `POST` | `/api/accounts/:id/move-to/cancel` | Hủy thao tác đi tay theo `operationId` |
+| `GET` | `/api/accounts/:id/daily` | Đọc ngày, điểm danh, lượt seed và nhiệm vụ hiện tại |
+| `POST` | `/api/accounts/:id/daily/checkin` | Bắt đầu điểm danh; body rỗng hoặc `{}` |
+| `POST` | `/api/accounts/:id/daily/seed` | Bắt đầu `duoc_moc`: `{taskId,runs?,abortOnHurt?,maxHurt?}` |
+| `POST` | `/api/accounts/:id/daily/cancel` | Hủy nhiệm vụ theo `{operationId}` |
 | `POST` | `/api/orchestrator/start-all` | Start tuần tự mọi account |
 | `POST` | `/api/orchestrator/stop-all` | Stop mọi vendor session |
 | `GET` | `/api/accounts/:id/logs` | Log một account |
@@ -57,6 +61,14 @@ Khi gói `map` cùng `mapId` nhưng `khu` đổi đến từ bất kỳ nguồn 
 `resolvedTarget` là waypoint cuối của route, tức tâm ô đi được mà client đã snap trong bán kính 6 ô. Nếu ô snap là ô cổng của map hiện tại, request trả `TARGET_ON_PORTAL` (HTTP 422); bản 1 không đổi map. Các mã lỗi dùng envelope `{success:false,error,errorCode,retryable}`: `NOT_IN_GAME`, `VENDOR_MAP_NOT_READY`, `CHARACTER_DOWN`, `AUTO_ACTIVE`, `OPERATION_IN_PROGRESS` là HTTP 409; `TARGET_INVALID` là 400; `TARGET_UNREACHABLE` và `TARGET_ON_PORTAL` là 422.
 
 `POST /move-to/cancel` nhận `{ "operationId": "..." }` và trả operation đã `cancelled`; thao tác không tồn tại trả HTTP 404. Runtime `moveTo` (đồng thời có trong `vendor` snapshot) giữ trạng thái cuối để dashboard hiển thị đích đã snap, trạng thái và lý do. Vòng lặp runner tự kết thúc khi tới trong bán kính mặc định 20 px, đứng yên quá 5 giây (blocked/stuck), quá timeout theo quãng đường (failed/timeout), gục, chuyển cảnh/đổi map, reconnect, stop runner hoặc Auto được bật; mọi kết thúc đều gọi `player.stop()`.
+
+## Nhiệm vụ hằng ngày bản 1
+
+`GET /daily` trả `DailyStatus` cùng `current`. `POST /daily/checkin` và `/daily/seed` trả HTTP 202 với `DailyOperation`; `/daily/cancel` trả operation đã `cancelled`. Bản 1 chỉ hỗ trợ `duoc_moc`; các seed task khác vẫn được đọc và hiển thị nhưng trả `TASK_NOT_SUPPORTED` (422). Lỗi gate dùng envelope `{success:false,error,errorCode,retryable}`: map chưa sẵn sàng có `retryable:true`; các gate runtime là 409, `STAGE_TOO_LOW`/`TASK_NOT_SUPPORTED` là 422, body sai là 400 và operation không tồn tại là 404.
+
+Runner lấy prop `manh_shopt1`, `dai_phu`, `co_thu_linh_moc` từ `MapData`/`SceneWorld.map` lúc chạy. Với `duoc_moc`, nó gọi `Quest.startSeedQuest`, đặt `SceneWorld.chopping = { prop, swing: 0, t: 10 }` theo `ea()` đã đo, để client tự nhặt cành và phát `seed.collect`, rồi gọi `Quest.completeSeedQuest`. ACK được ghép theo `cmd` (`diemdanh`, `seed.start`, `seed.collect`, `seed.complete`) trước khi chờ tối đa 5 giây; `state ...:refused` chỉ để client đồng bộ và `ack.why` được giữ trong operation, không retry mù.
+
+Thao tác daily giữ quyền lái với `walkTo`/đổi khu/Auto; gục, reconnect, stop và Auto bật sẽ hủy. Mặc định `abortOnHurt=false` theo yêu cầu; có thể bật ở request seed. Chưa xác minh live ở bản này: ngưỡng NPC chính xác, giới hạn lượt server, các task còn lại và hành vi rời việc giữa chừng.
 
 ## Endpoint đã gỡ
 

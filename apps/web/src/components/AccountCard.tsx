@@ -5,6 +5,7 @@ import { resolveMapContext, resolveVitalsAge, VITALS_DISPLAY_STALE_MS } from '..
 import { MiniMap } from './MiniMap';
 import { MapTravelControl } from './MapTravelControl';
 import { KhuControl } from './KhuControl';
+import { DailyControl } from './DailyControl';
 import type { WorldBounds } from '../lib/minimap';
 import type { MapCatalogItem } from '../lib/api';
 
@@ -96,6 +97,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
     />
 
     <KhuControl account={account} />
+
+    <DailyControl account={account} />
 
     {account.vendor && <div className="mt-3 rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2 text-[11px]">
       <div className="flex items-center justify-between gap-2"><span className="font-semibold text-cyan-200">Auto chính thức · {account.vendor.supervisor.phase}</span><span className={account.vendor.autoRequested ? 'text-emerald-300' : 'text-slate-400'}>{account.vendor.autoRequested ? 'Đang bật' : 'Đang tắt'}</span></div>

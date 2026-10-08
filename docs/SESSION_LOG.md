@@ -1,5 +1,21 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Module nhiệm vụ hằng ngày bản 1 (offline)
+
+Thay đổi:
+- Thêm `apps/server/src/headless/daily-quests.ts`: state machine test được bằng client fake cho điểm danh và `duoc_moc`; mọi bước đi qua `WalkNavigator`, lệnh quest qua hàm client chính thức, ACK ghép theo `cmd`, timeout 5 giây, giới hạn chặt không rơi cành, hủy khi gục/reconnect/Auto/stop và cache trạng thái nhẹ.
+- Nối `VendorRunner`, `WorkerPool`, snapshot/runtime và `apps/server/src/api/daily-errors.ts`; thêm GET/start/cancel daily API. Giữ nguyên `quest-probe`, `khu-probe` và không sửa `auto-supervisor.ts`/`vendor/`.
+- Thêm `DailyControl.tsx`, kiểu web, API client và sanitize realtime; hiển thị lượt thật, bước, thưởng, khóa và `why` đã làm sạch.
+- Thêm test thuần state machine và contract lỗi daily.
+
+Lệnh đã chạy và kết quả thật:
+- `git diff --check`: pass; chỉ có cảnh báo Git chuẩn hóa LF/CRLF.
+- Bundle offline bằng esbuild: test state machine daily 9/9 và contract lỗi 1/1 pass; fixture `VendorRunner + FakeSocket` 18/18 pass, trong đó test daily checkin có ACK sai `cmd` trước ACK đúng và không retry.
+- Esbuild syntax transform: 13 file TS/TSX thay đổi pass; TypeScript compiler API: web 0 diagnostics; server full còn lỗi môi trường thiếu module/type `express` (17 diagnostics, 1 chạm file mới qua import routes), không phải kết quả `pnpm build`.
+- `pnpm build`, Vitest chính thức và `cd apps/server && npx tsx --test <file>`: đã thử nhưng sandbox chặn (`EPERM` khi đọc package dưới `.pnpm`, `tsx` lỗi `uv_os_get_passwd returned ENOMEM`).
+
+Chưa xác minh: build/typecheck/test đầy đủ bằng toolchain chính thức; test tích hợp FakeSocket mới chỉ bao phủ điểm danh/ghép ACK theo `cmd`, chưa mô phỏng trọn chu trình `duoc_moc` với khoảng cách NPC/cành/lượt; ngưỡng khoảng cách chính xác tới NPC; giới hạn 3 lượt/ngày phía server; các việc `linh_chi`/`truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi`; hành vi rời việc giữa chừng. Không mở mạng/game thật, không đọc `data/`/`.env*`, không sửa `vendor/`, không commit.
+
 ## 2026-10-08 — Điều tra chuyến `thanh_truc_lam` → `tan_vien` thất bại và sửa 3 việc (navigator, watchdog, chẩn đoán)
 
 Hiện tượng (live, 1 lần): đi từ (636,220) tới cổng (272,16), sau 5,4 s navigator vào `waiting_map` khi nhân vật dừng ở (272,237) cách cổng khoảng 220 px, hết 8 s thì `failed` (`portal_no_transition`); không bị đánh (hurt 0), không gục. Lần thử lại từ (275,67) thành công trong 2,8 s.
