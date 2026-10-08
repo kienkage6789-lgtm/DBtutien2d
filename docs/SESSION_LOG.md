@@ -1,5 +1,23 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Triển khai offline nhiệm vụ Dược Công `linh_chi`
+
+Thay đổi:
+- Mở rộng `DailyQuests` hỗ trợ `duoc_moc` và `linh_chi`; chu trình linh chi tiếp tục việc đang dở, đi nhiều map giữa `duoc_vien`/`tan_vien`, chọn prop `ling_chi_prop` không ẩn theo khoảng cách và đọc tiến độ từ `nam_linh_chi`/`ack.du`.
+- `VendorRunner` thêm liệt kê prop runtime, vị trí hiện tại và `Gateway.cmd('resource.harvest')`; ACK giữ `retryAfter`, `regrowAfter`, `du` và `itemId`. Không sửa `vendor/`, `auto-supervisor.ts`; route `khu-probe`/`quest-probe` giữ nguyên.
+- Dashboard/realtime/API docs tổng quát hóa mọi task có `supported: true`, hiển thị số nấm và progress; thêm test state machine cho thành công, tiếp tục, prop hồi, chờ hết prop, áp sát, timeout và Auto.
+
+Lệnh đã chạy và kết quả thật:
+- `git diff --check`: pass (chỉ cảnh báo Git chuẩn hóa LF/CRLF).
+- `cd apps/server && npx tsx --test src/headless/daily-quests.test.ts`: bị chặn trước khi nạp test bởi `uv_os_get_passwd returned ENOMEM`.
+- Với preload tạm chỉ sửa `os.userInfo` cho sandbox, `npx tsx --test src/headless/daily-quests.test.ts`: **16/16 pass**; `src/api/daily.contract.test.ts`: **1/1 pass**; `src/headless/vendor-runner.test.ts`: **18/18 pass**. Preload đã xóa, không thuộc thay đổi.
+- `apps/server/node_modules/.bin/tsc --noEmit -p apps/server/tsconfig.json`: bị chặn khi Node đọc TypeScript dưới `.pnpm` bởi `EPERM`.
+- Esbuild transform cú pháp 8 file TS/TSX thay đổi: **pass**; đây không phải typecheck.
+- `pnpm --filter @tutien2d/web test`: không chạy được vì `pnpm` không có trong PATH.
+- Vitest trực tiếp `apps/web/node_modules/.bin/vitest.CMD run ...`: bị chặn khi đọc `vitest.mjs` dưới `.pnpm` bởi `EPERM`; `pnpm build`: không chạy được vì `pnpm` không có trong PATH.
+
+Chưa xác minh: `pnpm build`, toàn bộ test server/Vitest; build/typecheck đầy đủ trong môi trường người giao việc; khoảng cách chính xác tới NPC/prop, hành vi mọi prop cùng hồi, giới hạn 3 lượt/ngày phía server; `truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi`. Không chạm game thật, không mở mạng, không đọc `data/`/`.env*`, không commit.
+
 ## 2026-10-08 — Sửa 3 vấn đề giao diện phát hiện khi chạy thử nhiệm vụ hằng ngày
 
 1. `confirm()`/`alert()` gốc bị trình duyệt nhúng chặn (confirm tự trả `false`, alert không hiện): thêm `lib/dialogs.ts` (kho thông báo và xác nhận, có hàng đợi xác nhận, khử trùng thông báo giống nhau, tối đa 4 thông báo, tự tắt sau 8 s, làm sạch ký tự điều khiển rồi gộp khoảng trắng, đổi mã lỗi kỹ thuật như `TARGET_ON_PORTAL`, `AUTO_ACTIVE`, `PATH_CROSSES_PORTAL` thành câu tiếng Việt) và `components/DialogHost.tsx` (hiển thị thông báo, hộp xác nhận `role="dialog"`, Esc/bấm nền = hủy). `App.tsx` thay mọi `alert` bằng `notify`, xác nhận xóa tài khoản bằng `confirmAction` (nút "Xóa" kiểu nguy hiểm); `DailyControl` xác nhận trước khi dùng lượt thật bằng `confirmAction`.

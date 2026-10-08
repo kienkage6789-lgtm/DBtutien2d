@@ -109,13 +109,18 @@ describe('mergeAccountRuntime vitals freshness', () => {
       startedAt: 1, updatedAt: 2,
     };
     expect(sanitizeDaily(operation)).toEqual(operation);
+    const linhChiOperation = { ...operation, taskId: 'linh_chi', step: 'seed_harvest', progress: { itemId: 'nam_linh_chi', collected: 2, required: 3 } };
+    expect(sanitizeDaily(linhChiOperation)).toEqual(linhChiOperation);
+    expect(sanitizeDaily({ ...linhChiOperation, progress: { itemId: 'nam_linh_chi', collected: '2', required: 3 } })).toBeUndefined();
     expect(sanitizeDaily({ ...operation, status: 'unknown' })).toBeUndefined();
     const status = {
       today: '2026-10-08', stage: 21, checkin: { done: false, total: 0 }, activeSeedTask: null,
       stones: 10, duocCong: 2, canhKho: 0,
+      namLinhChi: 0,
       seedTasks: [{ id: 'duoc_moc', name: 'Việc Dược Công', kind: 'collect', limit: 3, runsToday: 1, runsLeft: 2, supported: true, active: false }],
     };
     expect(sanitizeDailyStatus(status)).toEqual(status);
     expect(sanitizeDailyStatus({ ...status, seedTasks: [{ ...status.seedTasks[0], runsLeft: '2' }] })).toBeUndefined();
+    expect(sanitizeDailyStatus({ ...status, namLinhChi: '2' })).toBeUndefined();
   });
 });

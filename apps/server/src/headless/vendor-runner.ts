@@ -823,11 +823,19 @@ export class VendorRunner {
       cancelWalk: (operationId: string, reason: string) => { this.walkNavigator.cancel(operationId, reason); },
       readDailyState: () => this.readDailyState(),
       getProp: (mapId: string, propId: string) => this.getDailyProp(mapId, propId),
+      listProps: (mapId: string, type: string) => this.getDailyProps(mapId, type),
+      getPosition: () => {
+        const player = this.getPlayer();
+        const mapId = this.getMapId();
+        return player && mapId && Number.isFinite(player.x) && Number.isFinite(player.y)
+          ? { mapId, x: Number(player.x), y: Number(player.y) } : null;
+      },
       startChopping: (prop: DailyProp) => this.startDailyChopping(prop),
       invokeCheckin: () => this.P?.Gateway?.cmd?.('diemdanh', {}, () => undefined),
       startSeedQuest: (taskId: string) => this.P?.Quest?.startSeedQuest?.(taskId),
       completeSeedQuest: () => this.P?.Quest?.completeSeedQuest?.(),
       issueCommand: (command: string, action: () => unknown) => this.issueDailyCommand(command, action),
+      harvestResource: (propId: string) => this.P?.Gateway?.cmd?.('resource.harvest', { propId }, () => undefined),
       watchCommand: (command: string) => this.watchDailyCommand(command),
       cancelPendingCommand: (command: string) => this.cancelDailyAck(command),
       collectSeedMaterial: (taskId: string, propId: string) => this.P?.Quest?.collectSeedMaterial?.(taskId, propId),
@@ -885,7 +893,7 @@ export class VendorRunner {
       const limitValue = Number.isInteger(rawLimit) ? Number(rawLimit)
         : Number.isInteger(info.limit) ? Number(info.limit)
         : Number.isInteger(info.dailyLimit) ? Number(info.dailyLimit)
-        : id === 'duoc_moc' ? 3 : null;
+        : id === 'duoc_moc' || id === 'linh_chi' ? 3 : null;
       const runsLeftValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsLeft) ? Number(rawEntry.raw.runsLeft)
         : typeof quest?.seedTaskRunsLeft === 'function' ? quest.seedTaskRunsLeft(id) : null;
       const runsLeft = Number.isInteger(runsLeftValue)
@@ -900,7 +908,7 @@ export class VendorRunner {
         limit: limitValue,
         runsToday: count,
         runsLeft,
-        supported: id === 'duoc_moc',
+        supported: id === 'duoc_moc' || id === 'linh_chi',
         active: !!seed?.active && seed.task === id,
       };
     });
@@ -938,8 +946,9 @@ export class VendorRunner {
       stones,
       duocCong,
       canhKho: countInventory('canh_kho'),
+      namLinhChi: countInventory('nam_linh_chi'),
       activeCollected,
-      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : null,
+      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : null,
       drops,
     };
   }
@@ -956,7 +965,25 @@ export class VendorRunner {
       y: Number(found.y),
       ...(Number.isFinite(Number(found.r)) ? { r: Number(found.r) } : {}),
       ...(typeof found.chopTask === 'string' ? { chopTask: found.chopTask } : {}),
+      ...(typeof found.type === 'string' ? { type: found.type } : {}),
+      ...(typeof found.hidden === 'boolean' ? { hidden: found.hidden } : {}),
     };
+  }
+
+  private getDailyProps(mapId: string, type: string): DailyProp[] {
+    const P = this.P;
+    const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
+    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
+    const seen = new Set<string>();
+    const props: DailyProp[] = [];
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+      const raw = candidate as Record<string, unknown>;
+      if (raw.type !== type || typeof raw.id !== 'string' || seen.has(raw.id)) continue;
+      const prop = this.getDailyProp(mapId, raw.id);
+      if (prop) { seen.add(prop.id); props.push(prop); }
+    }
+    return props;
   }
 
   private startDailyChopping(prop: DailyProp): boolean {
@@ -1012,6 +1039,10 @@ export class VendorRunner {
       ...(typeof packet.toast === 'string' ? { toast: packet.toast } : {}),
       ...(typeof packet.stones === 'number' && Number.isFinite(packet.stones) ? { stones: packet.stones } : {}),
       ...(typeof packet.duocCong === 'number' && Number.isFinite(packet.duocCong) ? { duocCong: packet.duocCong } : {}),
+      ...(typeof packet.du === 'boolean' ? { du: packet.du } : {}),
+      ...(typeof packet.retryAfter === 'number' && Number.isFinite(packet.retryAfter) ? { retryAfter: packet.retryAfter } : {}),
+      ...(typeof packet.regrowAfter === 'number' && Number.isFinite(packet.regrowAfter) ? { regrowAfter: packet.regrowAfter } : {}),
+      ...(typeof packet.itemId === 'string' ? { itemId: packet.itemId } : {}),
     });
   }
 
@@ -1426,8 +1457,8 @@ export class VendorRunner {
       case 'props': {
         const map = P.SceneWorld?.map;
         const all = [...(map?.props ?? []), ...(map?.flatProps ?? [])];
-        result = all.filter((prop: Record<string, unknown>) => prop.chopTask || prop.seedTask || prop.type === 'khu_board' || prop.type === 'npc')
-          .slice(0, 60).map((prop: Record<string, unknown>) => ({
+        result = all.filter((prop: Record<string, unknown>) => prop.chopTask || prop.seedTask || prop.type === 'khu_board' || prop.type === 'npc' || prop.type === 'ling_chi_prop')
+          .slice(0, 120).map((prop: Record<string, unknown>) => ({
             id: prop.id, type: prop.type, task: prop.chopTask ?? prop.seedTask ?? null, hidden: !!prop.hidden,
             x: Number.isFinite(prop.x) ? Math.round(Number(prop.x)) : null, y: Number.isFinite(prop.y) ? Math.round(Number(prop.y)) : null, r: prop.r ?? null,
           }));
@@ -1503,7 +1534,7 @@ export class VendorRunner {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
     if (op === 'ack') this.settleDailyAck(packet);
-    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete))(?::refused)?$/.test(packet.reason)) {
+    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete)|resource\.harvest)(?::refused)?$/.test(packet.reason)) {
       this.recordLog('daily_state_observed', { reasonCode: packet.reason });
     }
     if (this.khuProbeActive) this.recordKhuProbeEvent(op, packet);

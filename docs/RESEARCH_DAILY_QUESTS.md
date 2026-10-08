@@ -122,3 +122,33 @@ Chưa đo (chưa xác minh): ngưỡng khoảng cách chính xác (giữa 56 px 
 Đây là triển khai offline, không phải kết quả đo mới. Các mục “chưa xác minh” của mục 9 vẫn giữ nguyên; đặc biệt chưa xác nhận lại trên game thật ngưỡng NPC, giới hạn lượt server, các việc khác và hành vi rời việc giữa chừng.
 
 Fixture `VendorRunner + FakeSocket` bản 1 mới chỉ kiểm tra đường điểm danh và ghép ACK theo `cmd` (có ACK khác lệnh đến trước); chưa giả lập trọn chu trình `duoc_moc` với map/props, khoảng cách NPC, cành rơi/tự nhặt và thưởng server.
+
+---
+
+## 10. KẾT QUẢ ĐO LIVE — chu trình `linh_chi` hoàn chỉnh (2026-10-08, `duoc_vien` ↔ `tan_vien`)
+
+Đo qua `quest-probe` (thêm lọc prop `ling_chi_prop` ở `props`). Hurt 0 suốt đợt, không gục.
+
+| Bước | Điều kiện | Kết quả (gói server) |
+|---|---|---|
+| `seed.start linh_chi` | cách Đại Phu 50 px | `ack {ok:true, toast:"Đã nhận việc của Đại Phu"}` + `state {reason:"seed.start"}`; `daily.linh_chi = {day, n:1}` |
+| Đi tới `tan_vien` | `walkTo` nhiều map | 2 chặng qua `thanh_truc_lam`, thành công |
+| `resource.harvest` từ xa | cách prop ~715 px | `ack {ok:false, why:"không đứng cạnh tài nguyên ấy"}` + `state {reason:"resource.harvest:refused"}` |
+| `resource.harvest linh_chi_6` | cách 25 px | `ack {ok:false, why:"tài nguyên chưa mọc lại", retryAfter:2}` (prop dùng chung giữa người chơi cùng khu, đang hồi) |
+| `resource.harvest linh_chi_8`, `linh_chi_2`, `linh_chi_5` | cách 31, 35, 24 px | `ack {ok:true, toast:"+1 Nấm Linh Chi Núi", itemId, regrowAfter:12, du:false}` (lần thứ 3 `du:true`) + `state {reason:"resource.harvest"}`; `Inventory.count('nam_linh_chi')` 1 → 2 → 3 (kho do server cập nhật); `seedQuest.collected` luôn 0 (không dùng cho `linh_chi`) |
+| `seed.complete` | cách Đại Phu 38 px | `ack {ok:true, toast:"Đã báo công việc vặt — nhận Dược Công"}` + `state`; Linh Thạch 1355 → 1365 (+10), Dược Công 22 → 23 (+1), nấm 3 → 0; `daily.linh_chi.n = 1` |
+
+Kết luận đã xác minh:
+- `linh_chi` hái bằng `Gateway.cmd("resource.harvest", {propId})` (đúng đường `_a` của client), KHÔNG dùng `seed.collect`; server tính số nấm trong kho; `du:true` báo đủ số cần (3).
+- Server ép đứng cạnh tài nguyên (đo ≤ 35 px được, ~715 px bị từ chối) cũng như cạnh Đại Phu.
+- Prop dùng chung giữa người chơi cùng khu: có thể "chưa mọc lại" (`retryAfter` giây) → thử prop khác hoặc chờ; `regrowAfter` 12 s sau khi hái.
+- 10 prop `linh_chi_1..10` ở `tan_vien` (tile như (19,2)); 2 prop (`linh_chi_9`, `linh_chi_10`) đang ẩn (cùng toạ độ (624,96)) lúc đo. Vị trí đọc từ `MapData` lúc chạy, không viết cứng.
+- Phần thưởng khớp định nghĩa: 1 Dược Công + 10 Linh Thạch.
+
+Chưa đo: ngưỡng khoảng cách chính xác tới prop/NPC (giữa 35 px và hàng trăm px); khi cả 10 prop đều đang hồi; giới hạn 3 lượt/ngày ở server.
+
+## 10b. TRIỂN KHAI OFFLINE — `linh_chi` (2026-10-08)
+
+Đã triển khai offline `linh_chi` trong `DailyQuests` và `VendorRunner`: nhận/giao ở Đại Phu, đi nhiều map tới `tan_vien`, chọn prop `ling_chi_prop` không ẩn theo khoảng cách, gọi `resource.harvest`, đọc `Inventory.count('nam_linh_chi')` và xử lý `ack.du`/`retryAfter` hữu hạn. `duoc_moc` giữ nguyên chu trình cũ; các việc khác vẫn `TASK_NOT_SUPPORTED`. Bản triển khai không phải phép đo live mới.
+
+Chưa xác minh: build/test đầy đủ trong môi trường giao việc, ngưỡng khoảng cách chính xác, hành vi khi mọi prop đồng thời hồi, giới hạn 3 lượt/ngày phía server và `truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi`.

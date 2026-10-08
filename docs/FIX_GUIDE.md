@@ -1419,3 +1419,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 5. [~] `pnpm build`, Vitest và test server chưa chạy trong sandbox phiên này; cần chạy trong môi trường người giao việc.
 6. [ ] Chưa xác minh live lại ngưỡng đứng cạnh NPC, giới hạn 3 lượt phía server, các việc còn lại và hành vi rời việc giữa chừng.
 7. [~] Fixture `VendorRunner + FakeSocket` đã kiểm tra điểm danh và ACK đúng `cmd` (18/18 bundle offline); chưa mô phỏng trọn `duoc_moc` với map/props/ACK `seed.collect`/thưởng như server thật.
+
+## T. Module nhiệm vụ hằng ngày — `linh_chi` (offline 2026-10-08)
+
+1. [x] State machine hỗ trợ `duoc_moc` và `linh_chi`; `linh_chi` đi Đại Phu → `tan_vien`, chọn prop `ling_chi_prop`, harvest theo ACK và giao việc nhiều lượt.
+2. [x] Xử lý prop ẩn, chọn gần nhất, `retryAfter`/`regrowAfter`, thử sát hơn một lần khi server báo chưa đứng cạnh; không retry mù khi ACK timeout hoặc lỗi khác.
+3. [x] Vendor adapter đọc `SceneWorld.map`/`flatProps`, `Inventory.count('nam_linh_chi')`, gọi `Gateway.cmd('resource.harvest')`; dashboard/API/realtime hiển thị hai việc và tiến độ nấm.
+4. [~] Esbuild transform cú pháp 8 file TS/TSX pass; test source `daily-quests` 16/16, `daily.contract` 1/1 và `vendor-runner` 18/18 pass với preload tạm cho lỗi `os.userInfo` của sandbox; `pnpm build`/Vitest/full typecheck vẫn chưa chạy được vì `pnpm` thiếu PATH và package dưới `.pnpm` bị `EPERM`.
+5. [ ] Chưa xác minh live lại ngưỡng khoảng cách, mọi prop đồng thời hồi, giới hạn 3 lượt/ngày phía server; `truc_gia`/`cau_ca`/`ho_tong_chau`/`dai_hoi` vẫn chưa hỗ trợ.

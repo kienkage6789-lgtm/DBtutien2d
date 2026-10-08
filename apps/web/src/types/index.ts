@@ -33,6 +33,7 @@ export interface DailyOperation {
   reason?: string;
   why?: string;
   rewards?: { stones: number; duocCong: number };
+  progress?: { itemId: string; collected: number; required: number };
   startedAt: number;
   updatedAt: number;
 }
@@ -57,6 +58,7 @@ export interface DailyStatus {
   stones: number | null;
   duocCong: number | null;
   canhKho: number | null;
+  namLinhChi: number | null;
 }
 
 export interface ReachableMap {

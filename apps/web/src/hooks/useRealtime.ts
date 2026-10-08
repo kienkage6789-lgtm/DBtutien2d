@@ -129,6 +129,11 @@ export function sanitizeDaily(value: unknown): DailyOperation | null | undefined
   const rewards = item.rewards && typeof item.rewards === 'object' && !Array.isArray(item.rewards) ? item.rewards as Record<string, unknown> : null;
   const parsedRewards = rewards && isFiniteNumber(rewards.stones) && isFiniteNumber(rewards.duocCong)
     ? { stones: Number(rewards.stones), duocCong: Number(rewards.duocCong) } : undefined;
+  const progress = item.progress && typeof item.progress === 'object' && !Array.isArray(item.progress) ? item.progress as Record<string, unknown> : null;
+  const parsedProgress = progress && typeof progress.itemId === 'string' && isFiniteNumber(progress.collected)
+    && isFiniteNumber(progress.required) && progress.collected >= 0 && progress.required > 0
+    ? { itemId: progress.itemId, collected: Number(progress.collected), required: Number(progress.required) } : undefined;
+  if (item.progress !== undefined && !parsedProgress) return undefined;
   return {
     operationId: item.operationId,
     kind: item.kind as DailyOperation['kind'],
@@ -140,6 +145,7 @@ export function sanitizeDaily(value: unknown): DailyOperation | null | undefined
     ...(typeof item.reason === 'string' ? { reason: item.reason } : {}),
     ...(typeof item.why === 'string' ? { why: item.why } : {}),
     ...(parsedRewards ? { rewards: parsedRewards } : {}),
+    ...(parsedProgress ? { progress: parsedProgress } : {}),
     startedAt: Number(item.startedAt),
     updatedAt: Number(item.updatedAt),
   };
@@ -167,7 +173,7 @@ export function sanitizeDailyStatus(value: unknown): DailyStatus | undefined {
     || ((checkin as Record<string, unknown>).total !== null && !isFiniteNumber((checkin as Record<string, unknown>).total))
     || !tasks || tasks.length !== (item.seedTasks as unknown[]).length
     || (item.activeSeedTask !== null && typeof item.activeSeedTask !== 'string')
-    || !['stones', 'duocCong', 'canhKho'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
+    || !['stones', 'duocCong', 'canhKho', 'namLinhChi'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
   return {
     today: item.today as string | null,
     stage: item.stage as number | null,
@@ -177,6 +183,7 @@ export function sanitizeDailyStatus(value: unknown): DailyStatus | undefined {
     stones: item.stones as number | null,
     duocCong: item.duocCong as number | null,
     canhKho: item.canhKho as number | null,
+    namLinhChi: item.namLinhChi as number | null,
   };
 }
 
