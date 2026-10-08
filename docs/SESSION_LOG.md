@@ -41,7 +41,7 @@ Quy tắc rút ra: không tin "pass" của Codex khi nó báo build bị chặn;
 ### Còn nợ
 
 - Rotate token game từng nằm trong `test_ws.mjs`/`test_ping.mjs`; đặt `API_TOKEN`/`ENCRYPTION_SECRET` nếu mở ngoài localhost (việc của người dùng).
-- 8 truy vấn A3 lệch "có/không có đường" giữa `Pathfinder.route` và `findWalkPath` chưa rõ hướng lệch.
+- ~~8 truy vấn A3 lệch chưa rõ hướng~~ Đã làm rõ: cả 8 là truy vấn cố ý không hợp lệ (6 đích bị chặn, 2 ngoài bản đồ), vendor hít đích còn dự án trả null; truy vấn hợp lệ không lệch; đường dự án dài hơn 3 đến 7 %. Chi tiết ở AUTO_SPEC.md.
 - Các điều [Chưa biết] trong `AUTO_SPEC.md` mục 13.
 
 ## 2026-10-08 — P1 target + collision grid/spawn từ vendor (static-only)

@@ -234,6 +234,17 @@ Bảng A3 (ngưỡng độ dài lệch > 32 px; `presence` là khác có/không 
 | `thach_phong_thung_lung` | 20 | 3 | 0 | 1 | 39 |
 | `hac_phong_linh` | 20 | 3 | 1 | 10 | 70 |
 
+### Hướng lệch của A3 (đã làm rõ 2026-10-08)
+
+Chạy bản sao có in chi tiết của `walk-path-audit.test.mjs` (không đổi test gốc):
+
+- **8 lệch "có/không có đường"**: cả 8 đều là vendor CÓ đường, dự án KHÔNG có đường (`findWalkPath` trả `null`). Không có chiều ngược lại. Cả 8 là truy vấn cố ý không hợp lệ do chính audit tạo: 6 truy vấn `blocked-target` (đích là ô chặn `(0,0)`) và 2 truy vấn `out-of-bounds-target`. Vendor "hít" đích về điểm đi được gần nhất (điểm cuối đường vendor nằm ở ô như `(2,1)`, `(38,28)`), dự án từ chối.
+- **Truy vấn hợp lệ (`normal`)**: không có lệch nào về sự tồn tại đường.
+- **22 lệch độ dài > 32 px**: đều theo một chiều, đường của dự án DÀI HƠN vendor 3 đến 7 % (tối đa 70 px ở `hac_phong_linh`); không có trường hợp dự án ngắn hơn. Phù hợp với việc vendor nén waypoint.
+- **Không lệch về an toàn va chạm** ở cả hai bên (0 vi phạm).
+
+Hệ quả cho P2: dự án chặt hơn vendor, nên không có nguy cơ đi xuyên vật cản. Nhưng vì `findWalkPath` từ chối đích bị chặn, **không được truyền thẳng tọa độ quái làm đích**: vị trí quái có thể rơi vào ô bị chặn. Phải chọn đích là một điểm đi được trong tầm đánh quanh quái (dùng `findNearestWalkableTarget` hoặc tương đương), và coi `null` là "không tới được" thay vì lỗi.
+
 **Điểm dừng an toàn xuyên suốt:** gục, mất kết nối, `hurt` liên tục vượt ngưỡng, không tới được mục tiêu quá N lần, gặp boss khi cấu hình "né boss", HP/MP không rõ quá lâu, người dùng bấm dừng.
 
 ## 13. Những gì chưa biết (cần đo trước khi tin)
@@ -247,7 +258,7 @@ Bảng A3 (ngưỡng độ dài lệch > 32 px; `presence` là khác có/không 
 7. Hành vi của quái đối với bot (đuổi, leash) so với client chính thức.
 8. `TileMap.load` có nhánh ẩn prop theo quest/realm/harvest; grid sinh ra dùng profile prop đang hiện, nên farm qua các ô gần prop điều kiện cần đo live.
 9. `TileMap.enemySpawns` có thể mở rộng `_x2/_x3`; đây là tọa độ client-derived, chưa xác minh là toàn bộ điểm spawn/respawn server.
-10. Các lệch A3 về vendor snap target, waypoint compression và tie-break chưa được xem là lỗi collision; cần kiểm tra lại nếu P2 bị đứng hoặc chọn đường vòng bất thường.
+10. Các lệch A3 đã làm rõ hướng (xem "Hướng lệch của A3"): vendor hít đích bị chặn về điểm gần nhất còn dự án trả null; đường dự án dài hơn 3 đến 7 %. Không phải lỗi va chạm.
 
 ## Phụ lục P0 — Ý nghĩa trường quái trên wire
 
