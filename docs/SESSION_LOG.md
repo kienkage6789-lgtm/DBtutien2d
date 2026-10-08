@@ -1,5 +1,23 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Đo live `walkTo` bản 2a: `tan_vien` → `dong_mach_ngam` (đi nhiều map tự động)
+
+Một phiên, `abortOnHurt: true`, `maxHurt: 1`, theo dõi `hurtCount` (0 suốt chuyến), không bật Auto. Lần gọi đầu tiên của script bị lỗi phía script (đọc `body.maps` trong khi API bọc trong `data`) nên báo nhầm 0 map; đã sửa script và chạy lại. Server không sai.
+
+| Mục | Kết quả |
+|---|---|
+| Tuyến do server lập | `tan_vien` → `bai_da_hang_gio` → `dong_mach_ngam` (2 chặng) |
+| Chặng 1: đi tới cổng (ô (39,14)/(39,15) của `tan_vien`) | khoảng 11,5 s; đứng lên cổng, chờ đổi map khoảng 2 s (map mới ổn định ở 13,9 s) |
+| Chặng 2: đi trong Bãi Đá tới cổng sang `dong_mach_ngam` | khoảng 22 s; chờ đổi map khoảng 2,4 s (ổn định ở 38,1 s) |
+| Kết thúc | `arrived` ở `dong_mach_ngam`, tổng 39,7 s, `hurt` 0, không gục |
+
+Phát hiện:
+- Cổng `tan_vien` → `dong_mach_ngam` ở ô (22,4) trong `config/portal-catalog.ts` KHÔNG tồn tại trong `MapData` của client; đường thật đi qua `bai_da_hang_gio`. Danh sách `VERIFIED_PORTAL_EDGES` trong `routes.ts` có thể không đúng (chưa kiểm tra các cạnh khác).
+- Từ `tan_vien`, đồ thị cổng tự động (không `byHand`, không cooldown) tới được 13 map: `thanh_truc_lam`, `mieu_hoang`, `bai_da_hang_gio` (1 chặng); `duoc_vien`, `long_uyen`, `mo_linh_thach`, `dong_mach_ngam` (2); `vuon_ca_nhan`, `thach_phong_thung_lung` (3); `bat_quai_thach_phan` (4); `u_uynh_vuc` (5); `hac_phong_linh` (6); `hac_thi` (7). Không tới được bằng cổng tự động: `hang_dong_co`, `dai_hoi_cho`, `tmc_cho`, `dai_hoi_dau`, `chien_bang_dai`, `thien_dao_khuyet`, `rung_mang_xa`, `mach_dat_dong`, `dam_lay_boss`, `san_dau_vip`, `tam_canh`, `lam_lang`, `hu_thien_1..4`, `yen_lang_son` (đo offline bằng `createVendorEnv`).
+- Thời gian đổi map thật sau khi đứng lên cổng khoảng 2–2,4 s (cửa sổ chờ 8 s dư rộng).
+
+Chưa xác minh: `hurt` giữa đường qua map có quái (không bị đánh lần này), cổng cooldown/thủ công thực tế, `PATH_CROSSES_PORTAL` trên game thật, tuyến dài hơn 2 chặng.
+
 ## 2026-10-08 — walkTo Bản 2a (offline implementation)
 
 Thay đổi: thêm BFS `map-route`, mở rộng `walk-navigator` qua cổng với `route`/`leg`, hurt threshold, portal-crossing guard; nối VendorRunner MapData, reachable-maps API, move-to contract và dashboard chọn map. Không sửa vendor hoặc `auto-supervisor.ts`, không mở mạng/game thật, không đọc dữ liệu bí mật.
