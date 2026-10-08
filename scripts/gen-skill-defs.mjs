@@ -103,6 +103,20 @@ const thunder = {
 };
 
 const books = [thunder, ...Object.values(active)].map((def) => def.book);
+const autoConstants = {
+  target: {
+    range: pntt.CONFIG.TARGET.RANGE,
+    reachPad: pntt.CONFIG.TARGET.REACH_PAD,
+    keepPad: pntt.CONFIG.TARGET.KEEP_PAD,
+  },
+  player: {
+    reach: pntt.CONFIG.PLAYER.REACH,
+    spellGap: pntt.CONFIG.PLAYER.SPELL_GAP,
+  },
+  thunder: {
+    range: pntt.CONFIG.THUNDER.RANGE,
+  },
+};
 for (const book of books) {
   if (!items[book]) throw new Error(`Skill book missing from vendor ITEMS: ${book}`);
 }
@@ -120,6 +134,7 @@ export const SKILL_DEFS = ${JSON.stringify(active, null, 2)} as const;
 export const THUNDER_DEF = ${JSON.stringify(thunder, null, 2)} as const;
 export const SKILL_SLOT_IDS = ${JSON.stringify(skills.SLOTS, null, 2)} as const;
 export const SKILL_BOOK_IDS = ${JSON.stringify(books, null, 2)} as const;
+export const AUTO_CONSTANTS = ${JSON.stringify(autoConstants, null, 2)} as const;
 `;
 const destination = resolve(root, 'packages/core-client/src/state/skill-defs.generated.ts');
 await writeFile(destination, output, 'utf8');

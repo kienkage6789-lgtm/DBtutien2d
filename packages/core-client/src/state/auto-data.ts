@@ -3,10 +3,11 @@ import {
   SKILL_DEFS,
   SKILL_SLOT_IDS,
   THUNDER_DEF,
+  AUTO_CONSTANTS,
 } from './skill-defs.generated.js';
 
 export { ENEMY_DEFS } from './enemy-defs.generated.js';
-export { SKILL_DEFS, SKILL_BOOK_IDS, SKILL_SLOT_IDS, THUNDER_DEF } from './skill-defs.generated.js';
+export { SKILL_DEFS, SKILL_BOOK_IDS, SKILL_SLOT_IDS, THUNDER_DEF, AUTO_CONSTANTS } from './skill-defs.generated.js';
 
 export interface SkillSaveLike {
   bag?: Record<string, unknown>;

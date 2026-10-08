@@ -1,5 +1,32 @@
 # Nhật ký phiên triển khai
 
+# 2026-10-08 — P1 target + collision grid/spawn từ vendor (static-only)
+
+### Thay đổi
+
+- Đọc `AGENTS.md`, `docs/AUTO_SPEC.md` mục 3–5/10–13, session log mới nhất và `docs/PORTAL_NAVIGATION.md`; không chạy server, không đăng nhập, không dùng mạng, không sửa vendor.
+- Thêm `scripts/gen-walk-grids.mjs`: VM `TileMap.load` với shim tối thiểu, sinh grid `blockedRows` + metadata cho đủ 16/16 map catalog và sinh `map-spawns.generated.ts` gồm type/count/tọa độ/wander/leash/respawn.
+- Chuyển `apps/server/src/config/walk-grid.ts` thành facade giữ API cũ, nguồn dữ liệu dùng chung từ core-client. Thêm test hồi quy 6 map; 5 map khớp tuyệt đối, `dong_mach_ngam (20,14)` được vendor xác định là ô chặn do `hu_thien_cuc_lac`.
+- Thêm `selectTarget`, `inMeleeReach`, `inSkillRange`; thêm `pickAutoSkill`, `SkillCooldowns` và hằng số auto sinh từ `core/config.js`. Chưa nối vào state machine.
+- Thêm audit `Pathfinder.route` vendor vs `findWalkPath`: 20 truy vấn/map cho 11 map có spawn, kiểm tra presence/độ dài/rectangle `16×12`.
+
+### Lệnh đã chạy và kết quả thật
+
+- `node scripts/gen-walk-grids.mjs`: **pass**, 16 map, 37 dòng map/loại, 187 spawn; báo cáo 1 spawn nằm trên ô chặn (`mo_linh_thach/tm_tru`, `(22,14)`).
+- `node scripts/gen-skill-defs.mjs`: **pass**, 27 DEFS/28 slot; thêm `AUTO_CONSTANTS`.
+- `node --experimental-strip-types packages/automation-engine/src/auto/target-selection.test.mjs`: **pass**.
+- `node --experimental-strip-types packages/automation-engine/src/auto/skill-rotation.test.mjs`: **pass**.
+- `node --experimental-strip-types packages/core-client/test/walk-grids.test.mjs`: **pass**, 16 map/6 đối chiếu/187 spawn.
+- `node --experimental-strip-types apps/server/src/orchestrator/walk-path.test.mjs`: **pass**, test portal/move-to cũ.
+- `node --experimental-strip-types packages/core-client/test/walk-path-audit.test.mjs`: **pass**, 11 map/220 truy vấn, 0 lỗi rectangle; có mismatch presence/độ dài do khác biệt snap/compression, không sửa thuật toán.
+
+### Còn chờ xác minh
+
+- Chưa chạy full build và toàn bộ test server; cần chạy trong môi trường có thể mở TypeScript/node_modules. Không tuyên bố build pass.
+- `pnpm build`: **bị chặn**, `pnpm` không có trong PATH. `corepack pnpm --offline build`: **bị chặn**, Corepack vẫn cố resolve `pnpm` từ registry và gặp `EACCES` mạng. `node node_modules/typescript/bin/tsc --noEmit -p` cho core-client/automation-engine/server: **bị chặn** bởi `EPERM` khi mở TypeScript dưới `node_modules/.pnpm`.
+- `npx --no-install tsx --test ...`: **bị chặn**, `tsx` không được nhận diện; test TypeScript server trực tiếp bằng Node cũng dừng ở `.js` source remapping (`ERR_MODULE_NOT_FOUND`).
+- Spawn/respawn/leash thực tế, prop ẩn theo trạng thái runtime, cooldown server và các mismatch route cần đo live trước P2/P3/P4.
+
 # 2026-10-08 — P0 lớp dữ liệu/parser auto từ vendor (build/test TypeScript bị chặn)
 
 ### Thay đổi

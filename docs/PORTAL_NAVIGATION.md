@@ -60,8 +60,11 @@ Nếu timeout, worker retry có giới hạn; không phát `enter` từ xa và k
 
 - `apps/server/src/config/portal-catalog.ts` là catalog edge đã xác minh từ
   public client snapshot.
-- `apps/server/src/config/walk-grid.ts` chứa collision grid tĩnh đã trích từ
-  `mapdata.js` và rule `TileMap.load()`.
+- `packages/core-client/src/state/walk-grids.generated.ts` là nguồn collision
+  tĩnh cho đủ 16 map catalog, sinh bằng VM từ `mapdata.js` và rule
+  `TileMap.load()`; `apps/server/src/config/walk-grid.ts` chỉ còn facade giữ API cũ.
+- `packages/core-client/src/state/map-spawns.generated.ts` chứa spawn/type/count
+  tĩnh để chọn vùng farm; không thay thế xác minh respawn/leash live.
 - `apps/server/src/orchestrator/walk-path.ts` dùng A* 8 hướng, cấm corner-cutting
   và kiểm tra rectangle nhân vật 16×12 theo `lineClear` mỗi 6px.
 - `apps/server/src/orchestrator/portal-navigation.ts` chứa reducer thuần cho
@@ -101,4 +104,3 @@ Live smoke 2026-10-06 đã xác nhận hai chiều trên account test đã đăn
    `tan_vien/K1 (240,927)`; phase cuối `arrived`.
 
 Evidence đã redact: [`docs/evidence/2026-10-06-portal-navigation-smoke.json`](evidence/2026-10-06-portal-navigation-smoke.json).
-

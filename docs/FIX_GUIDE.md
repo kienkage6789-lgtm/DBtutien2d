@@ -1260,7 +1260,7 @@ Triển khai dần: bắt đầu với bốn gói trên, đo `rejectedPackets` v
 
 Không sửa code. Chỉ cần đảm bảo UI và tài liệu nói rõ:
 
-- **6. Chuyển map chỉ qua portal**: `enterMap()` gửi `{op:'enter', mapId}` và worker phải đi tới portal trước. Map chỉ có metadata catalog (chưa được live xác nhận) nên hiển thị là "chưa xác nhận" và khóa nút vào. `long_uyen` thiếu walk-grid: thêm vào `walk-grid.ts` khi có dữ liệu; đến lúc đó geometry fail sẽ không bị gọi lặp nhờ backoff ở A.4.
+- **6. Chuyển map chỉ qua portal**: `enterMap()` gửi `{op:'enter', mapId}` và worker phải đi tới portal trước. Map chỉ có metadata catalog (chưa được live xác nhận) nên hiển thị là "chưa xác nhận" và khóa nút vào. Collision grid nay đã sinh đủ 16 map catalog trong `walk-grids.generated.ts`; map không có spawn tĩnh vẫn không được coi là đã có dữ liệu farm.
 - **7. Chọn khu**: giữ `KHU_PROTOCOL_UNAVAILABLE`. `soKhu = 20` không chứng minh lệnh chọn khu tồn tại. Điều kiện để mở: capture được lệnh của client chính thức (`vendor/.../src/ui` có màn chọn khu), xác nhận có ACK, rồi mới thêm vào route.
 - **10. Chết và hồi sinh**: giữ `BLOCKED: RESPAWN_PROTOCOL_UNAVAILABLE`. Điều kiện để mở: lệnh hồi sinh đã xác minh, ACK, map/khu hồi sinh, chi phí/cooldown, và quy trình quay lại training. Với B.5, chỉ trạng thái `dead` dựa trên vitals tuyệt đối fresh mới kích hoạt khóa này.
 
@@ -1326,3 +1326,14 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Kiểm tra cú pháp generator/fixture/test và chạy lại hai generator với cross-check nguồn.
 5. [~] `pnpm build` bị chặn do TypeScript dưới `.pnpm` bị `EPERM`; `node --test packages/core-client/test/auto-data.test.mjs` đã gọi nhưng dừng ở `ERR_MODULE_NOT_FOUND` vì `dist` chưa build. Không đánh dấu build/test pass cho tới khi chạy lại trong môi trường phù hợp.
 6. [ ] Đo live các miền giá trị server, biến thể `act`, nguồn `hurt.byId`, thứ tự kill/loot và lock/preference kỹ năng trước P1–P3.
+
+## J. P1 target + collision/spawn — checklist cập nhật 2026-10-08
+
+1. [x] Sinh `walk-grids.generated.ts` cho 16/16 map catalog bằng VM vendor; không sửa vendor, không đọc mạng.
+2. [x] Sinh `map-spawns.generated.ts`: 37 dòng map/loại, 187 điểm; mọi type tồn tại trong `ENEMY_DEFS`; giữ cảnh báo 1 spawn trên ô chặn.
+3. [x] Facade server giữ API `WALK_TILE_SIZE`, `WalkGrid`, `WALK_GRIDS`, `getWalkGrid`, `isWalkableTile`; test cũ walk-path pass source.
+4. [x] `selectTarget` + `inMeleeReach` + `inSkillRange`: priority/fallback, sticky tùy chọn, lọc unknown/dead/human/tuSi, tọa độ invalid và tie-break xác định.
+5. [x] `pickAutoSkill` + `SkillCooldowns`: rotation, ready/range/mp/sp, cooldown riêng/chung, loại `bienHinh` và `playerTargetOnly`.
+6. [x] A3 audit tĩnh: 11 map có spawn × 20 truy vấn = 220; không có lỗi rectangle safety; mismatch đường được ghi tài liệu, chưa sửa thuật toán.
+7. [~] Full `pnpm build` và toàn bộ test TypeScript server/core còn chờ môi trường toolchain: `pnpm` không có PATH, Corepack bị EACCES khi resolve registry, TypeScript dưới `.pnpm` bị EPERM; không đánh dấu build pass khi chưa chạy được.
+8. [ ] Đo live respawn/leash, prop điều kiện, server cooldown và xác nhận P2 approach trước khi nối vào state machine.

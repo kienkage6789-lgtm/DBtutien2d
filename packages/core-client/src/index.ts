@@ -11,3 +11,5 @@ export * from './operation-ledger.js';
 export * from './vitals-policy.js';
 export * from './state/auto-data.js';
 export * from './state/combat-packets.js';
+export * from './state/walk-grids.generated.js';
+export * from './state/map-spawns.generated.js';

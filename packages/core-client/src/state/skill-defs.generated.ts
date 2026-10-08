@@ -955,3 +955,17 @@ export const SKILL_BOOK_IDS = [
   "bi_tich_tu_anh_phuoc_tien",
   "bi_tich_xich_ma_hoa_than"
 ] as const;
+export const AUTO_CONSTANTS = {
+  "target": {
+    "range": 150,
+    "reachPad": 40,
+    "keepPad": 120
+  },
+  "player": {
+    "reach": 26,
+    "spellGap": 1.2
+  },
+  "thunder": {
+    "range": 96
+  }
+} as const;

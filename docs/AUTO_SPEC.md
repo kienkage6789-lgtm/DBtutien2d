@@ -181,8 +181,14 @@ Evidence đã ghi nhận `state.save` có các nhóm khóa `bag`, `bound`, `equi
 | SP, BP | `you.sp`, `you.bp` | trong gói nhưng chưa vào `VitalSnapshot` |
 | Cooldown kỹ năng của server | — | **[Chưa biết]**; bot phải tự theo dõi cục bộ như client |
 | Kỹ năng đã học, thứ tự | `systems/skills.js`, `state.save.bag`, preference | ✅ book-known + hàm pure; `lockReason` đầy đủ và thứ tự preference vẫn tách riêng |
-| Lưới va chạm để tìm đường | `world/*`, `walk-grid.ts` | ⚠️ chỉ có cho một số map (portal); chưa đủ cho vùng farm |
+| Lưới va chạm để tìm đường | `world/*`, `walk-grids.generated.ts` | ✅ 16/16 map catalog; có `source`, kích thước và `blockedRows`; `rectFlyBlocked` không đưa vào lưới đi bộ |
 | Xác nhận đòn đánh | `hurt`, `kill`, `skill_res`, thay đổi `hp` quái | ✅ parser pure; chưa nối vào `GameStateStore` |
+
+Cập nhật 2026-10-08 (phân tích tĩnh): `map-spawns.generated.ts` có 37 dòng map/loại và 187 điểm spawn, đã đối chiếu khóa với `ENEMY_DEFS`. Đây là dữ liệu chọn vùng farm; respawn/leash thực tế trên server vẫn **[Chưa biết]**.
+
+Kiểm chứng 6 map cũ: `tan_vien`, `thanh_truc_lam`, `duoc_vien`, `vuon_ca_nhan`, `mieu_hoang` khớp từng hàng. `dong_mach_ngam` lệch 1 ô: vendor chặn `(tx=20,ty=14)` do prop `hu_thien_cuc_lac` có `block:true`; bản chép tay cũ thiếu ô chặn này. Chọn vendor làm nguồn đúng và có test hồi quy.
+
+Profile tĩnh của generator coi prop điều kiện là đang hiện; ảnh hưởng khi quest/realm/harvest làm prop ẩn là **[Chưa biết]**. `flyBlocked`/`rectFlyBlocked` chỉ ghi chú, không đưa vào collision đi bộ.
 
 ## 11. Kiến trúc đề xuất
 
@@ -200,13 +206,33 @@ State machine training hiện có (`automation-engine`) đóng vai điều phố
 | Giai đoạn | Nội dung | Nghiệm thu |
 |---|---|---|
 | P0 | Trích định nghĩa quái (tên, `isBoss`, `human`, `bodyRadius`, `hpMax`) và ý nghĩa `hp`, `t`, `st`, `tg`; parse `kill`, `skill_res`, `down`, `hurt`, `act`, `loot` | ✅ Bảng sinh 62 loại; parser + fixture tổng hợp + test tĩnh. Không có raw tap nên chưa gọi là replay/live |
-| P1 | `selectTarget` thuần hàm theo mục 4 (mặc định gần nhất) | Test với snapshot ghi lại: chọn đúng, giữ mục tiêu theo `KEEP_PAD`, không chọn quái chết/`human` |
+| P1 | `selectTarget` thuần hàm theo mục 4 (mặc định gần nhất) | ✅ `target-selection.ts` + test: priority/fallback, lọc chết/human/tuSi/unknown, sticky và biên range |
+| A1/A2 | Grid collision + spawn cho P2 | ✅ 16/16 map catalog, 37 dòng map/loại, 187 điểm; server facade dùng generated source; 6 map đối chiếu hồi quy |
+| A3 | Đối chiếu `Pathfinder.route` với `findWalkPath` | ✅ 220 truy vấn tĩnh trên 11 map có spawn; không có đoạn dự án đi xuyên rectangle vật cản; mismatch độ dài/route được ghi nhận, chưa sửa thuật toán |
+| B2 | `pickAutoSkill` + cooldown pure | ✅ luân phiên, ready/range/mp/sp, SPELL_GAP, cooldown riêng, loại `bienHinh`/`playerTargetOnly` |
+
 | P2 | `approach`: tìm đường tới tầm đánh, tìm lại mỗi 0,4 s, giới hạn 8 s | Test trên lưới của map farm; live: đi tới quái đứng yên, dừng đúng tầm |
 | P3 | `attack` đánh thường qua ledger | Live trên 1 quái yếu: gửi đúng `attackTime`, `hp` quái giảm, nhận `kill`; không có đòn trùng |
 | P4 | Kỹ năng: `pickAuto`, cooldown cục bộ, kiểm tra mp/sp, `skill_res` | Live: luân phiên đúng thứ tự, tổng mp trừ khớp, không niệm khi thiếu mp |
 | P5 | Nghỉ/thiền theo ngưỡng; xử lý `hurt` khi thiền | Live: tự thiền khi hết mp rồi quay lại đánh |
 | P6 | Gục/hồi sinh (sau khi kiểm chứng `revive`) | Live có kiểm soát: nhận `down`, `revive`, tiếp tục |
 | P7 | Nối vào state machine training; log và dừng khẩn cấp | Chạy 10 phút ổn định, không vi phạm gate |
+
+Bảng A3 (ngưỡng độ dài lệch > 32 px; `presence` là khác có/không đường; mọi dòng đều có ít nhất một cặp unreachable/invalid):
+
+| Map | Q | Unreachable | Presence | Length >32px | Max delta px |
+|---|---:|---:|---:|---:|---:|
+| `mieu_hoang` | 20 | 3 | 1 | 0 | 23 |
+| `thanh_truc_lam` | 20 | 7 | 0 | 1 | 38 |
+| `duoc_vien` | 20 | 3 | 0 | 0 | 28 |
+| `vuon_ca_nhan` | 20 | 3 | 1 | 0 | 19 |
+| `long_uyen` | 20 | 4 | 0 | 0 | 29 |
+| `hang_dong_co` | 20 | 3 | 1 | 0 | 26 |
+| `bai_da_hang_gio` | 20 | 3 | 2 | 5 | 65 |
+| `dong_mach_ngam` | 20 | 3 | 2 | 3 | 49 |
+| `mo_linh_thach` | 20 | 3 | 0 | 2 | 55 |
+| `thach_phong_thung_lung` | 20 | 3 | 0 | 1 | 39 |
+| `hac_phong_linh` | 20 | 3 | 1 | 10 | 70 |
 
 **Điểm dừng an toàn xuyên suốt:** gục, mất kết nối, `hurt` liên tục vượt ngưỡng, không tới được mục tiêu quá N lần, gặp boss khi cấu hình "né boss", HP/MP không rõ quá lâu, người dùng bấm dừng.
 
@@ -219,6 +245,9 @@ State machine training hiện có (`automation-engine`) đóng vai điều phố
 5. ~~Danh sách kỹ năng nhân vật hiện có.~~ 27 DEFS + Thunder đã sinh; thứ tự/auto preference theo từng nhân vật vẫn chưa biết nếu không có state/pref tương ứng.
 6. `autoNghiDen`, `C(player)` và các điều kiện `giuYen` chính xác.
 7. Hành vi của quái đối với bot (đuổi, leash) so với client chính thức.
+8. `TileMap.load` có nhánh ẩn prop theo quest/realm/harvest; grid sinh ra dùng profile prop đang hiện, nên farm qua các ô gần prop điều kiện cần đo live.
+9. `TileMap.enemySpawns` có thể mở rộng `_x2/_x3`; đây là tọa độ client-derived, chưa xác minh là toàn bộ điểm spawn/respawn server.
+10. Các lệch A3 về vendor snap target, waypoint compression và tie-break chưa được xem là lỗi collision; cần kiểm tra lại nếu P2 bị đứng hoặc chọn đường vòng bất thường.
 
 ## Phụ lục P0 — Ý nghĩa trường quái trên wire
 
@@ -246,6 +275,31 @@ Nguồn chính: `vendor/.../src/net/gateway.js` hàm nội bộ cập nhật mob
 | `av`, `vk`, `ttl` | attack variant, weapon id, TTL hiển thị | variant/TTL integer-like; `vk` opaque | [Đọc được] |
 
 `bodyRadius` được có trong một số definition (ví dụ Xích Long), không xuất hiện trong `systems/targeting.js` nhưng được cộng vào tầm hit trong `scenes/world.js` như mô tả trên; targeting list dùng `Player.reach` làm bán kính entry. `hitRadius` và `leashRange` là trường behavior của definition mà `Enemy.update` dùng cho đánh/đuổi; generator ghi cả giá trị vendor và fallback config. Việc server có dùng các trường này y hệt client là **[Chưa biết]**.
+
+## Phụ lục — Phạm vi lưới va chạm và spawn
+
+Generator đọc `vendor/tutien2d-public-client/2026-10-06/src` trong VM, không đọc mạng. Không có map catalog nào thiếu grid trong lần chạy 2026-10-08:
+
+| Map | Kích thước ô | Số điểm spawn tĩnh |
+|---|---:|---:|
+| `mieu_hoang` | 20×14 | 12 |
+| `tan_vien` | 40×30 | 0 |
+| `thanh_truc_lam` | 40×30 | 62 |
+| `duoc_vien` | 40×30 | 26 |
+| `vuon_ca_nhan` | 18×13 | 2 |
+| `long_uyen` | 40×30 | 4 |
+| `hang_dong_co` | 30×20 | 16 |
+| `bai_da_hang_gio` | 40×30 | 24 |
+| `dong_mach_ngam` | 30×26 | 2 |
+| `mo_linh_thach` | 40×30 | 23 |
+| `thach_phong_thung_lung` | 40×30 | 4 |
+| `bat_quai_thach_phan` | 60×40 | 0 |
+| `thien_dao_khuyet` | 100×19 | 0 |
+| `u_uynh_vuc` | 100×19 | 0 |
+| `hac_phong_linh` | 64×24 | 12 |
+| `hac_thi` | 34×20 | 0 |
+
+Tổng 187 điểm/37 dòng map-loại. Một điểm rơi vào ô chặn: `mo_linh_thach`, loại `tm_tru`, `(tx=22,ty=14)`, id tổng hợp `tm_tru`; test giữ nguyên cảnh báo này, không tự sửa tọa độ. Map không có điểm spawn tĩnh không bị bỏ qua: vẫn có grid để dùng cho cổng/đường đi, nhưng chưa có dữ liệu farm từ `enemies` trong snapshot vendor.
 
 ## Phụ lục P0 — Payload gói chiến đấu
 

@@ -2,13 +2,19 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 
+const dataModule = (source) => `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
+const generatedSource = stripTypeScriptTypes(await readFile(new URL('../../../../packages/core-client/src/state/walk-grids.generated.ts', import.meta.url), 'utf8'));
+const generatedUrl = dataModule(generatedSource);
+const gridSource = stripTypeScriptTypes(await readFile(new URL('../config/walk-grid.ts', import.meta.url), 'utf8'))
+  .replaceAll('@tutien2d/core-client', generatedUrl);
+const gridUrl = dataModule(gridSource);
+
 // Node's type-stripping loader does not apply TypeScript's .js-to-.ts source
 // remapping, so load this source module with its sibling import redirected.
 const source = await readFile(new URL('./walk-path.ts', import.meta.url), 'utf8');
-const gridUrl = new URL('../config/walk-grid.ts', import.meta.url).href;
 const executableSource = stripTypeScriptTypes(source).replace("'../config/walk-grid.js'", `'${gridUrl}'`);
-const { findWalkPath, findNearestWalkableTarget, isWalkSegmentClear } = await import(`data:text/javascript,${encodeURIComponent(executableSource)}`);
-const { isWalkableTile } = await import('../config/walk-grid.ts');
+const { findWalkPath, findNearestWalkableTarget, isWalkSegmentClear } = await import(dataModule(executableSource));
+const { isWalkableTile } = await import(gridUrl);
 
 const mapId = 'tan_vien';
 const path = findWalkPath(mapId, { x: 18 * 32 + 16, y: 11 * 32 + 16 }, { tx: 7, ty: 29 });
