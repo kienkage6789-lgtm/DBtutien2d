@@ -25,6 +25,8 @@ Cập nhật: 2026-10-08. API này là control-plane nội bộ của dashboard,
 | `POST` | `/api/accounts/:id/restart` | Stop rồi start lại vendor |
 | `POST` | `/api/accounts/:id/auto/start` | Bật Auto chính thức, tùy chọn anchor |
 | `POST` | `/api/accounts/:id/auto/stop` | Tắt Auto chính thức |
+| `GET` | `/api/accounts/:id/khu` | Đọc khu hiện tại và danh sách khu; `?refresh=1` yêu cầu gói `xem` mới |
+| `POST` | `/api/accounts/:id/khu` | Đổi sang khu `{ "khu": N }` của map hiện tại |
 | `POST` | `/api/accounts/:id/move-to` | Nhận tọa độ `{x,y}` và bắt đầu đi trong map hiện tại |
 | `POST` | `/api/accounts/:id/move-to/cancel` | Hủy thao tác đi tay theo `operationId` |
 | `POST` | `/api/orchestrator/start-all` | Start tuần tự mọi account |
@@ -37,6 +39,16 @@ Cập nhật: 2026-10-08. API này là control-plane nội bộ của dashboard,
 `POST /auto/start` nhận `{}` hoặc `{ "anchor": { "mapId", "khu?", "x", "y" } }`. Runner vẫn kiểm tra in-game, vitals, downed và map anchor; lỗi trả envelope `{success:false,error,errorCode,retryable}`.
 
 Runtime giữ các nhóm dữ liệu: `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters và packet/error/memory telemetry. Dữ liệu chưa biết là `null`, không thay bằng 0.
+
+## Danh sách và đổi khu
+
+`GET /api/accounts/:id/khu` trả `{ mapId, khu, soKhu, list }`. `list` là `null` khi chưa nhận danh sách hợp lệ; nếu có thì gồm `{ mapId, khu, dem, toiDa, tran, observedAt }`. `dem[i]` là số người ở khu `i + 1`; dữ liệu được giới hạn và kiểm tra kiểu ở runner/web, chỉ giữ cho map hiện tại. `refresh=1` gửi `{ "op": "khu", "act": "xem" }` qua Gateway chính thức và chờ gói `khu` đúng `mapId`, tối đa 3 giây.
+
+`POST /api/accounts/:id/khu` chỉ nhận đúng body `{ "khu": N }`. Runner chỉ gửi `{ "op": "khu", "act": "chon", "khu": N }` khi đang `IN_GAME`, map đã sẵn sàng, nhân vật không gục, Auto/supervisor và `walkTo` đều idle, map có `soKhu > 1`, đích hợp lệ, không trùng khu hiện tại và không trong bảo vệ hồi 5 giây phía client. Thành công được xác nhận bởi gói `map` cùng `mapId` và `khu` mới; toast thành công không được dùng làm ACK. Từ chối được nhận từ toast: cooldown `Vừa đổi khu, chờ N giây nữa.` → `KHU_COOLDOWN` với `retryAfterSec=N`, `Đang ở khu này rồi.` → `KHU_ALREADY_HERE`, toast khác → `KHU_REJECTED` và message đã làm sạch tối đa 120 ký tự; không có phản hồi trong khoảng 4 giây → `KHU_TIMEOUT`.
+
+Ánh xạ lỗi: `INVALID_REQUEST` là HTTP 400; `TARGET_INVALID` là 400; các gate `NOT_IN_GAME`, `VENDOR_MAP_NOT_READY`, `CHARACTER_DOWN`, `AUTO_ACTIVE`, `OPERATION_IN_PROGRESS`, `KHU_IN_PROGRESS`, `KHU_ALREADY_HERE` là 409; `MAP_NOT_SPLIT` và `KHU_REJECTED` là 422; `KHU_COOLDOWN` là 429 và có `Retry-After`; `KHU_TIMEOUT` là 504. `retryable` là `true` cho `VENDOR_MAP_NOT_READY`, `KHU_IN_PROGRESS`, `KHU_COOLDOWN`, `KHU_TIMEOUT`.
+
+Khi gói `map` cùng `mapId` nhưng `khu` đổi đến từ bất kỳ nguồn nào, runner hủy `walkTo` đang chạy với lý do `khu_changed`, vì client có thể làm mới entity/epoch tại khu mới. Không có bước tự đi tới Bảng Khu trong bản này; kết quả live ở `docs/RESEARCH_KHU_CHANGE.md` cho thấy server chấp nhận đổi khu ngoài bán kính bảng ở `tan_vien`.
 
 ## Di chuyển trong map hiện tại
 

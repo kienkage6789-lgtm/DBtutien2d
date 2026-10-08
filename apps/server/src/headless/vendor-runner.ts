@@ -16,6 +16,18 @@ import {
   type WalkRequest,
 } from './walk-navigator.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
+import {
+  cooldownSecondsFromToast,
+  KHU_CHANGE_TIMEOUT_MS,
+  KHU_COOLDOWN_MS,
+  KHU_LIST_TIMEOUT_MS,
+  KhuError,
+  type KhuChangeResult,
+  type KhuInfo,
+  type KhuList,
+  toastText,
+} from './khu-change.js';
+export type { KhuChangeResult, KhuInfo, KhuList } from './khu-change.js';
 
 export type VendorRunnerLifecycle =
   | 'starting'
@@ -112,6 +124,7 @@ export interface VendorRunnerSnapshot {
   downed: boolean | null;
   vitalsProbeMoves: number;
   soKhu: number | null;
+  khuList: KhuList | null;
   monsters: VendorMonsterSnapshot[];
   players: VendorPlayerSnapshot[];
   monstersContext: VendorEntityContext;
@@ -157,6 +170,8 @@ export interface VendorRunnerOptions {
   /** Số ms tối đa Auto được chạy khi chưa có gói vitals chính thức (mặc định VITALS_CONFIRM_MS). */
   vitalsConfirmMs?: number;
   vitalsProbeIntervalMs?: number;
+  khuChangeTimeoutMs?: number;
+  khuListTimeoutMs?: number;
   supervisor?: Partial<AutoSupervisorConfig>;
   onSessionUpdated?: (session: AuthSession) => void;
   onLog?: VendorRunnerLogger;
@@ -279,6 +294,25 @@ export class VendorRunner {
   private observedMapId: string | null = null;
   private observedKhu: number | null = null;
   private observedSoKhu: number | null = null;
+  private khuList: KhuList | null = null;
+  private lastKhuChangeAt: number | null = null;
+  private khuChangeWaiter: {
+    mapId: string;
+    target: number;
+    resolve: (result: KhuChangeResult) => void;
+    reject: (error: KhuError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  private khuListWaiter: {
+    mapId: string;
+    resolve: (list: KhuList) => void;
+    reject: (error: KhuError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  private khuListRequestPromise: Promise<KhuList> | null = null;
+  /** THỬ NGHIỆM (đo giao thức đổi khu, xem docs/RESEARCH_KHU_CHANGE.md): các gói liên quan sau khi gửi khu-probe. */
+  private khuProbeActive = false;
+  private khuProbeEvents: Array<{ at: number; op: string; data?: unknown }> = [];
   /** Thời điểm bật Auto; dùng để dừng Auto nếu quá lâu chưa có gói vitals chính thức. */
   private autoStartedAt: number | null = null;
   private killsBySelf = 0;
@@ -289,7 +323,7 @@ export class VendorRunner {
   private currentSocket: CountingWebSocket | null = null;
   private readonly packets = emptyPacketCounts();
   private readonly logs: Array<{ code: string; phase?: string; reasonCode?: string; at: number }> = [];
-  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs'>>;
+  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
 
   public constructor(private readonly input: VendorRunnerOptions) {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
@@ -301,6 +335,8 @@ export class VendorRunner {
       loopIntervalMs: input.loopIntervalMs ?? 16,
       vitalsConfirmMs: input.vitalsConfirmMs ?? VITALS_CONFIRM_MS,
       vitalsProbeIntervalMs: input.vitalsProbeIntervalMs ?? VITALS_PROBE_INTERVAL_MS,
+      khuChangeTimeoutMs: input.khuChangeTimeoutMs ?? KHU_CHANGE_TIMEOUT_MS,
+      khuListTimeoutMs: input.khuListTimeoutMs ?? KHU_LIST_TIMEOUT_MS,
       watchdogMaxFrameDelayMs: input.watchdogMaxFrameDelayMs ?? 250,
       watchdogMaxRssGrowthBytes: input.watchdogMaxRssGrowthBytes ?? 256 * 1024 * 1024,
       watchdogRestart: input.watchdogRestart ?? false,
@@ -331,6 +367,8 @@ export class VendorRunner {
       this.observedMapId = null;
       this.observedKhu = null;
       this.observedSoKhu = null;
+      this.khuList = null;
+      this.lastKhuChangeAt = null;
       this.startLoop();
       await this.connectAndBuild(false);
     } catch (error) {
@@ -345,6 +383,7 @@ export class VendorRunner {
 
   public async stop(): Promise<void> {
     this.cancelMoveTo('runner_stopped');
+    this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('runner_stop');
     this.autoRequested = false;
     this.stopRequested = true;
@@ -460,6 +499,7 @@ export class VendorRunner {
       downed: player ? this.isDown(player) : null,
       vitalsProbeMoves: this.vitalsProbeMoves,
       soKhu: mapReady ? this.getSoKhu() : null,
+      khuList: mapReady ? this.getKhuListForMap(mapId) : null,
       monsters: world.monsters,
       players: world.players,
       monstersContext: world.monstersContext,
@@ -479,6 +519,87 @@ export class VendorRunner {
     if (!current || (current.status !== 'accepted' && current.status !== 'running')) return false;
     if (operationId !== undefined && current.operationId !== operationId) return false;
     return this.walkNavigator.cancel(current.operationId, reason);
+  }
+
+  public getKhuInfo(): KhuInfo {
+    const mapId = this.isMapReady() ? this.getMapId() : null;
+    return {
+      mapId,
+      khu: mapId ? this.getKhu() : null,
+      soKhu: mapId ? this.getSoKhu() : null,
+      list: this.getKhuListForMap(mapId),
+    };
+  }
+
+  public async requestKhuList(): Promise<KhuList> {
+    if (this.connectionState() !== 'IN_GAME' || !this.getPlayer()) throw new KhuError('NOT_IN_GAME');
+    if (!this.isMapReady()) throw new KhuError('VENDOR_MAP_NOT_READY');
+    if (this.khuListRequestPromise) return this.khuListRequestPromise;
+    const mapId = this.getMapId();
+    const gateway = this.P?.Gateway;
+    if (!mapId || !gateway?.connected || typeof gateway.send !== 'function') throw new KhuError('NOT_IN_GAME');
+
+    const promise = new Promise<KhuList>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.khuListWaiter?.mapId !== mapId) return;
+        this.khuListWaiter = null;
+        this.khuListRequestPromise = null;
+        this.recordLog('khu_list_timeout');
+        reject(new KhuError('KHU_TIMEOUT'));
+      }, this.options.khuListTimeoutMs);
+      this.khuListWaiter = { mapId, resolve, reject, timer };
+    });
+    this.khuListRequestPromise = promise;
+    try {
+      const sent = gateway.send({ op: 'khu', act: 'xem' });
+      if (sent === false) this.failKhuListWaiter(new KhuError('KHU_TIMEOUT'));
+    } catch {
+      this.failKhuListWaiter(new KhuError('KHU_TIMEOUT'));
+    }
+    return promise;
+  }
+
+  public async changeKhu(khu: number): Promise<KhuChangeResult> {
+    if (this.connectionState() !== 'IN_GAME' || !this.getPlayer()) throw new KhuError('NOT_IN_GAME');
+    if (!this.isMapReady()) throw new KhuError('VENDOR_MAP_NOT_READY');
+    const player = this.getPlayer();
+    if (this.isDown(player)) throw new KhuError('CHARACTER_DOWN');
+    if (this.autoRequested || (this.supervisor?.getPhase() ?? 'idle') !== 'idle') throw new KhuError('AUTO_ACTIVE');
+    const currentMove = this.walkNavigator.getOperation();
+    if (currentMove && (currentMove.status === 'accepted' || currentMove.status === 'running')) {
+      throw new KhuError('OPERATION_IN_PROGRESS');
+    }
+    if (this.khuChangeWaiter) throw new KhuError('KHU_IN_PROGRESS');
+    const soKhu = this.getSoKhu();
+    if (soKhu === null || soKhu <= 1) throw new KhuError('MAP_NOT_SPLIT');
+    if (!Number.isInteger(khu) || khu < 1 || khu > soKhu) throw new KhuError('TARGET_INVALID');
+    const currentKhu = this.getKhu();
+    if (currentKhu !== null && khu === currentKhu) throw new KhuError('KHU_ALREADY_HERE');
+    const now = Date.now();
+    if (this.lastKhuChangeAt !== null && now - this.lastKhuChangeAt < KHU_COOLDOWN_MS) {
+      const retryAfterSec = Math.max(1, Math.ceil((KHU_COOLDOWN_MS - (now - this.lastKhuChangeAt)) / 1000));
+      throw new KhuError('KHU_COOLDOWN', 'KHU_COOLDOWN', retryAfterSec);
+    }
+    const mapId = this.getMapId();
+    const gateway = this.P?.Gateway;
+    if (!mapId || !gateway?.connected || typeof gateway.send !== 'function') throw new KhuError('NOT_IN_GAME');
+
+    const result = new Promise<KhuChangeResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.khuChangeWaiter || this.khuChangeWaiter.mapId !== mapId || this.khuChangeWaiter.target !== khu) return;
+        this.khuChangeWaiter = null;
+        this.recordLog('khu_timeout');
+        reject(new KhuError('KHU_TIMEOUT'));
+      }, this.options.khuChangeTimeoutMs);
+      this.khuChangeWaiter = { mapId, target: khu, resolve, reject, timer };
+    });
+    try {
+      const sent = gateway.send({ op: 'khu', act: 'chon', khu });
+      if (sent === false) this.failKhuChangeWaiter(new KhuError('KHU_TIMEOUT'));
+    } catch {
+      this.failKhuChangeWaiter(new KhuError('KHU_TIMEOUT'));
+    }
+    return result;
   }
 
   /** Map graph read directly from the official client's MapData instance. */
@@ -862,6 +983,7 @@ export class VendorRunner {
   private handleSocketClosed(): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
     this.cancelMoveTo('reconnecting');
+    this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('connection_closed');
     this.lastVitalsAt = null;
     this.vitalsProbeExhausted = false;
@@ -869,6 +991,7 @@ export class VendorRunner {
     this.observedMapId = null;
     this.observedKhu = null;
     this.observedSoKhu = null;
+    this.khuList = null;
     if (this.reconnectAttempts >= this.options.reconnectMaxRetries) {
       this.lifecycle = 'error';
       this.recordLog('reconnect_exhausted');
@@ -888,16 +1011,147 @@ export class VendorRunner {
     this.recordLog('reconnect_scheduled');
   }
 
+  private failKhuWaiters(error: KhuError): void {
+    this.failKhuChangeWaiter(error);
+    this.failKhuListWaiter(error);
+  }
+
+  private failKhuChangeWaiter(error: KhuError): void {
+    const waiter = this.khuChangeWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    this.khuChangeWaiter = null;
+    this.recordLog(error.code === 'KHU_TIMEOUT' ? 'khu_timeout' : 'khu_rejected', { reasonCode: error.code });
+    waiter.reject(error);
+  }
+
+  private failKhuListWaiter(error: KhuError): void {
+    const waiter = this.khuListWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    this.khuListWaiter = null;
+    this.khuListRequestPromise = null;
+    waiter.reject(error);
+  }
+
+  private settleKhuChangeSuccess(): void {
+    const waiter = this.khuChangeWaiter;
+    if (!waiter || this.observedMapId !== waiter.mapId || this.observedKhu !== waiter.target) return;
+    clearTimeout(waiter.timer);
+    this.khuChangeWaiter = null;
+    this.lastKhuChangeAt = Date.now();
+    this.cancelMoveTo('khu_changed');
+    this.recordLog('khu_changed');
+    waiter.resolve({
+      mapId: waiter.mapId,
+      khu: waiter.target,
+      soKhu: this.getSoKhu(),
+      list: this.getKhuListForMap(waiter.mapId),
+    });
+  }
+
+  private settleKhuToast(packet: Record<string, unknown>): void {
+    if (!this.khuChangeWaiter) return;
+    const message = toastText(packet);
+    if (!message) return;
+    const retryAfterSec = cooldownSecondsFromToast(message);
+    if (retryAfterSec !== null) {
+      this.failKhuChangeWaiter(new KhuError('KHU_COOLDOWN', message, retryAfterSec));
+    } else if (message === 'Đang ở khu này rồi.') {
+      this.failKhuChangeWaiter(new KhuError('KHU_ALREADY_HERE', message));
+    } else if (message !== 'Đã sang khu ' + this.khuChangeWaiter.target + '.') {
+      this.failKhuChangeWaiter(new KhuError('KHU_REJECTED', message));
+    }
+  }
+
+  private sanitizeKhuList(packet: Record<string, unknown>): KhuList | null {
+    const mapId = typeof packet.mapId === 'string' && packet.mapId.trim() ? packet.mapId : null;
+    const khu = Number.isInteger(packet.khu) && Number(packet.khu) > 0 ? Number(packet.khu) : null;
+    const toiDa = Number.isInteger(packet.toiDa) && Number(packet.toiDa) >= 0 ? Number(packet.toiDa) : null;
+    const readArray = (value: unknown): number[] | null => {
+      if (!Array.isArray(value) || value.length > 100) return null;
+      return value.every((item) => typeof item === 'number' && Number.isFinite(item) && Number.isInteger(item) && item >= 0)
+        ? [...value] as number[] : null;
+    };
+    const dem = readArray(packet.dem);
+    const tran = readArray(packet.tran);
+    if (!mapId || khu === null || toiDa === null || !dem || !tran) return null;
+    return { mapId, khu, dem, toiDa, tran, observedAt: Date.now() };
+  }
+
+  private getKhuListForMap(mapId: string | null): KhuList | null {
+    if (!mapId || !this.khuList || this.khuList.mapId !== mapId) return null;
+    return { ...this.khuList, dem: [...this.khuList.dem], tran: [...this.khuList.tran] };
+  }
+
+  private recordKhuProbeEvent(op: string, packet: Record<string, unknown>): void {
+    const noisy = new Set(['snap2', 'you', 'act', 'pf', 'pong', 'join', 'leave', 'hon', 'mach', 'khoiloi', 'world_chat', 'p']);
+    if (noisy.has(op)) return;
+    let data: unknown;
+    const pick = (keys: string[]) => Object.fromEntries(keys.filter((key) => key in packet).map((key) => [key, packet[key]]));
+    if (op === 'khu') data = pick(['mapId', 'khu', 'soKhu', 'dem', 'toiDa', 'tran']);
+    else if (op === 'map') data = pick(['mapId', 'khu', 'soKhu', 'x', 'y', 'ep']);
+    else data = { keys: Object.keys(packet).slice(0, 12), ...pick(['toast', 'text', 'kind', 'ok', 'err', 'error', 'msg', 'code', 'reason']) };
+    this.khuProbeEvents.push({ at: Date.now(), op, data });
+    if (this.khuProbeEvents.length > 80) this.khuProbeEvents.shift();
+  }
+
+  /** THỬ NGHIỆM: gửi gói khu chưa qua kiểm tra an toàn nào ngoài việc đang trong game. */
+  public khuProbe(action: 'xem' | 'chon', khu?: number): { sent: boolean; at: number; x: number | null; y: number | null; mapId: string | null; khu: number | null } {
+    const player = this.getPlayer();
+    const gateway = this.P?.Gateway;
+    if (this.connectionState() !== 'IN_GAME' || !player || typeof gateway?.send !== 'function') throw new Error('NOT_IN_GAME');
+    if (action === 'chon' && (!Number.isInteger(khu) || Number(khu) < 1 || Number(khu) > 99)) throw new Error('TARGET_INVALID');
+    this.khuProbeActive = true;
+    const at = Date.now();
+    const x = Number.isFinite(player.x) ? player.x : null;
+    const y = Number.isFinite(player.y) ? player.y : null;
+    this.khuProbeEvents.push({ at, op: '_sent', data: { act: action, khu: khu ?? null, x, y, mapId: this.getMapId(), curKhu: this.observedKhu } });
+    const packet = action === 'xem' ? { op: 'khu', act: 'xem' } : { op: 'khu', act: 'chon', khu };
+    const sent = gateway.send(packet) !== false;
+    this.recordOutgoing(packet);
+    return { sent, at, x, y, mapId: this.getMapId(), khu: this.observedKhu };
+  }
+
+  public getKhuProbe(): { events: Array<{ at: number; op: string; data?: unknown }>; mapId: string | null; khu: number | null; soKhu: number | null } {
+    return { events: this.khuProbeEvents.map((event) => ({ ...event })), mapId: this.getMapId(), khu: this.observedKhu, soKhu: this.observedSoKhu };
+  }
+
   private recordIncoming(packet: Record<string, unknown>): void {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
+    if (this.khuProbeActive) this.recordKhuProbeEvent(op, packet);
     if (op === 'map') {
-      this.observedMapId = typeof packet.mapId === 'string' && packet.mapId.trim() ? packet.mapId : null;
-      this.observedKhu = Number.isInteger(packet.khu) && Number(packet.khu) > 0 ? Number(packet.khu) : null;
-      this.observedSoKhu = typeof packet.soKhu === 'number' && Number.isFinite(packet.soKhu) && packet.soKhu > 0
-        ? packet.soKhu : null;
-    } else if (op === 'khu' && Number.isInteger(packet.khu) && Number(packet.khu) > 0) {
-      this.observedKhu = Number(packet.khu);
+      const previousMapId = this.observedMapId;
+      const previousKhu = this.observedKhu;
+      const nextMapId = typeof packet.mapId === 'string' && packet.mapId.trim() ? packet.mapId : null;
+      const nextKhu = Number.isInteger(packet.khu) && Number(packet.khu) > 0 ? Number(packet.khu) : null;
+      this.observedMapId = nextMapId;
+      this.observedKhu = nextKhu;
+      this.observedSoKhu = Number.isInteger(packet.soKhu) && Number(packet.soKhu) > 0 ? Number(packet.soKhu) : null;
+      if (previousMapId !== nextMapId || (previousKhu !== null && nextKhu !== null && previousKhu !== nextKhu)) {
+        this.khuList = null;
+      }
+      if (previousMapId === nextMapId && previousKhu !== null && nextKhu !== null && previousKhu !== nextKhu) {
+        this.lastKhuChangeAt = Date.now();
+        this.cancelMoveTo('khu_changed');
+      }
+      this.settleKhuChangeSuccess();
+    } else if (op === 'khu') {
+      const list = this.sanitizeKhuList(packet);
+      if (list && list.mapId === this.observedMapId) {
+        this.observedKhu = list.khu;
+        this.khuList = list;
+        if (this.khuListWaiter?.mapId === list.mapId) {
+          const waiter = this.khuListWaiter;
+          clearTimeout(waiter.timer);
+          this.khuListWaiter = null;
+          this.khuListRequestPromise = null;
+          waiter.resolve(this.getKhuListForMap(list.mapId)!);
+        }
+      }
+    } else if (op === 'toast') {
+      this.settleKhuToast(packet);
     }
     if (op === 'hurt') { this.hurtCount += 1; this.lastHurtAt = Date.now(); this.lastVitalsAt = this.lastHurtAt; }
     if (op === 'you' || op === 'revived') this.lastVitalsAt = Date.now();
@@ -1053,6 +1307,7 @@ export class VendorRunner {
   }
 
   private cleanupTransport(): void {
+    this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     if (this.loopTimer) clearInterval(this.loopTimer);
     this.loopTimer = null;
     this.clearReconnectTimer();
@@ -1064,12 +1319,15 @@ export class VendorRunner {
     this.observedMapId = null;
     this.observedKhu = null;
     this.observedSoKhu = null;
+    this.khuList = null;
   }
 
   private disconnectTransportOnly(): void {
+    this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.observedMapId = null;
     this.observedKhu = null;
     this.observedSoKhu = null;
+    this.khuList = null;
     try { this.currentSocket?.close(); } catch { /* already closed */ }
     try { this.P?.Gateway?.socket?.close?.(); } catch { /* already closed */ }
     if (this.P?.Gateway) {

@@ -1,5 +1,22 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — API và dashboard đổi khu cho engine vendor (offline)
+
+Thay đổi:
+- `VendorRunner.changeKhu()` dùng `Gateway.send({op:"khu",act:"chon",khu})`, kiểm tra các gate `IN_GAME`/map ready/down/Auto/`walkTo`/lock khu/map split/target/cooldown; chỉ coi `map` đúng `mapId` và `khu` đích là thành công. Toast cooldown/đã ở khu/toast khác lần lượt thành `KHU_COOLDOWN`/`KHU_ALREADY_HERE`/`KHU_REJECTED`; không retry mù; timeout khoảng 4 giây.
+- `requestKhuList()` và `khuList` trong snapshot/runtime/API; gói khu được kiểm tra kiểu và giới hạn mảng, xóa khi đổi map/reconnect. Route thử nghiệm `GET|POST /khu-probe` và mã probe được giữ nguyên.
+- `map` cùng `mapId` nhưng `khu` đổi hủy `walkTo` với `reason: "khu_changed"`, kể cả khi gói đến từ nguồn khác ngoài `changeKhu`; không đi tới Bảng Khu.
+- Thêm `GET|POST /api/accounts/:id/khu`, ánh xạ lỗi/envelope/`Retry-After`, kiểu web, sanitize realtime và `KhuControl` với danh sách, khóa, đầy, refresh, cooldown.
+- Thêm fixture FakeSocket phản hồi `xem`/`chon` theo kết quả live đo được và test runner/API/web cho success, reject, timeout, list và gate.
+
+Lệnh đã chạy và kết quả thật:
+- `git diff --check`: pass.
+- `pnpm build`: chưa chạy theo giới hạn sandbox của phiên.
+- `pnpm --filter @tutien2d/web test`: chưa chạy theo giới hạn sandbox của phiên.
+- `cd apps/server && npx tsx --test <file>`: chưa chạy theo giới hạn sandbox của phiên.
+
+Chưa xác minh: build/typecheck/test end-to-end trong môi trường người giao việc; hành vi khu đầy, map có quái, giới hạn tần suất dài hạn, ngưỡng cooldown chính xác ngoài khoảng 5 giây và quy tắc bảng ở các map khác. Không mở mạng/game thật, không đọc `data/`/`.env*`, không sửa `vendor/` hoặc `auto-supervisor.ts`, không commit.
+
 ## 2026-10-08 — Đo live `walkTo` bản 2a: `tan_vien` → `dong_mach_ngam` (đi nhiều map tự động)
 
 Một phiên, `abortOnHurt: true`, `maxHurt: 1`, theo dõi `hurtCount` (0 suốt chuyến), không bật Auto. Lần gọi đầu tiên của script bị lỗi phía script (đọc `body.maps` trong khi API bọc trong `data`) nên báo nhầm 0 map; đã sửa script và chạy lại. Server không sai.

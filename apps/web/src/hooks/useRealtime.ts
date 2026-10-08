@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { AccountRuntime, LogEntry, MoveToOperation } from '../types';
 import { fetchAccounts, fetchLogs } from '../lib/api';
 import { isContextNewer, isOlderEpoch, sanitizeEntityContext, sanitizeMapContext } from '../lib/context';
+import { sanitizeKhuList } from '../lib/khu';
 import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
 
 const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped', 'error']);
@@ -154,6 +155,11 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
         if (moveTo === undefined) delete vendor.moveTo;
         else vendor.moveTo = moveTo;
       }
+      if (hasOwn(vendor, 'khuList')) {
+        const khuList = sanitizeKhuList(vendor.khuList);
+        if (khuList === undefined) delete vendor.khuList;
+        else vendor.khuList = khuList;
+      }
       next.vendor = vendor as unknown as AccountRuntime['vendor'];
     } else {
       delete next.vendor;
@@ -208,6 +214,10 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
         const rows = sanitizeEntities(payload[listField]);
         if (rows) next[listField] = rows as never;
       }
+    }
+    if (hasOwn(payload, 'khuList')) {
+      const khuList = sanitizeKhuList(payload.khuList);
+      if (khuList !== undefined) next.khuList = khuList;
     }
   }
   return next;

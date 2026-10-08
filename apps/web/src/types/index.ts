@@ -48,6 +48,7 @@ export interface VendorRuntimeSnapshot {
   tokenExpiresAt: number | null;
   mapId: string | null;
   khu: number | null;
+  soKhu: number | null;
   x: number | null;
   y: number | null;
   hp: number | null;
@@ -57,6 +58,23 @@ export interface VendorRuntimeSnapshot {
   downed: boolean | null;
   consoleErrors: string[];
   moveTo: MoveToOperation | null;
+  khuList: KhuList | null;
+}
+
+export interface KhuList {
+  mapId: string;
+  khu: number;
+  dem: number[];
+  toiDa: number;
+  tran: number[];
+  observedAt: number;
+}
+
+export interface KhuInfo {
+  mapId: string | null;
+  khu: number | null;
+  soKhu: number | null;
+  list: KhuList | null;
 }
 
 export interface AccountRuntime {
@@ -101,6 +119,7 @@ export interface AccountRuntime {
   latencyMs: number;
   activity: string;
   soKhu: number | null;
+  khuList: KhuList | null;
   mapContext: MapDataContext;
   mapContextAgeMs: number | null;
   mapContextIsCurrent: boolean;

@@ -1261,7 +1261,7 @@ Triển khai dần: bắt đầu với bốn gói trên, đo `rejectedPackets` v
 Không sửa code. Chỉ cần đảm bảo UI và tài liệu nói rõ:
 
 - **6. Chuyển map chỉ qua portal**: `enterMap()` gửi `{op:'enter', mapId}` và worker phải đi tới portal trước. Map chỉ có metadata catalog (chưa được live xác nhận) nên hiển thị là "chưa xác nhận" và khóa nút vào. Collision grid nay đã sinh đủ 16 map catalog trong `walk-grids.generated.ts`; map không có spawn tĩnh vẫn không được coi là đã có dữ liệu farm.
-- **7. Chọn khu**: giữ `KHU_PROTOCOL_UNAVAILABLE`. `soKhu = 20` không chứng minh lệnh chọn khu tồn tại. Điều kiện để mở: capture được lệnh của client chính thức (`vendor/.../src/ui` có màn chọn khu), xác nhận có ACK, rồi mới thêm vào route.
+- **7. Chọn khu**: trước live giữ `KHU_PROTOCOL_UNAVAILABLE`; sau kết quả đo live ở `docs/RESEARCH_KHU_CHANGE.md` đã mở API/dashboard đổi khu. ACK là `map` cùng `mapId` và `khu` đích; route thử nghiệm `khu-probe` vẫn giữ để đo lại khi cần. Khu đầy, map có quái và giới hạn dài hạn vẫn chưa xác minh.
 - **10. Chết và hồi sinh**: giữ `BLOCKED: RESPAWN_PROTOCOL_UNAVAILABLE`. Điều kiện để mở: lệnh hồi sinh đã xác minh, ACK, map/khu hồi sinh, chi phí/cooldown, và quy trình quay lại training. Với B.5, chỉ trạng thái `dead` dựa trên vitals tuyệt đối fresh mới kích hoạt khóa này.
 
 ---
@@ -1399,3 +1399,13 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Fixture offline dùng client vendor thật và FakeSocket ghi outbound `enter`; fixture integration phản hồi `map` sau delay; bundle offline: map-route 3/3, walk-navigator 9/9, contract 2/2, vendor-runner 12/12.
 5. [~] `pnpm build`, Vitest và lệnh `tsx` trực tiếp chưa chạy được trong sandbox (`tsx` ENOMEM, TypeScript/Vitest EPERM); cần chạy trong môi trường người giao việc.
 6. [ ] Chưa xác minh trên game thật: thời gian transition, hurt giữa đường, cooldown/byHand ở map dùng thực tế, reconnect và độ chính xác tuyến nhiều map.
+
+## R. API và dashboard đổi khu — checklist 2026-10-08
+
+1. [x] `VendorRunner.changeKhu()`/`requestKhuList()` dùng Gateway chính thức, waiter theo `map`/`toast`/`khu`, gate an toàn, cooldown bảo vệ, timeout bounded và không retry mù.
+2. [x] Snapshot/runtime giữ `khuList`; list được sanitize ở server và realtime web, chỉ hợp lệ theo map hiện tại; API `GET|POST /api/accounts/:id/khu` có envelope, status, `retryAfterSec` và `Retry-After`.
+3. [x] Dashboard có chọn khu, số người/capacity, khóa khu đầy/khu hiện tại và khóa theo bot/map/Auto/đi bộ/đổi khu/cooldown; refresh có rate-limit phía component.
+4. [x] Gói `map` cùng map nhưng khác khu hủy `walkTo` với `khu_changed`; giữ nguyên route thử nghiệm `khu-probe`, không sửa vendor/auto-supervisor.
+5. [x] FakeSocket/test source bao phủ success, cooldown client/server, already-here, target/map split, Auto, walkTo, timeout, list và malformed list; contract mapping lỗi mới đã thêm.
+6. [~] `git diff --check` pass; `pnpm build`, Vitest và các lệnh `tsx --test` chưa chạy trong sandbox phiên này, cần chạy ở môi trường người giao việc.
+7. [ ] Chưa xác minh live: khu đầy, map có quái, giới hạn dài hạn, cooldown chính xác ngoài khoảng 5 giây và quy tắc khoảng cách Bảng Khu ở map khác.

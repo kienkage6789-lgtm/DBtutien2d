@@ -3,7 +3,7 @@ import { db } from '../db/database.js';
 import { wsHub } from '../ws/hub.js';
 import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
-import { VendorRunner, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { VendorRunner, type KhuInfo, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -72,6 +72,7 @@ export interface AccountRuntimeInfo {
   latencyMs: number;
   activity: string;
   soKhu: number | null;
+  khuList: VendorRunnerSnapshot['khuList'];
   mapContext: MapDataContext;
   mapContextAgeMs: number | null;
   mapContextIsCurrent: boolean;
@@ -329,6 +330,35 @@ export class WorkerPool {
     return operation;
   }
 
+  public async changeKhu(accountId: string, khu: number): Promise<AccountRuntimeInfo> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    await active.runner.changeKhu(khu);
+    const runtime = this.getRuntimeInfo(accountId);
+    wsHub.broadcastAccountUpdate(runtime);
+    return runtime;
+  }
+
+  public async getKhu(accountId: string, refresh = false): Promise<KhuInfo> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    if (refresh) await active.runner.requestKhuList();
+    return active.runner.getKhuInfo();
+  }
+
+  /** THỬ NGHIỆM đo giao thức đổi khu (docs/RESEARCH_KHU_CHANGE.md). */
+  public khuProbe(accountId: string, action: 'xem' | 'chon', khu?: number) {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    return active.runner.khuProbe(action, khu);
+  }
+
+  public getKhuProbe(accountId: string) {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    return active.runner.getKhuProbe();
+  }
+
   public getReachableMaps(accountId: string): { currentMapId: string; maps: ReachableMapInfo[] } {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
@@ -384,6 +414,7 @@ export class WorkerPool {
       latencyMs: 0,
       activity: 'idle',
       soKhu: null,
+      khuList: null,
       mapContext: emptyMapContext(),
       mapContextAgeMs: null,
       mapContextIsCurrent: false,
@@ -469,6 +500,7 @@ export class WorkerPool {
       latencyMs: 0,
       activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
       soKhu: snapshot.soKhu,
+      khuList: snapshot.khuList,
       mapContext,
       mapContextAgeMs: mapContext.observedAt === null ? null : Math.max(0, now - mapContext.observedAt),
       mapContextIsCurrent: positionCurrent,

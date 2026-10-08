@@ -92,4 +92,14 @@ describe('mergeAccountRuntime vitals freshness', () => {
     });
     expect(sanitizeMoveTo({ operationId: 'bad' })).toBeUndefined();
   });
+
+  it('accepts a valid khu list, preserves null, and ignores malformed data', () => {
+    const khuList = { mapId: 'tan_vien', khu: 1, dem: [2, 3], toiDa: 20, tran: [20, 20], observedAt: 1_000 };
+    const first = mergeAccountRuntime(undefined, { ...base, mapContext: { mapId: 'tan_vien', khu: 1, soKhu: 20, observedAt: 1_000, fresh: true }, khuList });
+    expect(first?.khuList).toEqual(khuList);
+    const malformed = mergeAccountRuntime(first!, { ...base, mapContext: { mapId: 'tan_vien', khu: 1, soKhu: 20, observedAt: 1_001, fresh: true }, khuList: { ...khuList, dem: ['2'] } });
+    expect(malformed?.khuList).toEqual(khuList);
+    const cleared = mergeAccountRuntime(malformed!, { ...base, mapContext: { mapId: 'tan_vien', khu: 1, soKhu: 20, observedAt: 1_002, fresh: true }, khuList: null });
+    expect(cleared?.khuList).toBeNull();
+  });
 });

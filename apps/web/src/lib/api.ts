@@ -1,5 +1,6 @@
-import type { AccountRuntime, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
+import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired } from './auth';
 
 const API_BASE = '/api';
@@ -149,6 +150,7 @@ export class MoveToApiError extends Error {
     public readonly httpStatus: number,
     public readonly acceptedTarget?: { x: number; y: number },
     public readonly retryable = false,
+    public readonly retryAfterSec?: number,
   ) {
     super(message);
     this.name = 'MoveToApiError';
@@ -211,7 +213,40 @@ function moveToError(json: Record<string, unknown> | null, response: Response): 
     : typeof json?.error === 'string' ? json.error : 'MOVE_TO_FAILED';
   const message = typeof json?.error === 'string' ? json.error : `Không thể di chuyển (HTTP ${response.status}).`;
   const acceptedTarget = parsePoint(json?.acceptedTarget ?? json?.nearestTarget ?? json?.data);
-  return new MoveToApiError(message, code, response.status, acceptedTarget, json?.retryable === true);
+  const retryAfterSec = typeof json?.retryAfterSec === 'number' && Number.isInteger(json.retryAfterSec) && json.retryAfterSec > 0
+    ? json.retryAfterSec : undefined;
+  return new MoveToApiError(message, code, response.status, acceptedTarget, json?.retryable === true, retryAfterSec);
+}
+
+function parseKhuInfo(value: unknown): KhuInfo | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const data = value as Record<string, unknown>;
+  const nullableString = data.mapId === null || typeof data.mapId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(data.mapId);
+  const nullablePositiveInteger = (item: unknown): item is number => item === null || typeof item === 'number' && Number.isInteger(item) && item > 0;
+  if (!nullableString || !nullablePositiveInteger(data.khu) || !nullablePositiveInteger(data.soKhu)) return undefined;
+  const list = sanitizeKhuList(data.list);
+  if (list === undefined) return undefined;
+  return { mapId: data.mapId as string | null, khu: data.khu as number | null, soKhu: data.soKhu as number | null, list };
+}
+
+export async function fetchKhu(accountId: string, refresh = false): Promise<KhuInfo> {
+  const suffix = refresh ? '?refresh=1' : '';
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/khu${suffix}`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const data = parseKhuInfo(json?.data);
+  if (!response.ok || json?.success !== true || !data) throw moveToError(json, response);
+  return data;
+}
+
+export async function changeKhu(accountId: string, khu: number): Promise<AccountRuntime> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/khu`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ khu }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !json.data || typeof json.data !== 'object') throw moveToError(json, response);
+  return json.data as AccountRuntime;
 }
 
 export async function fetchReachableMaps(accountId: string): Promise<{ currentMapId: string; maps: ReachableMap[] }> {

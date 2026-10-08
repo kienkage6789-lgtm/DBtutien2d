@@ -31,6 +31,10 @@ class FakeSocket implements VendorSocketLike {
   public static emitHurtAfterMoveCount: number | null = null;
   public static mapId = 'tan_vien';
   public static mapKhu: number | undefined = 1;
+  public static soKhu = 1;
+  public static mapEp = 1;
+  public static khuLastChangeAt = 0;
+  public static khuNoResponse = false;
   public static mapDelayMs = 0;
   public static respondToEnter = false;
   public static enterDelayMs = 25;
@@ -38,7 +42,7 @@ class FakeSocket implements VendorSocketLike {
   /** Điểm xuất hiện trong gói `map`; mặc định cũ nằm trong ô bị chặn của tan_vien nên không đi bộ được. */
   public static spawn = { x: 240, y: 192 };
   public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
-  public static outgoing: Array<{ op?: string; mapId?: string }> = [];
+  public static outgoing: Array<{ op?: string; act?: string; khu?: number; mapId?: string }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
   public static readonly CONNECTING = 0;
@@ -61,8 +65,8 @@ class FakeSocket implements VendorSocketLike {
   }
 
   public send(data: string): void {
-    const packet = JSON.parse(data) as { op?: string; mapId?: string; seq?: number; st?: string; x?: number; y?: number };
-    FakeSocket.outgoing.push({ op: packet.op, mapId: (packet as { mapId?: string }).mapId });
+    const packet = JSON.parse(data) as { op?: string; act?: string; khu?: number; mapId?: string; seq?: number; st?: string; x?: number; y?: number };
+    FakeSocket.outgoing.push({ op: packet.op, act: packet.act, khu: packet.khu, mapId: packet.mapId });
     if (packet.op === 'move' && typeof packet.seq === 'number') {
       FakeSocket.moves.push({ seq: packet.seq, st: packet.st, x: packet.x, y: packet.y });
       const moveCount = FakeSocket.moves.length;
@@ -80,9 +84,35 @@ class FakeSocket implements VendorSocketLike {
       FakeSocket.mapId = targetMapId;
       const spawn = FakeSocket.enterSpawns[targetMapId] ?? FakeSocket.spawn;
       setTimeout(() => {
-        this.emit({ op: 'map', mapId: targetMapId, khu: 1, soKhu: 1, ep: 1, x: spawn.x, y: spawn.y, dir: 0, p: [] });
+        this.emit({ op: 'map', mapId: targetMapId, khu: 1, soKhu: FakeSocket.soKhu, ep: FakeSocket.mapEp, x: spawn.x, y: spawn.y, dir: 0, p: [] });
         this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
       }, FakeSocket.enterDelayMs);
+    }
+    if (packet.op === 'khu' && packet.act === 'xem') {
+      if (!FakeSocket.khuNoResponse) queueMicrotask(() => this.emitKhu());
+    }
+    if (packet.op === 'khu' && packet.act === 'chon' && Number.isInteger(packet.khu)) {
+      if (FakeSocket.khuNoResponse) return;
+      const target = Number(packet.khu);
+      const now = Date.now();
+      if (FakeSocket.mapKhu === target) {
+        queueMicrotask(() => this.emit({ op: 'toast', text: 'Đang ở khu này rồi.' }));
+        queueMicrotask(() => this.emitKhu());
+      } else if (now - FakeSocket.khuLastChangeAt < 5_000) {
+        const retryAfter = Math.max(1, Math.ceil((5_000 - (now - FakeSocket.khuLastChangeAt)) / 1_000));
+        queueMicrotask(() => this.emit({ op: 'toast', text: `Vừa đổi khu, chờ ${retryAfter} giây nữa.` }));
+        queueMicrotask(() => this.emitKhu());
+      } else if (target >= 1 && target <= FakeSocket.soKhu) {
+        FakeSocket.khuLastChangeAt = now;
+        FakeSocket.mapKhu = target;
+        FakeSocket.mapEp += 1;
+        queueMicrotask(() => this.emit({ op: 'map', mapId: FakeSocket.mapId, khu: target, soKhu: FakeSocket.soKhu, ep: FakeSocket.mapEp, x: FakeSocket.spawn.x, y: FakeSocket.spawn.y, dir: 0, p: [] }));
+        queueMicrotask(() => this.emit({ op: 'status' }));
+        queueMicrotask(() => this.emit({ op: 'bosses' }));
+        queueMicrotask(() => this.emit({ op: 'formation' }));
+        queueMicrotask(() => this.emit({ op: 'toast', text: `Đã sang khu ${target}.`, kind: 'success' }));
+        queueMicrotask(() => this.emitKhu());
+      }
     }
     if (packet.op !== 'hello') return;
     queueMicrotask(() => {
@@ -90,7 +120,7 @@ class FakeSocket implements VendorSocketLike {
       setTimeout(() => {
         this.emit({ op: 'state', save: { realm: 'luyen_khi_8', exp: 0, equipment: {} } });
         setTimeout(() => {
-          this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: FakeSocket.spawn.x, y: FakeSocket.spawn.y, dir: 0, p: [] });
+          this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: FakeSocket.soKhu, ep: FakeSocket.mapEp, x: FakeSocket.spawn.x, y: FakeSocket.spawn.y, dir: 0, p: [] });
           this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
           if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
         }, FakeSocket.mapDelayMs);
@@ -106,9 +136,48 @@ class FakeSocket implements VendorSocketLike {
 
   public serverClose(): void { this.close(); }
 
+  private emitKhu(): void {
+    const count = Array.from({ length: FakeSocket.soKhu }, (_, index) => index === 0 ? 20 : 3);
+    const capacity = Array.from({ length: FakeSocket.soKhu }, () => 20);
+    this.emit({ op: 'khu', mapId: FakeSocket.mapId, khu: FakeSocket.mapKhu, dem: count, toiDa: 20, tran: capacity });
+  }
+
   private emit(packet: Record<string, unknown>): void {
     this.onmessage?.({ data: JSON.stringify(packet) });
   }
+}
+
+async function waitUntil(condition: () => boolean, timeoutMs = 4_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && !condition()) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(condition(), 'fixture condition was not observed before timeout');
+}
+
+function resetKhuFixture(): void {
+  FakeSocket.soKhu = 1;
+  FakeSocket.mapKhu = 1;
+  FakeSocket.khuLastChangeAt = 0;
+  FakeSocket.mapEp = 1;
+  FakeSocket.khuNoResponse = false;
+  FakeSocket.mapId = 'tan_vien';
+  FakeSocket.spawn = { x: 240, y: 192 };
+  FakeSocket.outgoing = [];
+  FakeSocket.moves = [];
+}
+
+function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRunner>[0]> = {}): VendorRunner {
+  return new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    ...options,
+  });
 }
 
 test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, and stops cleanly', async () => {
@@ -591,5 +660,137 @@ test('VendorRunner completes a portal leg when the fixture server replies to ent
     FakeSocket.respondToEnter = false;
     FakeSocket.enterSpawns = {};
     FakeSocket.outgoing = [];
+  }
+});
+
+test('VendorRunner changes khu from the measured map response and applies both cooldown guards', async () => {
+  resetKhuFixture();
+  FakeSocket.soKhu = 20;
+  FakeSocket.spawn = { x: 272, y: 860 };
+  const runner = createKhuRunner();
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().mapId === 'tan_vien');
+    const changed = await runner.changeKhu(2);
+    assert.equal(changed.mapId, 'tan_vien');
+    assert.equal(changed.khu, 2);
+    await waitUntil(() => runner.getSnapshot().khuList?.khu === 2);
+    assert.equal(runner.getSnapshot().khu, 2);
+    assert.ok(FakeSocket.outgoing.some((packet) => packet.op === 'khu' && packet.act === 'chon' && packet.khu === 2));
+
+    const beforeClientCooldown = FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length;
+    await assert.rejects(() => runner.changeKhu(3), (error: unknown) => {
+      const candidate = error as { code?: string; retryAfterSec?: number };
+      return candidate.code === 'KHU_COOLDOWN' && (candidate.retryAfterSec ?? 0) >= 1;
+    });
+    assert.equal(FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length, beforeClientCooldown);
+
+    (runner as any).lastKhuChangeAt = Date.now() - 6_000;
+    FakeSocket.khuLastChangeAt = Date.now();
+    await assert.rejects(() => runner.changeKhu(3), (error: unknown) => {
+      const candidate = error as { code?: string; retryAfterSec?: number };
+      return candidate.code === 'KHU_COOLDOWN' && (candidate.retryAfterSec ?? 0) >= 1;
+    });
+    assert.ok(FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length > beforeClientCooldown);
+
+    (runner as any).lastKhuChangeAt = Date.now() - 6_000;
+    FakeSocket.khuLastChangeAt = Date.now() - 6_000;
+    const beforeAlreadyHere = FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length;
+    await assert.rejects(() => runner.changeKhu(2), /KHU_ALREADY_HERE/);
+    assert.equal(FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length, beforeAlreadyHere);
+
+    (runner as any).observedKhu = null;
+    const beforeServerAlreadyHere = FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length;
+    await assert.rejects(() => runner.changeKhu(2), (error: unknown) => (error as { code?: string }).code === 'KHU_ALREADY_HERE');
+    assert.equal(FakeSocket.outgoing.filter((packet) => packet.op === 'khu' && packet.act === 'chon').length, beforeServerAlreadyHere + 1);
+
+    const move = runner.moveTo({ target: { x: 372, y: 860 }, requester: 'user' });
+    (runner as any).recordIncoming({ op: 'map', mapId: 'tan_vien', khu: 3, soKhu: 20, ep: 3, x: 272, y: 860 });
+    assert.equal(runner.getSnapshot().moveTo?.operationId, move.operationId);
+    assert.equal(runner.getSnapshot().moveTo?.status, 'cancelled');
+    assert.equal(runner.getSnapshot().moveTo?.reason, 'khu_changed');
+  } finally {
+    await runner.stop();
+    resetKhuFixture();
+    FakeSocket.spawn = { x: 240, y: 192 };
+  }
+});
+
+test('VendorRunner requests and sanitizes khu lists, and rejects invalid or unsplit targets before sending', async () => {
+  resetKhuFixture();
+  FakeSocket.soKhu = 20;
+  const runner = createKhuRunner();
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().mapId === 'tan_vien');
+    const list = await runner.requestKhuList();
+    assert.equal(list.dem.length, 20);
+    assert.equal(list.tran.length, 20);
+    const beforeInvalid = FakeSocket.outgoing.length;
+    await assert.rejects(() => runner.changeKhu(21), /TARGET_INVALID/);
+    assert.equal(FakeSocket.outgoing.length, beforeInvalid);
+    (runner as any).recordIncoming({ op: 'khu', mapId: 'tan_vien', khu: 1, dem: ['bad'], toiDa: 20, tran: [20] });
+    assert.equal(runner.getSnapshot().khuList?.dem.length, 20, 'malformed khu packet must not replace the last valid list');
+  } finally {
+    await runner.stop();
+    resetKhuFixture();
+  }
+
+  FakeSocket.soKhu = 1;
+  const unsplit = createKhuRunner();
+  try {
+    await unsplit.start();
+    await waitUntil(() => unsplit.getSnapshot().mapId === 'tan_vien');
+    const before = FakeSocket.outgoing.length;
+    await assert.rejects(() => unsplit.changeKhu(1), /MAP_NOT_SPLIT/);
+    assert.equal(FakeSocket.outgoing.length, before);
+  } finally {
+    await unsplit.stop();
+    resetKhuFixture();
+  }
+});
+
+test('VendorRunner blocks khu changes while Auto or walkTo owns the character', async () => {
+  resetKhuFixture();
+  FakeSocket.soKhu = 20;
+  FakeSocket.spawn = { x: 272, y: 860 };
+  const autoRunner = createKhuRunner();
+  try {
+    await autoRunner.start();
+    await waitUntil(() => autoRunner.getSnapshot().mapId === 'tan_vien');
+    await autoRunner.startAuto();
+    await assert.rejects(() => autoRunner.changeKhu(2), /AUTO_ACTIVE/);
+    autoRunner.stopAuto();
+  } finally {
+    await autoRunner.stop();
+  }
+
+  const walkingRunner = createKhuRunner();
+  try {
+    await walkingRunner.start();
+    await waitUntil(() => walkingRunner.getSnapshot().mapId === 'tan_vien');
+    walkingRunner.moveTo({ target: { x: 372, y: 860 }, requester: 'user' });
+    await assert.rejects(() => walkingRunner.changeKhu(2), /OPERATION_IN_PROGRESS/);
+  } finally {
+    await walkingRunner.stop();
+    resetKhuFixture();
+    FakeSocket.spawn = { x: 240, y: 192 };
+  }
+});
+
+test('VendorRunner reports KHU_TIMEOUT when the fixture does not answer', async () => {
+  resetKhuFixture();
+  FakeSocket.soKhu = 20;
+  FakeSocket.khuNoResponse = true;
+  const runner = createKhuRunner({ khuChangeTimeoutMs: 80 });
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().mapId === 'tan_vien');
+    const pending = runner.changeKhu(2);
+    await assert.rejects(() => runner.changeKhu(3), /KHU_IN_PROGRESS/);
+    await assert.rejects(() => pending, /KHU_TIMEOUT/);
+  } finally {
+    await runner.stop();
+    resetKhuFixture();
   }
 });

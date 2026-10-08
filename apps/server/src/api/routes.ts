@@ -7,6 +7,7 @@ import { VERIFIED_PORTAL_EDGES } from '../config/portal-catalog.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
 import { moveToErrorResponse } from './move-to-errors.js';
+import { khuErrorResponse } from './khu-errors.js';
 
 export const apiRouter: Router = Router();
 
@@ -224,6 +225,44 @@ apiRouter.post('/accounts/:id/auto/stop', (req: Request, res: Response) => {
   }
 });
 
+apiRouter.get('/accounts/:id/khu', async (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const data = await workerPool.getKhu(accountId, req.query.refresh === '1');
+    res.json({ success: true, data });
+  } catch (error) {
+    const response = khuErrorResponse(error);
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/khu', async (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).length !== 1 || !Number.isInteger(body.khu)) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false });
+    return;
+  }
+  try {
+    const data = await workerPool.changeKhu(accountId, Number(body.khu));
+    const response = { success: true, data };
+    res.json(response);
+  } catch (error) {
+    const response = khuErrorResponse(error);
+    if (response.body.retryAfterSec !== undefined) res.setHeader('Retry-After', String(response.body.retryAfterSec));
+    res.status(response.status).json(response.body);
+  }
+});
+
 apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
@@ -258,6 +297,37 @@ apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
       requester: 'user',
     });
     res.status(202).json({ success: true, data });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+// THỬ NGHIỆM đo giao thức đổi khu; giữ nguyên song song với API có kiểm tra an toàn (docs/RESEARCH_KHU_CHANGE.md).
+apiRouter.get('/accounts/:id/khu-probe', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    res.json({ success: true, data: workerPool.getKhuProbe(accountId) });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/khu-probe', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+    if (body.act !== 'xem' && body.act !== 'chon') throw new Error('TARGET_INVALID');
+    res.json({ success: true, data: workerPool.khuProbe(accountId, body.act, typeof body.khu === 'number' ? body.khu : undefined) });
   } catch (error) {
     const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
     res.status(response.status).json(response.body);
