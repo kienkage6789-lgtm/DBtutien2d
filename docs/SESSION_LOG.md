@@ -1,5 +1,22 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Đo live `move-to` bản 1 (engine vendor, map `tan_vien`, không có quái)
+
+Một phiên, nhân vật ở `tan_vien` (0 quái, khoảng 7–19 người chơi), theo dõi `hurtCount` (0 suốt đợt), các đích cách ô cổng ít nhất 120 px. Lần chạy đầu của script bị hỏng vì script coi HTTP 202 là từ chối (API trả 202 cho lệnh được nhận); đã sửa script và chạy lại. Kết quả lần chạy hợp lệ:
+
+| Phép đo | Kết quả |
+|---|---|
+| Đi 120 px sang phải (đích không đi được) | `arrived`, 0,9 s; đích bấm (366,913) được snap về (304,848), cách điểm bấm 104 px; dừng cách đích snap 20 px |
+| Đi lên 120 px (đích đi được) | `arrived`, 1,2 s; sai số tới điểm bấm 14 px, tới đích snap 18 px; khoảng 89 px/s |
+| Đi 300 px | `arrived`, 2,4 s; khoảng 95 px/s; dừng cách đích snap 17 px |
+| Đích góc map (4,4) | `arrived`; snap về (176,144) cách 222 px; đi 692 px trong 7 s (khoảng 99 px/s) |
+| Đích ngoài biên (99999,99999) | `TARGET_INVALID` (HTTP 400) |
+| Hai lệnh liên tiếp | lệnh thứ hai `OPERATION_IN_PROGRESS` (409); `move-to/cancel` đưa trạng thái về `cancelled` |
+
+Kết luận: tốc độ đo được 87–99 px/s (client 101 px/s; số đo thấp hơn do thời điểm bắt đầu và chu kỳ thăm dò 100 ms); dừng cách đích snap 17–20 px (đúng bán kính 20 px); snap có thể kéo đích khá xa điểm bấm khi bấm vào vùng không đi được (đến khoảng 220 px ở góc map), dashboard cần vẽ đích đã snap.
+
+Chưa đo (chưa xác minh): đi sát ô cổng có tự đổi map không (cố ý bỏ qua vì cổng sang `thanh_truc_lam` nằm cách điểm xuất hiện 17 px); `hurt` giữa đường (không có quái ở `tan_vien`); `TARGET_ON_PORTAL`/`TARGET_UNREACHABLE` trên game thật; đi ngay sau khi vào game.
+
 ## 2026-10-08 — Vendor walkTo bản 1 và MiniMap move-to (offline)
 
 Thay đổi:
