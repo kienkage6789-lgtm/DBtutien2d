@@ -113,3 +113,15 @@ downedStore.updateMap({ op: 'map', mapId: 'other-map', khu: 2 });
 assert.equal(downedStore.downed, null, 'khu change resets downed state');
 
 console.log('core-client vitals tests passed');
+
+// dn trên wire là số 0/1 (live: dn=0), không phải boolean.
+const dnWireStore = new GameStateStore('t');
+assert.equal(dnWireStore.downed, null);
+dnWireStore.updateYou({ hp: 10, mp: 5, dn: 0 });
+assert.equal(dnWireStore.downed, false, 'dn=0 phải đặt downed=false');
+dnWireStore.updateYou({ hp: 0, mp: 5, dn: 1 });
+assert.equal(dnWireStore.downed, true, 'dn=1 phải đặt downed=true');
+dnWireStore.updateYou({ hp: 10, mp: 5 });
+assert.equal(dnWireStore.downed, true, 'you không có dn không được đổi downed');
+dnWireStore.updateYou({ hp: 10, mp: 5, dn: false });
+assert.equal(dnWireStore.downed, false);

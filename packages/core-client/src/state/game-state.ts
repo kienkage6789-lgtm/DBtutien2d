@@ -294,7 +294,10 @@ export class GameStateStore extends EventEmitter {
   }
 
   public updateYou(packet: Omit<Partial<YouPacket>, 'op'>): void {
-    if (typeof packet.dn === 'boolean') this.downed = packet.dn;
+    // Server gửi dn dạng số 0/1 (đã xác minh live: dn=0); chấp nhận cả boolean.
+    const dn = (packet as { dn?: unknown }).dn;
+    if (typeof dn === 'boolean') this.downed = dn;
+    else if (dn === 0 || dn === 1) this.downed = dn === 1;
     this.updateSelfVitals(packet, 'you');
   }
 

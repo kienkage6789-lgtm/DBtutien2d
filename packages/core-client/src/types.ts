@@ -274,7 +274,7 @@ export interface YouPacket {
   mp?: number;
   sp?: number;
   bp?: number;
-  dn?: boolean;
+  dn?: boolean | 0 | 1;
   fix?: boolean;
   ep?: number;
   [key: string]: any;
