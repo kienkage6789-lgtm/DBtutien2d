@@ -1,6 +1,50 @@
 # Nhật ký phiên triển khai
 
-# 2026-10-08 — P1 target + collision grid/spawn từ vendor (static-only)
+## 2026-10-08 — Nghiệm thu của Claude Code sau các đợt Codex, và việc ngoài Codex
+
+Mục này đính chính các mục "build/test bị chặn" bên dưới: sandbox của Codex không build được, nên mọi đợt Codex đều được Claude Code build và chạy lại ngoài sandbox.
+
+### Kết quả nghiệm thu từng đợt Codex
+
+| Đợt | Commit | Lỗi chỉ lộ khi build, đã sửa | Kết quả sau sửa |
+|---|---|---|---|
+| vitalsAgeMs + refreshVitals | `8bac730` | thiếu import `VITALS_ATTACK_MAX_AGE_MS` trong bot-controller; `exports` của core-client chỉ có điều kiện `import` nên tsx/node --test không nạp được (đã thêm `default`); mock `sendMove` trong test khóa tài khoản bị treo | build 4/4, web Vitest 9/9, test server TS pass |
+| P0 dữ liệu/parser auto | `01714c4` | `optionalFinite` không phải type guard; ép kiểu `revived` | build 4/4, test core-client pass, generator sinh lại giống hệt |
+| P1 chọn mục tiêu + lưới 16 map | `9116355` | `allowedWeapons` bị suy kiểu `null` nên nhánh `includes` thành `never` | build 4/4; core 11 file, automation 3 file, server TS 7 file, server .mjs 3 file đều pass |
+
+Quy tắc rút ra: không tin "pass" của Codex khi nó báo build bị chặn; luôn chạy `pnpm build` và test lại. `tsc` vẫn xuất file khi có lỗi kiểu nên test có thể pass trong khi build fail.
+
+### Việc Claude Code tự làm (ngoài Codex)
+
+- **Live refreshVitals** (không bật packet tap): `200 refreshed`, 10 move, ACK sau khoảng 1075 đến 1077 ms; lần gọi thứ hai ngay sau đó `409 VITALS_REFRESH_RATE_LIMITED` (retryable). Chưa thử live: quái gần, `no_ack`, gục, training với HP cũ.
+- **Lỗi dn**: server gửi `dn: 0` (số) nhưng `updateYou` chỉ nhận boolean nên `downed` không bao giờ được cập nhật từ `you`. Đã sửa (`2a40761`) và xác nhận live: sau refresh `downed=false`. Chưa thấy `downed=true` live (không cố tình làm gục).
+- **Probe offset live** (4 rồi 10 move idle): một gói `you` `seq=10` sau move thứ 6 của đợt hai, trễ 91 ms; ủng hộ mô hình ACK theo seq hoặc tổng số move nhận được, bác bỏ "đếm từ đầu luồng". Chi tiết ở mục probe bên dưới.
+- **Git và hạ tầng agent**: `git init` (nhánh main); `.gitignore` loại `data/`, `.env*`, `**/docs/evidence/`, dist, node_modules (mẫu `docs/evidence/` ban đầu bỏ sót `apps/server/docs/evidence/`, đã sửa); `AGENTS.md` ở gốc; commit baseline `e1ce3d7`. Quét secret trên nội dung stage: không có credential (một kết quả khớp là thư viện công khai `vendor/.../supabase.js`).
+- **apps/server/.env.example**: bản cũ có `HOST=0.0.0.0` và `ENCRYPTION_SECRET` mẫu cố định; copy nguyên file sẽ làm server từ chối khởi động (bind ngoài loopback cần `API_TOKEN`). Đã đổi sang `HOST=127.0.0.1`, để trống secret.
+- **Tài liệu mới**: `UI_FEATURE_INVENTORY.md` (94 lệnh `cmd` trong client, đối chiếu core-client), `AUTO_SPEC.md` (đặc tả vòng lặp Tự Động), các file `PROMPT_*.md` ghi lại prompt đã giao.
+
+### Phát hiện về giao thức (đọc từ client, chưa kiểm chứng live)
+
+- "Tự Động" là cờ `autoOn` phía client, server không có lệnh auto; bot phải tự sinh gói `move`/`attack`/`skill`.
+- Chọn khu: `{op:"khu", act:"xem"}` và `{op:"khu", act:"chon", khu:N}`. Hồi sinh: `cmd("revive", {mode:"home"|"spot"})`. Khóa `KHU_PROTOCOL_UNAVAILABLE` và `RESPAWN_PROTOCOL_UNAVAILABLE` chưa gỡ.
+- Trong gói move, `fs` là trạng thái câu cá (đi cùng `fx`/`fy`), không phải bay; bay là `fly:1`. Code `sendMove` hiện gán cứng `fly:0, fs:0`.
+- Nhân vật đang mặc đồ bay Phi Diệp (ô `phi_hanh`, cảnh giới tối thiểu luyen_khi_4); chưa thử bay.
+
+### Quy trình chạy Codex từ Claude Code
+
+- Cài `@openai/codex` (bản 0.160.1, đăng nhập ChatGPT). Bản này không có chế độ MCP server; gọi bằng `codex exec`.
+- Lệnh chuẩn: `timeout 3300 codex exec -s workspace-write -C <repo> -o <file> --json "$(cat prompt)" < /dev/null > events.jsonl 2> stderr.txt`. **Bắt buộc `< /dev/null`** và `timeout`: một lần chạy thiếu stdin đã treo hơn 7 giờ chỉ với dòng `Reading additional input from stdin...`, 0 sự kiện, không gửi gì vào game.
+- Bật mạng (`-c sandbox_workspace_write.network_access=true`) chỉ khi thật sự cần; các đợt thuần mã/tĩnh chạy không mạng.
+- Trước mỗi đợt: cây git sạch để diff tách bạch. Sau mỗi đợt: build, test, xem diff, rồi mới commit.
+- Khi viết lệnh shell chứa văn bản có dấu backtick, không đặt trong chuỗi nháy kép (shell sẽ chạy phần trong backtick như lệnh); ghi văn bản ra file trước rồi xử lý.
+
+### Còn nợ
+
+- Rotate token game từng nằm trong `test_ws.mjs`/`test_ping.mjs`; đặt `API_TOKEN`/`ENCRYPTION_SECRET` nếu mở ngoài localhost (việc của người dùng).
+- 8 truy vấn A3 lệch "có/không có đường" giữa `Pathfinder.route` và `findWalkPath` chưa rõ hướng lệch.
+- Các điều [Chưa biết] trong `AUTO_SPEC.md` mục 13.
+
+## 2026-10-08 — P1 target + collision grid/spawn từ vendor (static-only)
 
 ### Thay đổi
 
@@ -27,7 +71,7 @@
 - `npx --no-install tsx --test ...`: **bị chặn**, `tsx` không được nhận diện; test TypeScript server trực tiếp bằng Node cũng dừng ở `.js` source remapping (`ERR_MODULE_NOT_FOUND`).
 - Spawn/respawn/leash thực tế, prop ẩn theo trạng thái runtime, cooldown server và các mismatch route cần đo live trước P2/P3/P4.
 
-# 2026-10-08 — P0 lớp dữ liệu/parser auto từ vendor (build/test TypeScript bị chặn)
+## 2026-10-08 — P0 lớp dữ liệu/parser auto từ vendor (build/test TypeScript bị chặn)
 
 ### Thay đổi
 
@@ -54,7 +98,7 @@
 - Chưa có raw packet combat trong evidence: fixture chỉ là dữ liệu tổng hợp theo mã client; miền giá trị server, biến thể `act`, nguồn thực của `hurt.byId`, thứ tự `kill`/loot và payload trường phụ vẫn cần đo live ở P1–P3.
 - `deriveLearnedSkills` chưa thay thế `Skills.known`: `lockReason`, preference `pntt.thanhChieu.v1` và việc server có đưa preference vào `state.save` vẫn chưa xác minh.
 
-# 2026-10-08 — Triển khai vitalsAgeMs và refreshVitals (build/test sandbox bị chặn)
+## 2026-10-08 — Triển khai vitalsAgeMs và refreshVitals (build/test sandbox bị chặn)
 
 ### Thay đổi
 
