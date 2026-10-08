@@ -1,5 +1,29 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Ghi chú: so sánh di chuyển (client thật, engine vendor, thuật toán cũ) và việc tiếp theo
+
+### Tốc độ di chuyển
+
+| Nguồn | Tốc độ | Cách biết |
+|---|---|---|
+| Client chính thức, đi | **101 px/s** (= `SPEED 68 × WALK_MULT 1.485`) | **[Đã đo]** trong mô phỏng offline (di chuyển tự do 3 s) |
+| Client chính thức, chạy | **112 px/s** (= `68 × RUN_MULT 1.65`) | **[Đã đo]** |
+| Client bay | `SPEED_MULT 1.9` (đồ Phi Diệp 1.75) | Đọc từ cấu hình, chưa đo |
+| Engine vendor | Cùng một mã di chuyển của client (tốc độ, va chạm, tìm đường), gửi `move` cho server khi vị trí đổi (khoảng 7 gói mỗi giây khi đang chạy Auto) | **[Đã đo]** trong soak 30 phút: server không từ chối, 0 lỗi |
+| Thuật toán `runMoveTo` của engine `core` | Tối đa **68 px/s trên lý thuyết** (`maxStepPx = 68 × 0.1`, bỏ qua hệ số đi/chạy), và **thực tế chậm hơn nhiều**: mỗi bước tính từ `entry.location`, vị trí xác thực chỉ được cập nhật khi nhận `you` (khoảng 1 s một lần), nên khoảng 10 gói liên tiếp đều chỉ cách vị trí cũ khoảng 6,8 px; tốc độ hiệu dụng khoảng 7 px/s | **[Suy ra từ mã]**, chưa đo trực tiếp bằng live |
+
+Kết luận: thuật toán cũ chậm vì hai lỗi thiết kế (dùng tốc độ gốc 68 thay vì 101/112; bước tính từ vị trí xác thực lỗi thời thay vì vị trí dự đoán của chính mình). Engine vendor không có hai lỗi này vì chạy chính mã di chuyển của client.
+
+Khác biệt còn lại giữa engine vendor và trình duyệt: vòng lặp của ta chạy khoảng 38 đến 40 Hz với `dt` kẹp tối đa 0,05 s, trình duyệt khoảng 60 Hz. Tốc độ trung bình như nhau vì di chuyển được tích phân theo `dt`, nhưng chi tiết xử lý va chạm theo từng bước có thể lệch nhẹ. Chưa đo số lần server sửa vị trí (`you.fix`) trong soak.
+
+### Việc tiếp theo (đã thống nhất, chưa làm)
+
+1. Soak dài hơn (vài giờ) qua server: ghi NỘI DUNG `console.error` của client (soak vừa rồi có 1 lỗi chưa biết nội dung), đếm `you.fix`, quan sát token hết hạn giữa phiên, kết nối lại thật, và có thể gặp tình huống chết tự nhiên để lớp an toàn quay về neo chạy thật.
+2. Đo CPU/RAM trên Linux (mục tiêu chạy liên tục trên server Linux), và với nhiều tài khoản song song.
+3. Bàn giao phiên sang trình duyệt theo phương án A (`PLAN_SESSION_HANDOFF.md`): quy tắc phiên của server, API release/resume, UI.
+4. Quyết định số phận của thuật toán di chuyển cũ (`runMoveTo`, dùng cho API move-to/điều hướng cổng của engine `core`): sửa (dùng vị trí dự đoán và 101 px/s) hoặc chuyển các chức năng đó sang engine vendor.
+5. Dọn tài liệu và đánh dấu trạng thái các giai đoạn P2 đến P7 viết tay (không còn là đường chính).
+
 ## 2026-10-08 — Soak 30 phút: engine vendor + Auto qua server thật
 
 `scripts/soak-vendor.cjs` (cần `TUTIEN_SOAK_LIVE=1`): tự khởi động server, `engine=vendor`, start bot, `auto/start`, giám sát mỗi 5 s, ghi mẫu mỗi 30 s, luôn dọn dẹp (auto/stop, bot stop, engine=core, tắt server). Dừng sớm nếu supervisor `halted`, runner lỗi, mất kết nối quá 90 s hoặc API không phản hồi quá 30 s; không điều kiện nào kích hoạt. Một phiên đăng nhập, `thanh_truc_lam`, không bật packet tap.
