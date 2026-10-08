@@ -43,8 +43,12 @@ Packet di chuyển có các field:
 ```
 
 `seq` bắt đầu từ `1`; `ep` lấy từ `welcome`/`map`. Movement là stream liên tục,
-không đi qua action jitter 300–700ms: worker phát tọa độ nhỏ khoảng 100ms/lần,
-theo tốc độ walk của public client và re-plan từ vị trí server echo sau mỗi tick.
+không đi qua action jitter 300–700ms: worker phát tọa độ khoảng 100ms/lần với
+`AUTO_CONSTANTS.player.speed * AUTO_CONSTANTS.player.walkMult` (100.98 px/s, xấp xỉ 101, theo
+cấu hình sinh). `PredictedMover` dự đoán giữa các gói `you`, giữ bước không vượt
+`speed × dt`, rồi hòa giải theo `seq`/`ep` và ngưỡng trong `gateway.js`; path/step
+được tính từ prediction nhưng tile portal và mọi kết luận thành công vẫn dựa trên
+vị trí authoritative.
 
 Chỉ sau khi tile hiện tại khớp portal, worker mới gửi:
 
@@ -69,8 +73,8 @@ Nếu timeout, worker retry có giới hạn; không phát `enter` từ xa và k
   và kiểm tra rectangle nhân vật 16×12 theo `lineClear` mỗi 6px.
 - `apps/server/src/orchestrator/portal-navigation.ts` chứa reducer thuần cho
   route planning, retry và map confirmation.
-- `apps/server/src/orchestrator/worker-pool.ts` là lớp thực thi packet và
-  authoritative snapshot.
+- `apps/server/src/orchestrator/worker-pool.ts` là lớp thực thi packet,
+  authoritative snapshot và cleanup listener `you` của từng vòng movement.
 
 Khu chưa có command wire được xác minh. API hiện hiển thị `khu` và giữ
 `farmKhu` làm cấu hình mục tiêu, nhưng không giả vờ chọn khu khi protocol không
@@ -104,3 +108,6 @@ Live smoke 2026-10-06 đã xác nhận hai chiều trên account test đã đăn
    `tan_vien/K1 (240,927)`; phase cuối `arrived`.
 
 Evidence đã redact: [`docs/evidence/2026-10-06-portal-navigation-smoke.json`](evidence/2026-10-06-portal-navigation-smoke.json).
+
+Tốc độ 100.98 px/s (xấp xỉ 101) và reconciliation mới đã được kiểm thử offline; số đo tốc độ
+hiệu dụng, `you.fix` và portal trên game thật sau thay đổi **chưa xác minh**.

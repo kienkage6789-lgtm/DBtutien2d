@@ -1354,3 +1354,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Worker/API/UI engine vendor opt-in, mot engine moi account, Auto API qua auth/error envelope, dashboard hien phase/neo/death-trip/hurt va halt.
 5. [x] Test source moi cho vm env, supervisor traps 1–6, runner fake WebSocket, engine exclusivity va Auto error envelope; nhom headless/API moi nhat 8/8 pass bang Node + tsx workaround.
 6. [~] `pnpm build`/full test chua chay duoc trong sandbox: pnpm thieu PATH, Corepack bi EACCES mang, TypeScript bi EPERM, tsx bi ENOMEM; live reconnect/token-expiry/death/revive/long-run chua xac minh.
+
+## M. Core movement prediction/reconciliation — checklist 2026-10-08
+
+1. [x] `PredictedMover` thuần hàm: injected time, dt 20–200 ms/lần đầu 100 ms, queue 32 command, speed mặc định từ `AUTO_CONSTANTS` và giới hạn bước sau rounding.
+2. [x] Reconciliation đối chiếu `gateway.js`: ACK/pending offset, `ep`/seq stale, sai lệch 6 px, 140 px, mốc chờ 1,5 s và hard sau 3 correction liên tiếp.
+3. [x] `runMoveTo` và portal loop dùng prediction để tính bước/path; arrival, blocked, failed, cancel và authoritative stall giữ nguyên vai trò.
+4. [x] Listener `you` được gắn theo operation và gỡ ở `finally`; test fake ACK theo seq bội số 10 bao phủ move-to, portal, cancel, failed/stalled và cleanup.
+5. [x] Offline: PredictedMover 9/9; movement integration 4/4; generator và esbuild transpile pass; `git diff --check` pass.
+6. [~] Full `pnpm build`/TypeScript typecheck bị chặn bởi pnpm/Corepack/EPERM toolchain; live speed, `you.fix`, clip và portal thật chưa xác minh.

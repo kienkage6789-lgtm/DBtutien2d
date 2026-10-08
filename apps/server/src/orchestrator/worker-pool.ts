@@ -1,4 +1,4 @@
-import { AuthError, SupabaseAuth, TuTienClient, VITALS_ATTACK_MAX_AGE_MS } from '@tutien2d/core-client';
+import { AuthError, PredictedMover, SupabaseAuth, TuTienClient, VITALS_ATTACK_MAX_AGE_MS } from '@tutien2d/core-client';
 import type { MapPacket } from '@tutien2d/core-client';
 import type { Snap2RuntimeStats } from '@tutien2d/core-client';
 import type { DerivedMaxSnapshot, StonesSnapshot, VitalSnapshot } from '@tutien2d/core-client';
@@ -14,6 +14,7 @@ import {
   expireMapConfirmation,
   markWaitingForMapConfirmation,
   planNavigation,
+  portalCenter,
   type PortalNavigationState,
 } from './portal-navigation.js';
 import type { PortalEdge } from '../config/portal-catalog.js';
@@ -211,6 +212,12 @@ export interface MapCatalogItem {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const MAP_CONTEXT_TTL_MS = 15_000;
+// The server normally emits `you` at move seq multiples of 10 (~1 s at 10 Hz).
+// Stall checks must allow at least one such authoritative cadence before retrying.
+const AUTHORITATIVE_YOU_CADENCE_MS = 1_000;
+const MOVE_TO_STALL_RETRY_MS = AUTHORITATIVE_YOU_CADENCE_MS + 500;
+const MOVE_TO_MAX_STALLED_RETRIES = 3;
+const PORTAL_STALL_TIMEOUT_MS = AUTHORITATIVE_YOU_CADENCE_MS * 3 + 500;
 
 export function isMapContextFresh(context: AccountRuntimeInfo['mapContext'], now: number): boolean {
   return context.fresh && context.observedAt !== null && now - context.observedAt <= MAP_CONTEXT_TTL_MS;
@@ -1744,86 +1751,116 @@ export class WorkerPool {
       this.setMoveToStatus(accountId, entry, 'failed', 'invalid_target');
       return;
     }
+    if (!entry.dataStatus.location || typeof entry.location.x !== 'number' || typeof entry.location.y !== 'number') {
+      this.setMoveToStatus(accountId, entry, 'failed', 'world_context_changed');
+      return;
+    }
     const startedAt = Date.now();
     const initialLocationObservedAt = entry.mapContext.observedAt ?? 0;
     const maxDurationMs = 45_000;
     const movementIntervalMs = 100;
-    const maxStepPx = 68 * movementIntervalMs / 1000;
     let lastProgressAt = startedAt;
     let lastPosition = { x: entry.location.x!, y: entry.location.y! };
     let stalledRetries = 0;
-    this.setMoveToStatus(accountId, entry, 'running');
-    while (Date.now() - startedAt < maxDurationMs) {
-      if (!this.moveToIsCurrent(accountId, entry, operationId, shouldContinue)) {
-        this.setMoveToStatus(accountId, entry, 'cancelled', 'operation_cancelled_or_disconnected');
-        return;
-      }
-      if (!entry.dataStatus.location || !this.hasCurrentMapContext(entry)
-        || entry.mapContext.mapId !== mapId || entry.mapContext.khu !== khu) {
-        this.setMoveToStatus(accountId, entry, 'failed', 'world_context_changed');
-        return;
-      }
-      const moveVitalError = moveVitalErrorForEntry(entry);
-      if (moveVitalError) {
-        this.setMoveToStatus(accountId, entry, 'failed', moveVitalError);
-        return;
-      }
-      const current = { x: entry.location.x!, y: entry.location.y! };
-      const deltaX = targetX - current.x;
-      const deltaY = targetY - current.y;
-      if (Math.hypot(deltaX, deltaY) <= arrivalRadius
-        && isWalkSegmentClear(mapId, current, { x: targetX, y: targetY })
-        && (entry.mapContext.observedAt ?? 0) > initialLocationObservedAt) {
-        this.setMoveToStatus(accountId, entry, 'arrived');
-        return;
-      }
-      const path = findWalkPath(mapId, current, {
-        tx: Math.floor(targetX / WALK_TILE_SIZE), ty: Math.floor(targetY / WALK_TILE_SIZE),
+    const mover = new PredictedMover({
+      position: lastPosition,
+      initialSequence: entry.client.nextMoveSeq - 1,
+      epoch: entry.mapEpoch,
+    });
+    mover.reset(lastPosition, {
+      now: startedAt,
+      seq: entry.client.nextMoveSeq - 1,
+      ep: entry.mapEpoch,
+    });
+    const onYou = (packet: Record<string, unknown>) => {
+      if (typeof packet.seq !== 'number' || typeof packet.x !== 'number' || typeof packet.y !== 'number') return;
+      mover.onAuthoritative({
+        seq: packet.seq,
+        x: packet.x,
+        y: packet.y,
+        fix: packet.fix === true || packet.fix === 1,
+        ep: typeof packet.ep === 'number' ? packet.ep : undefined,
+        now: Date.now(),
       });
-      if (!path) {
-        this.setMoveToStatus(accountId, entry, 'blocked', 'no_walk_path');
-        return;
-      }
-      if (path.length === 0 && !isWalkSegmentClear(mapId, current, { x: targetX, y: targetY })) {
-        this.setMoveToStatus(accountId, entry, 'blocked', 'target_collision_blocked');
-        return;
-      }
-      const waypoint = path[0] ?? { x: targetX, y: targetY };
-      const dx = waypoint.x - current.x;
-      const dy = waypoint.y - current.y;
-      const distance = Math.hypot(dx, dy);
-      const step = Math.min(maxStepPx, Math.max(1, distance));
-      const next = {
-        x: Math.round(current.x + dx / Math.max(distance, 1) * step),
-        y: Math.round(current.y + dy / Math.max(distance, 1) * step),
-      };
-      const direction = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 2 : 1) : (dy >= 0 ? 0 : 3);
-      const sent = await entry.client.sendMove(next.x, next.y, direction, 'walk',
-        () => this.moveToIsCurrent(accountId, entry, operationId, shouldContinue));
-      if (!sent) {
+    };
+    this.setMoveToStatus(accountId, entry, 'running');
+    entry.client.on('you', onYou);
+    try {
+      while (Date.now() - startedAt < maxDurationMs) {
         if (!this.moveToIsCurrent(accountId, entry, operationId, shouldContinue)) {
           this.setMoveToStatus(accountId, entry, 'cancelled', 'operation_cancelled_or_disconnected');
           return;
         }
-        this.setMoveToStatus(accountId, entry, 'failed', 'movement_command_rejected');
-        return;
-      }
-      await sleep(movementIntervalMs);
-      const observed = { x: entry.location.x!, y: entry.location.y! };
-      if (Math.hypot(observed.x - lastPosition.x, observed.y - lastPosition.y) >= 0.5) {
-        lastPosition = observed;
-        lastProgressAt = Date.now();
-        stalledRetries = 0;
-      } else if (Date.now() - lastProgressAt >= 1_000) {
-        stalledRetries += 1;
-        lastProgressAt = Date.now();
-        if (stalledRetries >= 3) {
-          this.setMoveToStatus(accountId, entry, 'blocked', 'authoritative_position_stalled');
+        if (!entry.dataStatus.location || !this.hasCurrentMapContext(entry)
+          || entry.mapContext.mapId !== mapId || entry.mapContext.khu !== khu) {
+          this.setMoveToStatus(accountId, entry, 'failed', 'world_context_changed');
           return;
         }
+        const moveVitalError = moveVitalErrorForEntry(entry);
+        if (moveVitalError) {
+          this.setMoveToStatus(accountId, entry, 'failed', moveVitalError);
+          return;
+        }
+        // Arrival/collision/stall decisions remain authoritative; prediction is
+        // only the origin used to choose the next path waypoint.
+        const current = { x: entry.location.x!, y: entry.location.y! };
+        const deltaX = targetX - current.x;
+        const deltaY = targetY - current.y;
+        if (Math.hypot(deltaX, deltaY) <= arrivalRadius
+          && isWalkSegmentClear(mapId, current, { x: targetX, y: targetY })
+          && (entry.mapContext.observedAt ?? 0) > initialLocationObservedAt) {
+          this.setMoveToStatus(accountId, entry, 'arrived');
+          return;
+        }
+        const predicted = mover.position;
+        const path = findWalkPath(mapId, predicted, {
+          tx: Math.floor(targetX / WALK_TILE_SIZE), ty: Math.floor(targetY / WALK_TILE_SIZE),
+        });
+        if (!path) {
+          this.setMoveToStatus(accountId, entry, 'blocked', 'no_walk_path');
+          return;
+        }
+        if (path.length === 0 && !isWalkSegmentClear(mapId, current, { x: targetX, y: targetY })) {
+          this.setMoveToStatus(accountId, entry, 'blocked', 'target_collision_blocked');
+          return;
+        }
+        const waypoint = path[0] ?? { x: targetX, y: targetY };
+        const dx = waypoint.x - predicted.x;
+        const dy = waypoint.y - predicted.y;
+        const direction = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 2 : 1) : (dy >= 0 ? 0 : 3);
+        const next = mover.step({ waypoint, now: Date.now(), seq: entry.client.nextMoveSeq });
+        const sent = await entry.client.sendMove(next.x, next.y, direction, 'walk',
+          () => this.moveToIsCurrent(accountId, entry, operationId, shouldContinue));
+        if (!sent) {
+          if (!this.moveToIsCurrent(accountId, entry, operationId, shouldContinue)) {
+            this.setMoveToStatus(accountId, entry, 'cancelled', 'operation_cancelled_or_disconnected');
+            return;
+          }
+          this.setMoveToStatus(accountId, entry, 'failed', 'movement_command_rejected');
+          return;
+        }
+        await sleep(movementIntervalMs);
+        const observedX = entry.location.x;
+        const observedY = entry.location.y;
+        const now = Date.now();
+        if (typeof observedX === 'number' && typeof observedY === 'number'
+          && Math.hypot(observedX - lastPosition.x, observedY - lastPosition.y) >= 0.5) {
+          lastPosition = { x: observedX, y: observedY };
+          lastProgressAt = now;
+          stalledRetries = 0;
+        } else if (now - lastProgressAt >= MOVE_TO_STALL_RETRY_MS) {
+          stalledRetries += 1;
+          lastProgressAt = now;
+          if (stalledRetries >= MOVE_TO_MAX_STALLED_RETRIES) {
+            this.setMoveToStatus(accountId, entry, 'blocked', 'authoritative_position_stalled');
+            return;
+          }
+        }
       }
+      this.setMoveToStatus(accountId, entry, 'failed', 'movement_deadline_exceeded');
+    } finally {
+      entry.client.off('you', onYou);
     }
-    this.setMoveToStatus(accountId, entry, 'failed', 'movement_deadline_exceeded');
   }
 
   private validateMoveToTarget(mapId: string, x: number, y: number): void {
@@ -1936,70 +1973,83 @@ export class WorkerPool {
   ): Promise<boolean> {
     if (!this.hasCurrentMapContext(entry) || !entry.dataStatus.location
       || typeof entry.location.x !== 'number' || typeof entry.location.y !== 'number') return false;
-    const path = findWalkPath(edge.fromMapId, { x: entry.location.x, y: entry.location.y }, { tx: edge.tx, ty: edge.ty });
-    if (!path) return false;
-    // The server validates movement as a continuous stream. Sending one
-    // packet with a whole-tile jump is not equivalent to the official client:
-    // the public client reports roughly every 100ms at about 68px/s. Stream
-    // short, rounded waypoints so collision/speed validation sees the same
-    // shape and the portal trigger can observe the authoritative tile.
     const movementIntervalMs = 100;
-    const movementSpeedPxPerSecond = 68;
-    const maxStepPx = movementSpeedPxPerSecond * (movementIntervalMs / 1000);
     const deadline = Date.now() + 45_000;
     let lastObserved = { x: entry.location.x, y: entry.location.y };
     let lastProgressAt = Date.now();
+    const initialPosition = { x: entry.location.x, y: entry.location.y };
+    const mover = new PredictedMover({
+      position: initialPosition,
+      initialSequence: entry.client.nextMoveSeq - 1,
+      epoch: entry.mapEpoch,
+    });
+    mover.reset(initialPosition, {
+      now: lastProgressAt,
+      seq: entry.client.nextMoveSeq - 1,
+      ep: entry.mapEpoch,
+    });
+    const onYou = (packet: Record<string, unknown>) => {
+      if (typeof packet.seq !== 'number' || typeof packet.x !== 'number' || typeof packet.y !== 'number') return;
+      mover.onAuthoritative({
+        seq: packet.seq,
+        x: packet.x,
+        y: packet.y,
+        fix: packet.fix === true || packet.fix === 1,
+        ep: typeof packet.ep === 'number' ? packet.ep : undefined,
+        now: Date.now(),
+      });
+    };
 
-    // Re-plan from the latest server echo after every movement tick. The
-    // public client can predict locally, but the bot has no local physics
-    // simulation; continuing from a rejected/clipped point would compound the
-    // error and send the next segment from an impossible coordinate.
-    while (Date.now() < deadline) {
-      if (!this.navigationIsCurrent(accountId, entry, operationId) || !shouldContinue()) return false;
-      if (!this.hasCurrentMapContext(entry) || !entry.dataStatus.location
-        || entry.mapContext.mapId !== edge.fromMapId) return false;
-      const current = { x: entry.location.x, y: entry.location.y };
-      if (typeof current.x !== 'number' || typeof current.y !== 'number') return false;
-      const currentTx = Math.floor(current.x / 32);
-      const currentTy = Math.floor(current.y / 32);
-      if (currentTx === edge.tx && currentTy === edge.ty) return true;
+    entry.client.on('you', onYou);
+    try {
+      while (Date.now() < deadline) {
+        if (!this.navigationIsCurrent(accountId, entry, operationId) || !shouldContinue()) return false;
+        if (!this.hasCurrentMapContext(entry) || !entry.dataStatus.location
+          || entry.mapContext.mapId !== edge.fromMapId) return false;
+        const current = { x: entry.location.x, y: entry.location.y };
+        if (typeof current.x !== 'number' || typeof current.y !== 'number') return false;
+        const currentTx = Math.floor(current.x / WALK_TILE_SIZE);
+        const currentTy = Math.floor(current.y / WALK_TILE_SIZE);
+        if (currentTx === edge.tx && currentTy === edge.ty) return true;
 
-      const remainingPath = findWalkPath(edge.fromMapId, current, { tx: edge.tx, ty: edge.ty });
-      if (!remainingPath || remainingPath.length === 0) return false;
-      const waypoint = remainingPath[0];
-      const dx = waypoint.x - current.x;
-      const dy = waypoint.y - current.y;
-      const distance = Math.hypot(dx, dy);
-      const step = Math.min(maxStepPx, Math.max(1, distance));
-      const next = {
-        x: Math.round(current.x + (dx / Math.max(distance, 1)) * step),
-        y: Math.round(current.y + (dy / Math.max(distance, 1)) * step),
-      };
-      const dir = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 2 : 1) : (dy >= 0 ? 0 : 3);
-      const sent = await entry.client.sendMove(
-        next.x,
-        next.y,
-        dir,
-        'walk',
-        () => this.navigationIsCurrent(accountId, entry, operationId) && shouldContinue(),
-      );
-      if (!sent) return false;
-      await sleep(movementIntervalMs);
+        const predicted = mover.position;
+        const remainingPath = findWalkPath(edge.fromMapId, predicted, { tx: edge.tx, ty: edge.ty });
+        if (!remainingPath) return false;
+        // Prediction can reach the portal tile before the next `you`; keep the
+        // 10 Hz stream alive until the authoritative tile observes the trigger.
+        const waypoint = remainingPath[0] ?? portalCenter(edge);
+        const dx = waypoint.x - predicted.x;
+        const dy = waypoint.y - predicted.y;
+        const dir = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 2 : 1) : (dy >= 0 ? 0 : 3);
+        const next = mover.step({ waypoint, now: Date.now(), seq: entry.client.nextMoveSeq });
+        const sent = await entry.client.sendMove(
+          next.x,
+          next.y,
+          dir,
+          'walk',
+          () => this.navigationIsCurrent(accountId, entry, operationId) && shouldContinue(),
+        );
+        if (!sent) return false;
+        await sleep(movementIntervalMs);
 
-      const observedX = entry.location.x;
-      const observedY = entry.location.y;
-      if (typeof observedX === 'number' && typeof observedY === 'number') {
-        const moved = Math.hypot(observedX - (lastObserved.x ?? observedX), observedY - (lastObserved.y ?? observedY));
-        if (moved >= 0.5) {
-          lastProgressAt = Date.now();
-          lastObserved = { x: observedX, y: observedY };
+        const observedX = entry.location.x;
+        const observedY = entry.location.y;
+        const now = Date.now();
+        if (typeof observedX === 'number' && typeof observedY === 'number') {
+          const moved = Math.hypot(observedX - lastObserved.x, observedY - lastObserved.y);
+          if (moved >= 0.5) {
+            lastProgressAt = now;
+            lastObserved = { x: observedX, y: observedY };
+          }
         }
+        if (now - lastProgressAt > PORTAL_STALL_TIMEOUT_MS) return false;
       }
-      if (Date.now() - lastProgressAt > 2_500) return false;
+      return this.hasCurrentMapContext(entry) && entry.dataStatus.location
+        && Math.floor((entry.location.x ?? Number.NaN) / WALK_TILE_SIZE) === edge.tx
+        && Math.floor((entry.location.y ?? Number.NaN) / WALK_TILE_SIZE) === edge.ty;
+    } finally {
+      entry.client.off('you', onYou);
     }
-    return this.hasCurrentMapContext(entry) && entry.dataStatus.location
-      && Math.floor((entry.location.x ?? Number.NaN) / 32) === edge.tx
-      && Math.floor((entry.location.y ?? Number.NaN) / 32) === edge.ty;
   }
 
   private async runPortalNavigation(

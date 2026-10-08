@@ -110,6 +110,13 @@ const autoConstants = {
     keepPad: pntt.CONFIG.TARGET.KEEP_PAD,
   },
   player: {
+    speed: pntt.CONFIG.PLAYER.SPEED,
+    walkMult: pntt.CONFIG.PLAYER.WALK_MULT,
+    runMult: pntt.CONFIG.PLAYER.RUN_MULT,
+    hitbox: {
+      width: pntt.CONFIG.PLAYER.HITBOX_W,
+      height: pntt.CONFIG.PLAYER.HITBOX_H,
+    },
     reach: pntt.CONFIG.PLAYER.REACH,
     spellGap: pntt.CONFIG.PLAYER.SPELL_GAP,
   },

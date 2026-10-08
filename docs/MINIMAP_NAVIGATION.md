@@ -2,7 +2,13 @@
 
 ## Trạng thái
 
-MVP đã được triển khai cho các map có `WALK_GRIDS`: dashboard thay danh sách quái dài bằng mini-map SVG, lấy geometry từ server và gửi lệnh di chuyển tới tọa độ world. Di chuyển vẫn đi qua collision grid/A* và phát các bước ngắn theo vị trí authoritative; không bypass collision hoặc portal.
+MVP đã được triển khai cho các map có `WALK_GRIDS`: dashboard thay danh sách quái dài bằng mini-map SVG, lấy geometry từ server và gửi lệnh di chuyển tới tọa độ world. Di chuyển vẫn đi qua collision grid/A*, dùng `PredictedMover` để tính bước theo tốc độ `AUTO_CONSTANTS` (100.98 px/s, xấp xỉ 101 ở walk), và chỉ kết luận arrived/blocked từ vị trí authoritative; không bypass collision hoặc portal.
+
+Vòng gửi giữ nhịp khoảng 100 ms. Prediction giúp không lặp lại vị trí `entry.location`
+cũ trong lúc chờ `you` (thường theo seq bội số 10); mỗi bước bị giới hạn bởi tốc độ
+và dt thực sau rounding. Khi `you` có correction, mover xử lý queue command còn chờ
+theo `seq`/`ep` và ngưỡng client thật. Đây là mô hình đã kiểm thử offline; tốc độ
+hiệu dụng và `you.fix` trên game thật **chưa xác minh**.
 
 ## REST contract
 

@@ -1,3 +1,4 @@
+import { AUTO_CONSTANTS } from '@tutien2d/core-client';
 import { getWalkGrid, isWalkableTile, WALK_TILE_SIZE } from '../config/walk-grid.js';
 
 export interface PixelPoint {
@@ -36,8 +37,8 @@ const heuristic = (x: number, y: number, tx: number, ty: number): number => {
 // and line sampling (TileMap.lineClear samples every <=6px). A tile-center
 // graph alone is insufficient around corners because the character occupies a
 // rectangle, not a point.
-const PLAYER_HALF_WIDTH = 8;
-const PLAYER_HEIGHT = 12;
+const PLAYER_HALF_WIDTH = AUTO_CONSTANTS.player.hitbox.width / 2;
+const PLAYER_HEIGHT = AUTO_CONSTANTS.player.hitbox.height;
 
 function rectBlocked(mapId: string, left: number, top: number, right: number, bottom: number): boolean {
   const firstTx = Math.floor(left / WALK_TILE_SIZE);

@@ -7,11 +7,19 @@ import test from 'node:test';
 // here as a protocol-level fixture so it can run without a browser DOM; the
 // production browser helper is covered by the same cases during web build.
 const walkPathSource = await readFile(new URL('./walk-path.ts', import.meta.url), 'utf8');
-const gridUrl = new URL('../config/walk-grid.ts', import.meta.url).href;
+const dataModule = (source) => `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
+const generatedSource = stripTypeScriptTypes(await readFile(new URL('../../../../packages/core-client/src/state/walk-grids.generated.ts', import.meta.url), 'utf8'));
+const generatedUrl = dataModule(generatedSource);
+const gridSource = stripTypeScriptTypes(await readFile(new URL('../config/walk-grid.ts', import.meta.url), 'utf8'))
+  .replaceAll('@tutien2d/core-client', generatedUrl);
+const gridUrl = dataModule(gridSource);
+const constantsSource = stripTypeScriptTypes(await readFile(new URL('../../../../packages/core-client/src/state/skill-defs.generated.ts', import.meta.url), 'utf8'));
+const constantsUrl = dataModule(constantsSource);
 const executableWalkPath = stripTypeScriptTypes(walkPathSource)
-  .replace("'../config/walk-grid.js'", `'${gridUrl}'`);
+  .replace("'../config/walk-grid.js'", `'${gridUrl}'`)
+  .replaceAll("'@tutien2d/core-client'", `'${constantsUrl}'`);
 const { findWalkPath } = await import(`data:text/javascript,${encodeURIComponent(executableWalkPath)}`);
-const { isWalkableTile } = await import('../config/walk-grid.ts');
+const { isWalkableTile } = await import(gridUrl);
 
 function projection(world, rect) {
   if (![world.width, world.height, rect.width, rect.height].every(Number.isFinite)

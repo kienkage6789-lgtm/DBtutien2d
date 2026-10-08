@@ -89,6 +89,10 @@ Nguyên tắc: dữ liệu chưa biết hiển thị là chưa biết (`null`/`�
 ## 7. Bản đồ, di chuyển, điều hướng **[Code + Live]**
 
 - Chuyển map chỉ qua cổng: `portal-navigation.ts` lập tuyến theo `portal-catalog.ts`, đi bộ (A\* `walk-path.ts` trên lưới va chạm, hitbox 16×12), rồi gửi `enter` và chờ gói `map` xác nhận.
+- Core movement dùng `packages/core-client/src/movement/predicted-mover.ts`: vòng server vẫn phát lệnh khoảng 100 ms/lần nhưng bước kế tiếp và `findWalkPath` bắt đầu từ vị trí dự đoán cục bộ. Mover không tự đọc đồng hồ; caller truyền `now`, dt kẹp 20–200 ms, và không thể gửi bước vượt `speed × dt` sau rounding.
+- Tốc độ mặc định lấy từ `AUTO_CONSTANTS` sinh từ vendor: `SPEED * WALK_MULT` cho walk (100.98 px/s, xấp xỉ 101), cùng `RUN_MULT` và `HITBOX` được giữ trong cùng bảng. Không đặt lại số 68/1.485 trong worker.
+- Mỗi vòng movement nhận `you` qua listener hiện có. Mover lọc command ACK theo `seq`, bù offset các command còn chờ và áp dụng ngưỡng vendor (`<=6` bỏ qua, `>140` hard sau 3 correction liên tiếp và sau mốc chờ 1,5 s sau reset, còn lại soft). Listener luôn được gỡ trong `finally`.
+- Dự đoán chỉ để tính bước/path. `entry.location` authoritative vẫn là nguồn duy nhất cho `arrived`, collision/blocked, map context, deadline, hủy operation và `authoritative_position_stalled`. Do `you` thường theo seq bội số 10, stall policy chờ theo cadence khoảng 1 s; tốc độ/correction live chưa xác minh lại.
 - Lưới va chạm: `core-client/src/state/walk-grids.generated.ts` (16/16 map, sinh từ vendor); `apps/server/src/config/walk-grid.ts` là facade giữ API cũ. Điểm sinh quái: `map-spawns.generated.ts`.
 - Chọn khu và hồi sinh: giao thức **đã thấy trong client chính thức** (`{op:"khu",act:"xem"|"chon"}`, `cmd("revive",{mode:"home"|"spot"})`) nhưng **chưa kiểm chứng live** nên các khóa `KHU_PROTOCOL_UNAVAILABLE`, `RESPAWN_PROTOCOL_UNAVAILABLE` vẫn giữ.
 - Bay: trong gói `move`, `fly:1` là bay còn `fs` là trạng thái câu cá; `sendMove` hiện gán cứng `fly:0, fs:0`. Chưa thử.

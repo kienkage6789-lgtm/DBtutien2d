@@ -250,6 +250,11 @@ export class TuTienClient extends EventEmitter {
     });
   }
 
+  /** Sequence that the next successfully transmitted move will use. */
+  public get nextMoveSeq(): number {
+    return this.moveSeq + 1;
+  }
+
   private acceptMapPacket(packet: MapPacket): boolean {
     try {
       return this.mapPacketGuard?.(packet, this.state) !== false;

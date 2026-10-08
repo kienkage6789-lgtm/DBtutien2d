@@ -962,6 +962,13 @@ export const AUTO_CONSTANTS = {
     "keepPad": 120
   },
   "player": {
+    "speed": 68,
+    "walkMult": 1.485,
+    "runMult": 1.65,
+    "hitbox": {
+      "width": 16,
+      "height": 12
+    },
     "reach": 26,
     "spellGap": 1.2
   },

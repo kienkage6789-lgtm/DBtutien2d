@@ -5,6 +5,8 @@ import { stripTypeScriptTypes } from 'node:module';
 const dataModule = (source) => `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
 const generatedSource = stripTypeScriptTypes(await readFile(new URL('../../../../packages/core-client/src/state/walk-grids.generated.ts', import.meta.url), 'utf8'));
 const generatedUrl = dataModule(generatedSource);
+const constantsSource = stripTypeScriptTypes(await readFile(new URL('../../../../packages/core-client/src/state/skill-defs.generated.ts', import.meta.url), 'utf8'));
+const constantsUrl = dataModule(constantsSource);
 const gridSource = stripTypeScriptTypes(await readFile(new URL('../config/walk-grid.ts', import.meta.url), 'utf8'))
   .replaceAll('@tutien2d/core-client', generatedUrl);
 const gridUrl = dataModule(gridSource);
@@ -12,7 +14,9 @@ const gridUrl = dataModule(gridSource);
 // Node's type-stripping loader does not apply TypeScript's .js-to-.ts source
 // remapping, so load this source module with its sibling import redirected.
 const source = await readFile(new URL('./walk-path.ts', import.meta.url), 'utf8');
-const executableSource = stripTypeScriptTypes(source).replace("'../config/walk-grid.js'", `'${gridUrl}'`);
+const executableSource = stripTypeScriptTypes(source)
+  .replace("'../config/walk-grid.js'", `'${gridUrl}'`)
+  .replaceAll("'@tutien2d/core-client'", `'${constantsUrl}'`);
 const { findWalkPath, findNearestWalkableTarget, isWalkSegmentClear } = await import(dataModule(executableSource));
 const { isWalkableTile } = await import(gridUrl);
 

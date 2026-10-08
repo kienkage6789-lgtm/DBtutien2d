@@ -1,5 +1,43 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Nghiệm thu sửa thuật toán di chuyển cũ (PredictedMover)
+
+Codex sửa `runMoveTo` và vòng đi tới cổng của engine `core` theo `PROMPT_FIX_MOVE_SPEED.md`: `PredictedMover` (`packages/core-client/src/movement/predicted-mover.ts`) dự đoán vị trí cục bộ và cộng dồn giữa các lần gửi, tốc độ `SPEED × WALK_MULT` (khoảng 100,98 px/s) lấy từ `AUTO_CONSTANTS` sinh từ vendor, `dt` thực kẹp 20 đến 200 ms, bước làm tròn cũng không vượt `tốc độ × dt`; hòa giải khi nhận `you` theo quy tắc của `gateway.js` (hàng đợi 32 lệnh, ngưỡng 6 px bỏ qua và 140 px sửa cứng sau 3 lần liên tiếp). Ngưỡng phát hiện kẹt nới từ 1 s lên 1,5 s mỗi lần (3 lần) ở `runMoveTo` và từ 2,5 s lên 3,5 s ở vòng cổng, vì `you` chỉ đến khoảng 1 s một lần.
+
+### Nghiệm thu của Claude Code
+
+- Build 4/4 pass ngay lần đầu (lần đầu tiên Codex không để lại lỗi kiểu).
+- Sai sót duy nhất: `walk-path.ts` thêm `import { AUTO_CONSTANTS } from '@tutien2d/core-client'` (hitbox lấy từ hằng số thay vì số cứng 8 và 12), làm hai test nạp `walk-path.ts` bằng URL `data:` (`approach.test.mjs`, `walk-path-audit.test.mjs`) không phân giải được package. Codex đã xử lý đúng trong `walk-path.test.mjs` nhưng bỏ sót hai test này; đã sửa cùng cách.
+- Sau sửa: toàn bộ test pass (server TS, server .mjs, automation-engine, core-client gồm `predicted-mover.test.mjs` 9 test và `worker-pool-movement.test.ts` 4 test, web Vitest 9/9). Generator `gen-skill-defs.mjs` vẫn ổn định khi sinh lại.
+
+### Chưa xác minh live
+
+Tốc độ hiệu dụng thật của `move-to` sau sửa (kỳ vọng khoảng 100 px/s; bản cũ ước tính khoảng 7 px/s, chưa từng đo trực tiếp), tần suất `you.fix` (server sửa vị trí), đi qua cổng thật, và việc server game có chấp nhận tốc độ 101 px/s kiểu này lâu dài.
+
+## 2026-10-08 — Sửa core movement: dự đoán cục bộ + hòa giải authoritative (offline)
+
+### Thay đổi
+
+- Thêm `packages/core-client/src/movement/predicted-mover.ts`: mover thuần hàm, nhận `now` từ caller, queue tối đa 32 lệnh, dt thực kẹp 20–200 ms (lần đầu 100 ms), giới hạn bước sau rounding và tốc độ mặc định `AUTO_CONSTANTS.player.speed * AUTO_CONSTANTS.player.walkMult`.
+- Bổ sung `SPEED`, `WALK_MULT`, `RUN_MULT`, `HITBOX` vào `AUTO_CONSTANTS` qua `scripts/gen-skill-defs.mjs`; không sửa vendor.
+- Hòa giải bám `gateway.js`: lọc lệnh theo `seq`, cộng offset lệnh còn chờ, bỏ sai lệch `<=6`, soft-fix sai lệch vừa, sai lệch `>140` hard-fix sau 3 lần liên tiếp và sau mốc chờ 1,5 s sau reset; bỏ `ep`/`seq` cũ. `TuTienClient.nextMoveSeq` chỉ expose sequence kế tiếp để ghi đúng command, không đổi `sendMove`.
+- `runMoveTo` và vòng đi tới portal dùng predicted position để lập bước/path; arrival, blocked, failed, stall và context vẫn dựa trên authoritative `entry.location`. Hai vòng gắn listener `you` và gỡ listener trong `finally`.
+- Ngưỡng stall mới dựa trên cadence `you` khoảng 1 s: move-to retry sau 1,5 s và chặn sau 3 lần; portal timeout stall 3,5 s. Đây là policy offline, chưa đo lại live.
+
+### Lệnh đã chạy và kết quả thật
+
+- `node scripts/gen-skill-defs.mjs`: **pass**, sinh lại 27 skill/28 slot và cross-check vendor.
+- Esbuild transpile các module core/server thay đổi: **pass** (kiểm tra cú pháp/runtime, không thay thế typecheck).
+- `node --test packages/core-client/test/predicted-mover.test.mjs`: **9 pass, 0 fail**.
+- Test tích hợp offline `worker-pool-movement.test.ts` sau transpile + loader stub `ws`: **4 pass, 0 fail**; bao phủ move-to tới đích, tốc độ trong ±15% của biểu thức AUTO_CONSTANTS, hủy, failed/stalled, portal và cleanup listener.
+- `walk-path.test.mjs`: **pass**; `minimap-navigation.contract.test.mjs`: **6 pass, 0 fail**; `portal-navigation.test.ts` sau esbuild transpile: **pass**.
+- `git diff --check`: **pass**.
+- `pnpm` không có PATH; `corepack pnpm --offline --version` bị chặn khi Corepack cố truy cập registry; `tsc`/`tsx` dưới `.pnpm` bị `EPERM`/`ENOMEM`. Vì vậy chưa tuyên bố full build/typecheck pass.
+
+### Chưa xác minh live
+
+Tốc độ hiệu dụng trên game thật, số lần xuất hiện `you.fix`, server xử lý correction lớn, đi qua portal thật sau thay đổi và hành vi khi bị clip/blocked vẫn chờ Claude Code đo. Không chạy server, đăng nhập, mạng hay packet thật trong phiên này.
+
 ## 2026-10-08 — Ghi chú: so sánh di chuyển (client thật, engine vendor, thuật toán cũ) và việc tiếp theo
 
 ### Tốc độ di chuyển

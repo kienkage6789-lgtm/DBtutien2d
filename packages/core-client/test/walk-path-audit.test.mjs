@@ -23,7 +23,9 @@ const generatedGrids = await import(generatedGridUrl);
 const gridSource = stripTypeScriptTypes(await readFile(new URL('apps/server/src/config/walk-grid.ts', root), 'utf8'))
   .replaceAll('@tutien2d/core-client', generatedGridUrl);
 const gridUrl = dataModule(gridSource);
-const walkPath = await loadSourceModule('apps/server/src/orchestrator/walk-path.ts', [["'../config/walk-grid.js'", `'${gridUrl}'`]]);
+// walk-path.ts lấy kích thước hitbox từ AUTO_CONSTANTS (nằm trong skill-defs.generated.ts); URL data: không phân giải được tên package.
+const constantsUrl = dataModule(stripTypeScriptTypes(await readFile(new URL('packages/core-client/src/state/skill-defs.generated.ts', root), 'utf8')));
+const walkPath = await loadSourceModule('apps/server/src/orchestrator/walk-path.ts', [["'../config/walk-grid.js'", `'${gridUrl}'`], ["'@tutien2d/core-client'", `'${constantsUrl}'`]]);
 
 function makeCanvas() {
   return { style: {}, getContext: () => ({}) };
