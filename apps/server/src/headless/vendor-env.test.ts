@@ -67,3 +67,20 @@ test('vendor environment rejects a missing client directory clearly', () => {
     /VENDOR_CLIENT_DIR_MISSING/,
   );
 });
+
+test('storage keeps what the client writes, so the server save restores realm (regression: no-op storage left hpMax 100 and no skills)', () => {
+  const env = createVendorEnv({ vendorClientDir, nowStart: 1_000_000, randomSeed: 3 });
+  try {
+    const storage = env.win.localStorage as { setItem(k: string, v: string): void; getItem(k: string): string | null };
+    storage.setItem('probe', 'giá trị');
+    assert.equal(storage.getItem('probe'), 'giá trị', 'localStorage phải lưu thật');
+    assert.equal(storage.getItem('khong-co'), null);
+
+    env.P.Game.init();
+    env.P.Utils.store.set(env.P.CONFIG.PROGRESS_KEY, { realm: 'luyen_khi_8', stage: 1 });
+    env.P.Quest.load();
+    assert.equal(env.P.Progress.realmId, 'luyen_khi_8', 'bản lưu nhận từ gói state phải dựng đúng cảnh giới');
+  } finally {
+    env.dispose?.();
+  }
+});

@@ -1,5 +1,31 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Chạy thử engine vendor qua server thật
+
+Quy trình: server (`node dist/index.js`), `PUT /accounts/:id/config {"engine":"vendor"}`, `POST /accounts/:id/start`, `POST /accounts/:id/auto/start {}` (neo = vị trí hiện tại), theo dõi mỗi giây với dừng khẩn (HP dưới 50 %, gục, `hurt` tăng quá dày, supervisor `halted`), `POST /auto/stop`, dừng bot, trả `engine` về `core`, dừng server. Không bật packet tap; một phiên đăng nhập.
+
+### Lần chạy 1 (bản Codex chưa sửa): tìm ra lỗi môi trường
+
+23 s: đi, 17 đòn thường, 7 quái hạ, 0 lần gục, nhưng **`maxHp` luôn 100 trong khi `hp` 225, và 0 lần dùng kỹ năng** (spike trước dùng được 2 đến 5 lần). Nguyên nhân: môi trường giả của Codex dùng `localStorage`/`sessionStorage` không lưu gì (`setItem` bỏ đi, `getItem` luôn `null`). Client ghi bản lưu nhận từ gói `state` vào kho này rồi đọc lại bằng `Quest.load()` để dựng cảnh giới, trang bị, kỹ năng; kho rỗng nên nhân vật chạy với cảnh giới mặc định và không biết kỹ năng nào. Hệ quả nguy hiểm: tỉ lệ HP dùng cho lớp an toàn sai (225/100), không bao giờ chạm ngưỡng thấp. Đã sửa bằng kho trong bộ nhớ riêng cho từng môi trường (`memoryStorage()` trong `vendor-env.ts`) và thêm test hồi quy (ghi kho, đọc lại, `Quest.load` khôi phục `realmId`).
+
+### Lần chạy 2 (sau khi sửa): kết quả
+
+| Chỉ số | Giá trị |
+|---|---|
+| Thời gian Auto | 30 s |
+| HP/MP | 225/225 và 188 khi đứng yên; HP ban đầu thực 200 (client giả định đầy, server sửa lại ngay) rồi hồi lên 225 |
+| Gói gửi | 171 `move`, 25 `attack`, 5 `skill`, 4 `cmd` (nhặt đồ) |
+| Quái hạ | 6 |
+| Gục / dừng khẩn | 0 / không |
+| Lỗi cập nhật, lỗi xử lý gói, `console.error` | 0 / 0 / 0 |
+| FPS vòng lặp | 37 đến 40 |
+
+Quan sát thêm: nhân vật bị tấn công ngay khi đứng yên (31 gói `hurt` trước khi bật Auto), HP thật khi đó khoảng 200/225; khi Auto chạy thì không còn `hurt` mới trong 30 s. Chưa có số đo RSS (`memory.rss` rỗng trong snapshot, cần kiểm tra).
+
+### Chưa xác minh
+
+Chạy dài, gục/hồi sinh thật qua server, kết nối lại thật, làm mới token giữa phiên, đi cổng thật, `memory.rss` trong snapshot, và bàn giao phiên sang trình duyệt.
+
 ## 2026-10-08 — Nghiệm thu tích hợp engine vendor (client không hiển thị) vào server
 
 Codex tích hợp theo `PROMPT_VENDOR_RUNNER.md`: `apps/server/src/headless/` (`vendor-env.ts`, `auto-supervisor.ts`, `vendor-runner.ts`, `engine-selection.ts`), engine `core` | `vendor` mỗi tài khoản (mặc định `core`), API `POST /accounts/:id/auto/start|stop`, dashboard. Sandbox của Codex không build được; Claude Code build và chạy lại.

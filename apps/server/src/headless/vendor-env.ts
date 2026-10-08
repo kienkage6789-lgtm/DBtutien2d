@@ -131,6 +131,18 @@ function safeScriptList(vendorClientDir: string): string[] {
  * snapshot is trusted, reviewed input and node:vm is explicitly not a
  * hardened sandbox.
  */
+function memoryStorage() {
+  const data = new Map<string, string>();
+  return {
+    getItem: (key: string): string | null => (data.has(key) ? data.get(key)! : null),
+    setItem: (key: string, value: string): void => { data.set(key, String(value)); },
+    removeItem: (key: string): void => { data.delete(key); },
+    clear: (): void => { data.clear(); },
+    key: (index: number): string | null => Array.from(data.keys())[index] ?? null,
+    get length(): number { return data.size; },
+  };
+}
+
 export function createVendorEnv(options: VendorEnvOptions): VendorEnv {
   const scripts = safeScriptList(options.vendorClientDir);
   const loadErrors: Array<{ script: string; message: string }> = [];
@@ -187,16 +199,11 @@ export function createVendorEnv(options: VendorEnvOptions): VendorEnv {
 
   const win: Record<string, any> = {
     document,
-    localStorage: {
-      getItem: (_key: string) => null,
-      setItem: (_key: string, _value: string) => {},
-      removeItem: (_key: string) => {},
-    },
-    sessionStorage: {
-      getItem: (_key: string) => null,
-      setItem: (_key: string, _value: string) => {},
-      removeItem: (_key: string) => {},
-    },
+    // Kho PHẢI lưu thật (trong bộ nhớ, riêng cho từng runner). Client ghi bản lưu nhận từ gói `state` vào
+    // đây (PROGRESS_KEY) rồi đọc lại bằng Quest.load() để dựng cảnh giới, trang bị và kỹ năng. Kho rỗng khiến
+    // nhân vật chạy với cảnh giới mặc định (hpMax 100) và không biết kỹ năng nào.
+    localStorage: memoryStorage(),
+    sessionStorage: memoryStorage(),
     // Do not spoof a browser User-Agent. The vendor snapshot only needs the
     // non-network capability hints below for its feature checks.
     navigator: { language: 'vi', maxTouchPoints: 0, getGamepads: () => [] },
