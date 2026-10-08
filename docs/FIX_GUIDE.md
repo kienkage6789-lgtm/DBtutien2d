@@ -1317,3 +1317,12 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 10. [~] Các ngưỡng `VITALS_DISPLAY_STALE_MS=5_000`, `VITALS_ATTACK_MAX_AGE_MS=30_000`, `VITALS_REFRESH_MIN_INTERVAL_MS=30_000` là policy đề xuất, **chưa xác minh live**.
 
 Giả định/giới hạn còn lại: `idle` đã được đối chiếu với vendor (`gateway.js` dùng `o.state`, `player.js` khởi tạo `state:"idle"`); H1 và H3 mới có một live run. `vitalsAgeMs` và `refreshVitals` đã có code/test fixture nhưng chưa được build/test trong sandbox này; các ngưỡng 5 giây, 30 giây và 30 giây vẫn là đề xuất, chưa xác minh live.
+
+## I. P0 auto data/parser — checklist cập nhật 2026-10-08
+
+1. [x] Sinh bảng 62 enemy definitions và 27 skill definitions + Thunder bằng VM từ vendor; không sửa vendor.
+2. [x] Ghi rõ ánh xạ `t`, ý nghĩa `hp` tuyệt đối, cờ `d`, event `kill`, các state `st` và payload combat vào `AUTO_SPEC.md`.
+3. [x] Thêm kiểu/parser pure, fixture tổng hợp, `deriveLearnedSkills`, export công khai; chưa nối vào `GameStateStore`/luồng bot.
+4. [x] Kiểm tra cú pháp generator/fixture/test và chạy lại hai generator với cross-check nguồn.
+5. [~] `pnpm build` bị chặn do TypeScript dưới `.pnpm` bị `EPERM`; `node --test packages/core-client/test/auto-data.test.mjs` đã gọi nhưng dừng ở `ERR_MODULE_NOT_FOUND` vì `dist` chưa build. Không đánh dấu build/test pass cho tới khi chạy lại trong môi trường phù hợp.
+6. [ ] Đo live các miền giá trị server, biến thể `act`, nguồn `hurt.byId`, thứ tự kill/loot và lock/preference kỹ năng trước P1–P3.

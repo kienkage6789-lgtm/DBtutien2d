@@ -1,5 +1,32 @@
 # Nhật ký phiên triển khai
 
+# 2026-10-08 — P0 lớp dữ liệu/parser auto từ vendor (build/test TypeScript bị chặn)
+
+### Thay đổi
+
+- Đọc tĩnh `AGENTS.md`, `docs/AUTO_SPEC.md` (mục 7, 10, 12, 13), `docs/UI_FEATURE_INVENTORY.md`, mục mới nhất của session log và checklist `FIX_GUIDE`; không chạy server, không đăng nhập, không gửi packet, không sửa vendor.
+- Thêm `scripts/gen-enemy-defs.mjs`: nạp `core/config.js` và `entities/enemy.js` bằng `node:vm` với shim tối thiểu, sinh `packages/core-client/src/state/enemy-defs.generated.ts` gồm 62 loại; kiểm tra chéo một quái thường, một boss và một `human`.
+- Thêm `scripts/gen-skill-defs.mjs`: nạp `core/config.js`, `systems/items.js`, `systems/skills.js`, sinh 27 `DEFS` + 28 slot (gồm Thunder), kiểm tra mọi `book` có trong `ITEMS` và kiểm tra chéo ba kỹ năng.
+- Thêm `auto-data.ts` với `deriveLearnedSkills(save)`: chỉ kết luận book-known từ `state.save.bag`, giữ thứ tự `SLOTS`, không nối vào `GameStateStore` và không suy đoán `lockReason`/preference.
+- Thêm kiểu và parser thuần trong `types.ts`/`state/combat-packets.ts` cho `kill`, `skill_res`, `down`, `hurt`, `act`, `loot`, `loot_gone`, `join`, `leave`, `bosses`, `revived`; thêm fixture tổng hợp và test node.
+- Cập nhật `docs/AUTO_SPEC.md` mục 7.4/7.5/10/12/13 và hai phụ lục P0; sửa mô tả tầm chọn mục tiêu để không khẳng định `bodyRadius` được cộng vào `Player.reach`. Cập nhật checklist cuối `docs/FIX_GUIDE.md`.
+
+### Lệnh đã chạy và kết quả thật
+
+- `node scripts/gen-enemy-defs.mjs`: **pass**, sinh 62 loại và cross-check `sau_truc`, `linh_ho_tran_son`, `tieu_phu`.
+- `node scripts/gen-skill-defs.mjs`: **pass**, sinh 27 `DEFS`/28 slot và cross-check `hoa_cau`, `xich_chan`, `loi_chuong`; mọi sách đều tồn tại trong bảng item vendor.
+- `node --check` trên hai generator, fixture và test `.mjs`: **pass**.
+- `node --experimental-strip-types --check` trên `types.ts`, `auto-data.ts`, `combat-packets.ts` và hai file generated: **pass**; đây chỉ là kiểm tra cú pháp, không thay thế type-check/build.
+- `node .../typescript/bin/tsc --noEmit -p packages/core-client` và `node .../typescript/lib/tsc.js --noEmit -p packages/core-client`: **bị chặn** với `EPERM` khi mở TypeScript bên dưới `node_modules/.pnpm`.
+- `corepack pnpm` trước đó: **bị chặn** vì Corepack cố resolve package manager từ registry và gặp `EACCES`; không dùng mạng để tiếp tục.
+- `node --test packages/core-client/test/auto-data.test.mjs`: **fail do môi trường** với `ERR_MODULE_NOT_FOUND` vì test nhập `packages/core-client/dist/state/auto-data.js` nhưng core-client chưa thể build trong sandbox; không phải kết quả pass/fail của các assertion source.
+
+### Còn chờ xác minh
+
+- Cần chạy `pnpm build`/test core-client trong môi trường có thể đọc TypeScript và rebuild `dist`; hiện chưa có bằng chứng compile runtime cho parser mới.
+- Chưa có raw packet combat trong evidence: fixture chỉ là dữ liệu tổng hợp theo mã client; miền giá trị server, biến thể `act`, nguồn thực của `hurt.byId`, thứ tự `kill`/loot và payload trường phụ vẫn cần đo live ở P1–P3.
+- `deriveLearnedSkills` chưa thay thế `Skills.known`: `lockReason`, preference `pntt.thanhChieu.v1` và việc server có đưa preference vào `state.save` vẫn chưa xác minh.
+
 # 2026-10-08 — Triển khai vitalsAgeMs và refreshVitals (build/test sandbox bị chặn)
 
 ### Thay đổi

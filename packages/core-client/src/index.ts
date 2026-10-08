@@ -9,3 +9,5 @@ export * from './state/snap2-reducer.js';
 export * from './client.js';
 export * from './operation-ledger.js';
 export * from './vitals-policy.js';
+export * from './state/auto-data.js';
+export * from './state/combat-packets.js';

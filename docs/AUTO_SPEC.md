@@ -65,7 +65,7 @@ Mọi nhánh loại quái `dead` và quái `def.human`. Bộ lọc `ChinhDao.dan
 
 ## 5. Tầm đánh và tiếp cận
 
-- **Tầm đánh thường [Đọc được]**: `khoảng cách(tâm nhân vật, mục tiêu) <= Player.reach + bodyRadius(mục tiêu)`. `Player.reach = PLAYER.REACH (26) + reachBonus của vũ khí`. `bodyRadius` lấy từ định nghĩa quái (mặc định 0). "Tâm nhân vật" là `C(player)` trong mã (điểm tham chiếu chân; có thể lệch vài pixel so với `x,y` **[Chưa biết]**).
+- **Tầm đánh thường [Đọc được]**: `scenes/world.js` kiểm tra `khoảng cách(C(player), mục tiêu) <= Player.reach + (target.def.bodyRadius || 0)` trong `onPlayerSlash`; `Player.reach = PLAYER.REACH (26) + reachBonus của vũ khí`. Riêng `systems/targeting.js` tạo entry quái với bán kính `PLAYER.REACH` và không cộng `bodyRadius` khi dựng danh sách, nên tầm chọn gần và tầm hit là hai phép kiểm tra khác nhau. Quan hệ chính xác của `C(player)` với hitbox/render anchor **[Chưa biết]**.
 - **Tầm kỹ năng [Đọc được]**: `def.range` của kỹ năng; `onPlayerSpell` cho phép dư `CAST_RANGE_SLACK` (40) khi chọn mục tiêu, kỹ năng có `autoFoe` tự đổi sang quái gần nhất nếu mục tiêu hiện tại xa hơn.
 - **Hết giờ tiếp cận**: `TARGET.APPROACH_TIME = 8` giây cho một lần đi tới mục tiêu chọn bằng tay. Với auto: tìm đường lại mỗi 0,4 giây, không có hết giờ rõ ràng; bot nên tự đặt giới hạn (đề xuất 8 giây rồi bỏ mục tiêu và đánh dấu "không tới được") **[Suy ra]**.
 - **Quái bỏ chạy/leash**: quái có `LEASH_RANGE:260` quanh điểm xuất hiện **[Suy ra]**.
@@ -113,46 +113,48 @@ Server trả `skill_res` với `n` = số mục tiêu trúng; `n = 0` hiển th�
 
 ### 7.4 Bảng kỹ năng (từ `systems/skills.js`) **[Đọc được]**
 
-`shape`: `bolt` đạn, `ground` vùng đất, `aura` quanh người, `self` biến hình. "PvP" = chỉ dùng với người, bot bỏ qua. Cột mp/sp là chi phí gốc.
+`shape`: `bolt` đạn, `ground` vùng đất, `aura` quanh người, `self` biến hình. `loi_chuong` là `THUNDER_DEF` riêng nên vendor không đặt `shape`; nhánh auto dùng cờ `thunder`. Cột mp/sp là chi phí gốc. `allowedWeapons` là `null` ở cả 27 `DEFS` hiện tại; `boostWeapon` và `kieuRoi` là trường khác, không được đổi tên thành allowlist.
 
-| id | cd (s) | cast (s) | mp | sp | range | coef | ghi chú |
-|---|---|---|---|---|---|---|---|
-| loi_chuong (Lôi Chưởng, THUNDER) | 5 | 0.34 | 12 | 5 | 96 | 5.45 | sét, bán kính 30, cần bí tịch riêng |
-| hoa_cau | 6 | 0.4 | 14 | 4 | 124 | 1.8 | bolt, đốt 3 s |
-| phong_nhan | 3.4 | 0.22 | 9 | 3 | 112 | 1.7 | bolt, 3 phát |
-| bang_thau | 5 | 0.3 | 13 | 5 | 104 | 1.7 | bolt |
-| dia_thich | 7.5 | 0.42 | 16 | 6 | 92 | 1.8 | ground |
-| xich_chan | 12 | 0.42 | 12 | 4 | 132 | 0.7 | PvP |
-| ngu_kiem_sat | 8.5 | 0.48 | 20 | 8 | 118 | 5.2 | ground |
-| huyet_kiem_tran | 10 | 0.52 | 24 | 10 | 126 | 5.6 | ground |
-| van_kiem_quy_tong | 12 | 0.65 | 35 | 15 | 220 | 9 | ground |
-| cuu_huyet_kiem_tran | 12 | 0.6 | 28 | 12 | 96 | 6.5 | aura |
-| kim_thuong_giang_the | 12 | 0.5 | 30 | 12 | 132 | 5.6 | ground |
-| loi_thuong_quan_dia | 9 | 0.5 | 30 | 12 | 150 | 6.3 | ground |
-| ngu_loi_thuong_vu | 14 | 0.6 | 36 | 14 | 170 | 9.8 | ground |
-| thanh_lam_kiem_tru | 8 | 0.38 | 15 | 6 | 128 | 5.2 | bolt |
-| anh_ky_phu | 9 | 0.44 | 18 | 7 | 192 | 6 | bolt |
-| bang_kiem_tran | 11 | 0.54 | 26 | 11 | 136 | 5 | ground |
-| bang_kiem_luan | 10 | 0.72 | 22 | 9 | 246 | 4.9 | aura |
-| tien_vu | 11 | 0.46 | 24 | 10 | 176 | 5.25 | ground |
-| tram_ma | 9 | 0.42 | 18 | 7 | 176 | 5.25 | aura |
-| ma_bao_an | 13 | 0.45 | 34 | 14 | 150 | 6.6 | ground |
-| ma_hon_phe | 11.5 | 0.5 | 26 | 12 | 180 | 8.5 | ground |
-| nguyet_quang | 14 | 0.55 | 34 | 14 | 190 | 10.5 | ground |
-| kim_quang_cu_kiem | 10 | 0.5 | 26 | 11 | 210 | 7.2 | ground, `autoFoe` |
-| ngu_sac_than_chuong | 30 | 0.6 | 36 | 14 | 200 | 22.5 | ground |
-| huyet_buc_chuong | 5.5 | 0.4 | 14 | 6 | 130 | 5 | ground, `autoFoe` |
-| huyet_liem_tram | 7 | 0.45 | 24 | 10 | 150 | 5.8 | ground, `autoFoe` |
-| tu_anh_phuoc_tien | 10 | 0.5 | 26 | 10 | 170 | 6 | ground, `autoFoe` |
-| xich_ma_hoa_than | 25 | 0.6 | 30 | 12 | 140 | — | `bienHinh`, nên bỏ khỏi luân phiên của bot |
+| id | book | shape | cd | cast | mp/sp | range | coef | blastR | shots | allowedWeapons | autoFoe | playerTargetOnly | bienHinh | instantOnPress | thunder |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|---|---|
+| loi_chuong | bi_tich_loi_chuong | — | 5 | 0.34 | 12/5 | 96 | 5.45 | 30 | 1 | — | false | false | — | false | true |
+| hoa_cau | bi_tich_hoa_cau | bolt | 6 | 0.4 | 14/4 | 124 | 1.8 | 22 | 1 | — | false | false | — | false | false |
+| phong_nhan | bi_tich_phong_nhan | bolt | 3.4 | 0.22 | 9/3 | 112 | 1.7 | 0 | 3 | — | false | false | — | false | false |
+| bang_thau | bi_tich_bang_thau | bolt | 5 | 0.3 | 13/5 | 104 | 1.7 | 0 | 5 | — | false | false | — | false | false |
+| dia_thich | bi_tich_dia_thich | ground | 7.5 | 0.42 | 16/6 | 92 | 1.8 | 28 | 1 | — | false | false | — | true | false |
+| xich_chan | bi_tich_so_xich_chan | ground | 12 | 0.42 | 12/4 | 132 | 0.7 | 54 | 1 | — | false | true | — | false | false |
+| ngu_kiem_sat | bi_tich_ngu_kiem_sat | ground | 8.5 | 0.48 | 20/8 | 118 | 5.2 | 38 | 1 | — | false | false | — | false | false |
+| huyet_kiem_tran | bi_tich_huyet_kiem_tran | ground | 10 | 0.52 | 24/10 | 126 | 5.6 | 46 | 1 | — | false | false | — | false | false |
+| van_kiem_quy_tong | bi_tich_van_kiem_quy_tong | — | 12 | 0.65 | 35/15 | 220 | 9 | 0 | 1 | — | false | false | — | false | false |
+| cuu_huyet_kiem_tran | bi_tich_cuu_huyet_tran | aura | 12 | 0.6 | 28/12 | 96 | 6.5 | 96 | 1 | — | false | false | — | false | false |
+| kim_thuong_giang_the | bi_tich_kim_thuong_giang_the | ground | 12 | 0.5 | 30/12 | 132 | 5.6 | 130 | 1 | — | false | false | — | false | false |
+| loi_thuong_quan_dia | bi_tich_loi_thuong_quan_dia | ground | 9 | 0.5 | 30/12 | 150 | 6.3 | 56 | 1 | — | false | false | — | false | false |
+| ngu_loi_thuong_vu | bi_tich_ngu_loi_thuong_vu | ground | 14 | 0.6 | 36/14 | 170 | 9.8 | 84 | 1 | — | false | false | — | false | false |
+| thanh_lam_kiem_tru | bi_tich_thanh_lam_kiem_tru | bolt | 8 | 0.38 | 15/6 | 128 | 5.2 | 36 | 1 | — | false | false | — | false | false |
+| anh_ky_phu | bi_tich_anh_ky_phu | bolt | 9 | 0.44 | 18/7 | 192 | 6 | 0 | 1 | — | false | false | — | false | false |
+| bang_kiem_tran | bi_tich_bang_kiem_tran | ground | 11 | 0.54 | 26/11 | 136 | 5 | 66 | 1 | — | false | false | — | false | false |
+| bang_kiem_luan | bi_tich_bang_kiem_luan | aura | 10 | 0.72 | 22/9 | 246 | 4.9 | 246 | 1 | — | false | false | — | false | false |
+| tien_vu | bi_tich_tien_vu | ground | 11 | 0.46 | 24/10 | 176 | 5.25 | 80 | 1 | — | false | false | — | false | false |
+| tram_ma | bi_tich_tram_ma | aura | 9 | 0.42 | 18/7 | 176 | 5.25 | 176 | 1 | — | false | false | — | false | false |
+| ma_bao_an | bi_tich_ma_bao_an | ground | 13 | 0.45 | 34/14 | 150 | 6.6 | 72 | 1 | — | false | false | — | false | false |
+| ma_hon_phe | bi_tich_ma_hon_phe | ground | 11.5 | 0.5 | 26/12 | 180 | 8.5 | 42 | 1 | — | false | false | — | false | false |
+| nguyet_quang | bi_tich_nguyet_quang | ground | 14 | 0.55 | 34/14 | 190 | 10.5 | 34 | 1 | — | false | false | — | false | false |
+| kim_quang_cu_kiem | bi_tich_kim_quang_cu_kiem | ground | 10 | 0.5 | 26/11 | 210 | 7.2 | 0 | 1 | — | true | false | — | false | false |
+| ngu_sac_than_chuong | bi_tich_ngu_sac_than_chuong | ground | 30 | 0.6 | 36/14 | 200 | 22.5 | 56 | 1 | — | false | false | — | false | false |
+| huyet_buc_chuong | bi_tich_huyet_buc_chuong | ground | 5.5 | 0.4 | 14/6 | 130 | 5 | 44 | 1 | — | true | false | — | false | false |
+| huyet_liem_tram | bi_tich_huyet_liem_tram | ground | 7 | 0.45 | 24/10 | 150 | 5.8 | 52 | 1 | — | true | false | — | false | false |
+| tu_anh_phuoc_tien | bi_tich_tu_anh_phuoc_tien | ground | 10 | 0.5 | 26/10 | 170 | 6 | 0 | 1 | — | true | false | — | false | false |
+| xich_ma_hoa_than | bi_tich_xich_ma_hoa_than | self | 25 | 0.6 | 30/12 | 140 | 0 | 0 | 1 | — | false | false | xich_ma/12s | false | false |
 
-Bảng trích tự động bằng regex trên mã minify; một số kỹ năng còn có `allowedWeapons` (giới hạn vũ khí) và các trường hiệu ứng khác chưa liệt kê. Trước khi dùng cần đối chiếu từng kỹ năng với mã nguồn.
+Bảng này được sinh bằng VM từ `DEFS`, `SLOTS`, `THUNDER_DEF` và `CONFIG.THUNDER`, không còn là trích regex. Hiệu ứng đầy đủ, `boostWeapon`, `kieuRoi`, cảnh giới và `medium` nằm trong file sinh `skill-defs.generated.ts`.
 
 ### 7.5 Kỹ năng nào nhân vật đang có **[Đọc được] / [Chưa biết]**
 
-Kỹ năng "đã học" khi nhân vật sở hữu bí tịch (`book`) và đủ điều kiện (`lockReason`), cờ ưa thích (`autoUses`) và thứ tự do người chơi chọn (`pntt.thanhChieu.v1`, đồng bộ qua lệnh `pref.thanhChieu`). Bot cần:
-- danh sách bí tịch từ `state.save.bag` (khóa `bi_tich_*`) **[Suy ra]**;
-- thứ tự/ưu tiên: lấy từ `state.save.flags` hoặc gói tương ứng **[Chưa biết]**, chưa thấy trong evidence; nếu không có thì dùng thứ tự `Skills.SLOTS` mặc định.
+Kỹ năng "đã học" trong client được tính bởi `known(id) = DEFS[id] && ownsBook(id) && !lockReason(id)`; `knownThunder()` dùng `THUNDER_BOOK`, còn `slotKnown(slot)` gọi một trong hai nhánh trên. `ownsBook` đọc `Inventory.owns(book, 1)`/`has`, mà `Inventory.load` nạp từ `state.save.bag` (sách không phải ô trang bị). `lockReason` còn phụ thuộc cảnh giới, vũ khí/`kieuRoi`, chính/ma đạo và một số hệ thống runtime **[Đọc được]**.
+
+Hàm thuần `deriveLearnedSkills(save)` đã có trong `packages/core-client/src/state/auto-data.ts`: trả các ID có `state.save.bag[book] >= 1`, theo `SLOTS`, gồm cả `loi_chuong`; `bound`, `flags.phap_thuat_dung` và `pntt.thanhChieu.v1` không tự chứng minh quyền sở hữu sách **[Đọc được]**. Kết quả này là “book-known”, chưa tự áp dụng đầy đủ `lockReason` **[Suy ra]**. `thuTu`, `tat`, `an` là preference cục bộ `pntt.thanhChieu.v1`; server có thể đồng bộ qua `pref.thanhChieu`, nhưng không có bằng chứng rằng chúng nằm trong `state.save` **[Chưa biết]**.
+
+Evidence đã ghi nhận `state.save` có các nhóm khóa `bag`, `bound`, `equipment`, `flags`, `linhCan`, `realm`, `stage`; trong đó chỉ `bag` với giá trị số dương của đúng `book` là bằng chứng sở hữu mà hàm pure này dùng. Việc `flags` có mã mở khóa/khóa nào khác, và thứ tự ưu tiên/bật tắt auto có được server lưu trong save hay chỉ ở preference, vẫn **[Chưa biết]**.
 
 ## 8. Tài nguyên và nghỉ
 
@@ -173,14 +175,14 @@ Kỹ năng "đã học" khi nhân vật sở hữu bí tịch (`book`) và đủ
 |---|---|---|
 | Vị trí nhân vật, map, khu | `you`, `map`, `state` | ✅ có (`mapContext`, `location`) |
 | Danh sách quái | `snap2.ef` / `snap2.e` / `map.e` | ✅ có, với các trường `id, x, y, hp, dir, st, t, tg, zn, fz, sl, slm, hm, d, wn, bn` |
-| Ý nghĩa `hp` của quái | — | **[Chưa biết]**: có thể là phần trăm (như người chơi) hay tuyệt đối; cần đối chiếu `hpMax` trong định nghĩa quái |
-| Định nghĩa quái (tên, `isBoss`, `human`, `bodyRadius`, `hpMax`) từ loại `t` | `entities/enemy.js`, `world/*` | ❌ chưa trích; bắt buộc để lọc boss/người và tính tầm |
+| Ý nghĩa `hp` của quái | `gateway.js` `$`, `entities/enemy.js` `Enemy.create/draw` | ✅ **[Đọc được]**: HP hiện tại tuyệt đối; client gán `r.hp=o.hp` và vẽ `hp/hpMax`, không phải phần trăm |
+| Định nghĩa quái (tên, `isBoss`, `human`, `bodyRadius`, `hpMax`) từ loại `t` | `entities/enemy.js` `ENEMY_DEFS`, `Enemy.create`; `gen-enemy-defs.mjs` | ✅ 62 loại; `t` là khóa trực tiếp. `bodyRadius` chỉ có ở một số def và chưa thấy dùng trong targeting **[Đọc được]** |
 | HP/MP/SP của mình | `you` (mỗi 10 `seq`), `hurt`, `revived` | ✅ có + `refreshVitals` |
 | SP, BP | `you.sp`, `you.bp` | trong gói nhưng chưa vào `VitalSnapshot` |
 | Cooldown kỹ năng của server | — | **[Chưa biết]**; bot phải tự theo dõi cục bộ như client |
-| Kỹ năng đã học, thứ tự | `state.save` (bag/flags) | ❌ chưa trích |
+| Kỹ năng đã học, thứ tự | `systems/skills.js`, `state.save.bag`, preference | ✅ book-known + hàm pure; `lockReason` đầy đủ và thứ tự preference vẫn tách riêng |
 | Lưới va chạm để tìm đường | `world/*`, `walk-grid.ts` | ⚠️ chỉ có cho một số map (portal); chưa đủ cho vùng farm |
-| Xác nhận đòn đánh | `hurt`, `kill`, `skill_res`, thay đổi `hp` quái | ❌ chưa parse `kill`, `skill_res` |
+| Xác nhận đòn đánh | `hurt`, `kill`, `skill_res`, thay đổi `hp` quái | ✅ parser pure; chưa nối vào `GameStateStore` |
 
 ## 11. Kiến trúc đề xuất
 
@@ -197,7 +199,7 @@ State machine training hiện có (`automation-engine`) đóng vai điều phố
 
 | Giai đoạn | Nội dung | Nghiệm thu |
 |---|---|---|
-| P0 | Trích định nghĩa quái (tên, `isBoss`, `human`, `bodyRadius`, `hpMax`) và ý nghĩa `hp`, `t`, `st`, `tg`; parse `kill`, `skill_res`, `down` | Bảng quái đủ cho một map farm; test parser bằng gói ghi từ tap |
+| P0 | Trích định nghĩa quái (tên, `isBoss`, `human`, `bodyRadius`, `hpMax`) và ý nghĩa `hp`, `t`, `st`, `tg`; parse `kill`, `skill_res`, `down`, `hurt`, `act`, `loot` | ✅ Bảng sinh 62 loại; parser + fixture tổng hợp + test tĩnh. Không có raw tap nên chưa gọi là replay/live |
 | P1 | `selectTarget` thuần hàm theo mục 4 (mặc định gần nhất) | Test với snapshot ghi lại: chọn đúng, giữ mục tiêu theo `KEEP_PAD`, không chọn quái chết/`human` |
 | P2 | `approach`: tìm đường tới tầm đánh, tìm lại mỗi 0,4 s, giới hạn 8 s | Test trên lưới của map farm; live: đi tới quái đứng yên, dừng đúng tầm |
 | P3 | `attack` đánh thường qua ledger | Live trên 1 quái yếu: gửi đúng `attackTime`, `hp` quái giảm, nhận `kill`; không có đòn trùng |
@@ -212,8 +214,53 @@ State machine training hiện có (`automation-engine`) đóng vai điều phố
 
 1. Server có kiểm tra cooldown/mp/sp và tốc độ gửi `attack`/`skill` không, và phản hồi khi vi phạm.
 2. Server có giới hạn tần suất hoặc phát hiện hành vi lặp (chống bot) không. Không có dấu hiệu trong client, nhưng kiểm tra đó nếu có sẽ nằm ở server.
-3. Ý nghĩa `hp` của quái và các trường `t, st, tg, zn, fz, sl, slm, hm, d, wn, bn`.
-4. Payload của `kill`, `skill_res`, `hurt` đối với đòn từ quái.
-5. Danh sách kỹ năng nhân vật hiện có và thứ tự ưu tiên.
+3. ~~Ý nghĩa `hp` của quái và các trường `t, st, tg, zn, fz, sl, slm, hm, d, wn, bn`.~~ Đã đọc được từ `gateway.js`/`enemy.js`; chỉ còn miền giá trị server chưa có capture.
+4. ~~Payload cơ bản của `kill`, `skill_res`, `hurt`, `down`, `act`, `loot`.~~ Đã có parser pure và bảng trường client đọc; các biến thể `act` không được gateway giải mã đầy đủ vẫn chưa biết.
+5. ~~Danh sách kỹ năng nhân vật hiện có.~~ 27 DEFS + Thunder đã sinh; thứ tự/auto preference theo từng nhân vật vẫn chưa biết nếu không có state/pref tương ứng.
 6. `autoNghiDen`, `C(player)` và các điều kiện `giuYen` chính xác.
 7. Hành vi của quái đối với bot (đuổi, leash) so với client chính thức.
+
+## Phụ lục P0 — Ý nghĩa trường quái trên wire
+
+Nguồn chính: `vendor/.../src/net/gateway.js` hàm nội bộ cập nhật mob (được gọi bởi `buildMobs`/`snap2`), `entities/enemy.js` `Enemy.create`, `Enemy.update`, `Enemy.draw`, và `systems/targeting.js` `Targeting.refresh`. Fixture trong test là tổng hợp, không phải raw packet.
+
+| Trường | Ý nghĩa client | Đơn vị/miền đọc được | Nhãn |
+|---|---|---|---|
+| `id` | ID instance; `Enemy.find(enemies, id)` dùng để ghép patch | ID opaque, string/number theo parser | [Đọc được] |
+| `t` | Type key, lookup `ENEMY_DEFS[t]` khi tạo mob | khóa bảng, phải tồn tại trong defs để client tạo | [Đọc được] |
+| `x`, `y` | vị trí instance | tọa độ world; client dùng số pixel | [Đọc được]/[Suy ra] |
+| `hp` | HP hiện tại, gán vào `r.hp`; thanh máu dùng `r.hp/r.hpMax` | số tuyệt đối, `>= 0` theo parser; không phải phần trăm | [Đọc được] |
+| `hm` | override `r.hpMax` khi truthy | HP tuyệt đối; thiếu thì dùng `def.hp` | [Đọc được] |
+| `d` | cờ chết: `r.dead = !!o.d` | boolean-like; cờ `true` làm mob chết trong snapshot | [Đọc được] |
+| `kill` | event riêng, đọc `id`, `exp`, `by`; set dead/hp=0 và VFX/exp nếu `by===selfId` | loot không nằm trong handler này | [Đọc được] |
+| `dir` | hướng render của mob | client render dùng enum `0..3`; miền wire độc lập chưa được khai báo | [Đọc được]/[Chưa biết] |
+| `st` | state mô phỏng: `idle`, `chase`, `return`, `flee`, `wander` xuất hiện trong `Enemy.update` | string; server có thể gửi biến thể chưa thấy | [Đọc được]/[Chưa biết] |
+| `tg` | cờ telegraph: `attackState = "telegraph"` nếu truthy, ngược lại `none` | boolean-like | [Đọc được] |
+| `zn`, `fz` | thời gian còn lại stun/freeze | giây; `Math.max(0, +value || 0)` | [Đọc được] |
+| `sl`, `slm` | thời gian slow và hệ số tốc độ | `sl` giây; `slm` multiplier, mặc định runtime là 1 khi slow đang bật | [Đọc được] |
+| `wn`, `bn` | thời gian wound/burn | giây | [Đọc được] |
+| `bd` | bật/tắt biến dị qua `Enemy.datBienDi` | boolean-like | [Đọc được] |
+| `la` | thời gian `linhAnUntil` | giây, đổi sang deadline bằng `Date.now()+1000*la` | [Đọc được] |
+| `pn`, `pd`, `bm` | poison duration/DPS và burn-ma flag | giây, DPS, boolean-like | [Đọc được] |
+| `ns`,`nw`,`nx`,`ny`; `hs`,`hw`,`hx`,`hy`; `js`,`jw`,`jx`,`jy`; `bs` | sequence, windup và tọa độ các đòn đặc biệt | sequence integer-like, windup tính từ phần trăm (`/100`), tọa độ world | [Đọc được] |
+| `av`, `vk`, `ttl` | attack variant, weapon id, TTL hiển thị | variant/TTL integer-like; `vk` opaque | [Đọc được] |
+
+`bodyRadius` được có trong một số definition (ví dụ Xích Long), không xuất hiện trong `systems/targeting.js` nhưng được cộng vào tầm hit trong `scenes/world.js` như mô tả trên; targeting list dùng `Player.reach` làm bán kính entry. `hitRadius` và `leashRange` là trường behavior của definition mà `Enemy.update` dùng cho đánh/đuổi; generator ghi cả giá trị vendor và fallback config. Việc server có dùng các trường này y hệt client là **[Chưa biết]**.
+
+## Phụ lục P0 — Payload gói chiến đấu
+
+| Gói | Trường client đọc (kiểu/miền) | Client làm gì |
+|---|---|---|
+| `kill` | `id`: ID opaque; `exp`: number-like; `by`: ID opaque/null | tìm mob, `dead=true`, `hp=0`, VFX; hiện exp chỉ hiện khi `exp>0` và `by===Gateway.selfId`; loot đến từ `loot` riêng |
+| `skill_res` | `n`: số nguyên-like | `n<=0` hiện “Hụt”; gateway không đọc sát thương, skill ID hay mục tiêu từ gói này |
+| `down` | `left`, `lostExp`: number-like, tùy chọn | knockdown; `left` thành `reviveLeft` nếu là number; `lostExp>0` hiện text mất đạo hạnh |
+| `hurt` | `hp`, `bp`, `mp`, `dmg`, `mpLoss`: number-like; `byId`: ID opaque/null | cập nhật HP/MP/BP; VFX damage; `byId` khác null/rỗng gọi `Player.onPlayerDamage`; không có cờ nguồn quái/người riêng |
+| `act` | `k`: string; `id,t`: ID opaque; tọa độ/tham số `tx,ty,x,y,ax,ay,w,r,n,dps,ttl,bay`: number-like; `pts,src,targets`: array; `mau,result`: string; `flight`: boolean-like | chọn VFX/UI/remote action theo `k`; các biến thể chưa có schema đầy đủ vẫn được forward |
+| `loot` | `l`: array; item `id`: ID opaque, `item`: string, `n,khoa,vn,age,x,y,ox,oy`: number-like, `owner`: ID/null, `boss,daily,ht`: boolean-like, `bossName`: string/null | tạo drop trên mặt đất, bay về người chơi hoặc bỏ qua nếu đã biết |
+| `loot_gone` | `id`: ID opaque; `by`: ID opaque/null | tìm drop; nếu `by` là người nhận thì cho bay/đánh dấu granted, nếu không thì xóa |
+| `join` | `id`: ID opaque; `name,realm`: string; `cfg,tong,pos`: object-like; `phanThan`: boolean-like | tạo/cập nhật remote player và roster |
+| `leave` | `id`: ID opaque | xóa remote, roster và snap delta |
+| `bosses` | `boards`: array | chuyển nguyên bảng cho `BossBoard.set`; UI chỉ nhận array và tự lọc shape |
+| `revived` | `ep,x,y,hp,mp,bp`: number-like, `ep/x/y/bp` tùy chọn | cập nhật vị trí/vitals; nếu epoch hợp lệ thì revive và đóng UI gục |
+
+Biến thể `act` đọc được rõ trong gateway gồm `enemy_poison` (`x,y,targets,dps`, target có `id,x,y,t`), `ll_tru_ban` (`id,t,x,y,tx,ty,mau,bay`), `ll_kim_kiem` (`id,t,tx,ty,w`), `ll_ta_hoa` (`pts,w,r`), `long_luu_tinh` (`pts,w,r,mau,tu`), `quy_an` (`id,t,tx,ty,w`), `huyet_hut` (`id,src,n`), `xuyen_kich` (`id,x,y,w`), `vankiem_release` (`id,t,ax,ay,flight`) và `duel_result` (`id,result,ttl`). Những nhánh UI/remote còn lại nhận nguyên packet; schema server đầy đủ của chúng **[Chưa biết]**.

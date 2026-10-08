@@ -300,6 +300,121 @@ export interface LootPacket {
   l: LootItem[];
 }
 
+/** IDs in the combat protocol are opaque to the parser; no player identity is inferred. */
+export type CombatWireId = string | number;
+
+export interface KillPacket {
+  op: 'kill';
+  id: CombatWireId;
+  exp?: number;
+  by?: CombatWireId | null;
+}
+
+export interface SkillResultPacket {
+  op: 'skill_res';
+  n: number;
+}
+
+export interface DownPacket {
+  op: 'down';
+  left?: number;
+  lostExp?: number;
+}
+
+export interface HurtPacket {
+  op: 'hurt';
+  hp: number;
+  dmg: number;
+  bp?: number;
+  mp?: number;
+  mpLoss?: number;
+  byId?: CombatWireId | null;
+}
+
+export interface ActPacket {
+  op: 'act';
+  k: string;
+  id?: CombatWireId;
+  t?: CombatWireId;
+  tx?: number;
+  ty?: number;
+  x?: number;
+  y?: number;
+  ax?: number;
+  ay?: number;
+  w?: number;
+  r?: number;
+  n?: number;
+  dps?: number;
+  ttl?: number;
+  bay?: number;
+  mau?: string;
+  tu?: unknown;
+  result?: string;
+  flight?: boolean | 0 | 1;
+  pts?: Array<{ x: number; y: number }>;
+  /** Variant-specific source payload; the gateway forwards it without schema validation. */
+  src?: unknown[];
+  targets?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface CombatLootItem {
+  id: CombatWireId;
+  item: string;
+  n?: number;
+  owner?: CombatWireId | null;
+  boss?: boolean | 0 | 1;
+  bossName?: string | null;
+  daily?: boolean | 0 | 1;
+  khoa?: number;
+  ht?: boolean | 0 | 1;
+  vn?: number;
+  age?: number;
+  x: number;
+  y: number;
+  ox?: number;
+  oy?: number;
+  [key: string]: unknown;
+}
+
+export interface CombatLootPacket {
+  op: 'loot';
+  l?: CombatLootItem[];
+}
+
+export interface JoinPacket {
+  op: 'join';
+  id: CombatWireId;
+  name?: string;
+  cfg?: unknown;
+  realm?: string;
+  tong?: unknown;
+  phanThan?: boolean | 0 | 1;
+  pos?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface LeavePacket {
+  op: 'leave';
+  id: CombatWireId;
+}
+
+export interface BossesPacket {
+  op: 'bosses';
+  boards: unknown[];
+}
+
+export interface RevivedPacket {
+  op: 'revived';
+  x?: number;
+  y?: number;
+  hp: number;
+  mp: number;
+  bp?: number;
+  ep?: number;
+}
+
 export type GameInPacket =
   | WelcomePacket
   | PongPacket
@@ -310,6 +425,16 @@ export type GameInPacket =
   | AckPacket
   | WorldChatPacket
   | LootPacket
+  | KillPacket
+  | SkillResultPacket
+  | DownPacket
+  | HurtPacket
+  | ActPacket
+  | CombatLootPacket
+  | JoinPacket
+  | LeavePacket
+  | BossesPacket
+  | RevivedPacket
   | YouPacket
   | { op: string; [key: string]: any };
 
