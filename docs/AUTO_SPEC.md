@@ -384,4 +384,35 @@ Chỉ khi người chơi hoặc sự kiện cục bộ kích hoạt: `hello` (l�
 1. Đưa `ping` về nhịp gần client: khoảng 30 s, `ns.s` bằng số giây thực tế, `n` bằng số người đang thấy thực tế, các trường còn lại lấy từ số liệu thật hoặc ít nhất thay đổi hợp lý.
 2. Hạn chế `refreshVitals`: chỉ khi thật cần (HP cũ quá ngưỡng trước khi tấn công), tần suất thấp, ưu tiên lấy HP qua `hurt` và qua luồng `move` đang có sẵn khi di chuyển thật.
 3. Kiểm chứng bằng bắt gói của client thật (người dùng tự chạy trong trình duyệt của mình, không gửi mật khẩu cho agent) để xác nhận 14.1 và 14.2.
+## 15. Spike: chạy client chính thức không hiển thị (hướng B), 2026-10-08
+
+Ý tưởng: thay vì viết lại logic auto/di chuyển, chạy chính client của game nhưng bỏ phần vẽ. Server giao toàn bộ việc tự di chuyển và đánh cho client, nên logic đó nằm trong mã client.
+
+### 15.1 Đã thử (offline, không mạng, không đăng nhập) — `scripts/spike-vendor-client-boot.cjs`
+
+Nạp lần lượt 241 script theo thứ tự `index.html` trong `node:vm` với `window`, `document`, `localStorage`, `WebSocket`, canvas... là đối tượng giả (Proxy trả về chính nó cho mọi truy cập). Kết quả **[Đã đo]**:
+
+- 239/241 script nạp thành công. Hai lỗi vô hại: script chuyển trang (`location.replace`) và script thống kê Cloudflare (không có trong snapshot).
+- `window.PNTT` có 223 khóa. Có đủ các module cốt lõi: `Game` (`init`, `start`, `changeScene`), `Gateway` (88 khóa: `connect`, `login`, `send`, `cmd`, `attack`, `skill`, `remotes`, `selfId`...), `SceneWorld` (`enter`, `update`, `draw`, `switchMap`, `reviveAtHome`, `reviveOnSpot`, `cancelApproach`, `onPlayerSpell`...), `Player`, `Enemy`, `Skills`, `Targeting`, `Pathfinder`, `TileMap`, `MapData`, `Input`, `Net`.
+- Chạy 40 callback timer đã đăng ký: 0 lỗi ném ra. Nhưng chưa có socket nào được mở và `Game.scene` còn rỗng (`null`): vòng đời game chưa được khởi động.
+
+### 15.2 Tín hiệu thuận lợi
+
+- `SceneWorld.update` và `SceneWorld.draw` là hai hàm riêng: có thể tự gọi `update(dt)` và không bao giờ gọi `draw`.
+- Các module logic (Pathfinder, Skills, Targeting, TileMap, Enemy, Player) đã nạp được với đối tượng giả tối thiểu. Các script sinh dữ liệu và test A3 trước đó cũng chạy chúng trong vm.
+- Client dùng `new WebSocket(url)` với `onopen`/`onmessage` dạng thuộc tính: thay bằng gói `ws` của Node là đủ.
+
+### 15.3 Chưa biết (cần thử tiếp)
+
+1. Khởi động vòng đời: `Game.init`/`Game.start`, tạo cảnh `SceneWorld.enter` khi không có canvas thật; `Net.init` và đăng nhập (đưa phiên Supabase vào), `Gateway.login`/`connect`.
+2. Các module vẽ bị gọi ngầm trong `update` (VFX, Audio, Camera, Renderer): đối tượng giả có đủ không, có gây lỗi ngầm hay tốn CPU không.
+3. Độ chính xác: `update(dt)` do mình gọi với `dt` và nhịp thế nào để mô phỏng giống client thật (client chạy theo khung hình ~60 Hz với `dt` thay đổi).
+4. Bật Auto bằng `Input.pressAutoToggle()` trong môi trường này có chạy vòng auto không.
+5. Chi phí tài nguyên (CPU, RAM) cho mỗi tài khoản so với bot hiện tại.
+6. Server có coi client chạy kiểu này giống client trình duyệt không (tiêu đề, origin, hành vi mạng). Chưa biết.
+7. Điều khoản dịch vụ của game về bot/tự động hóa: người dùng tự cân nhắc.
+
+### 15.4 Bước tiếp theo đề xuất
+
+Thử nghiệm giai đoạn 2 (cần người dùng đồng ý vì sẽ kết nối thật bằng phiên tài khoản của người dùng): khởi động `Game`/`Gateway` trong vm, thay `FakeWebSocket` bằng `ws`, đưa phiên đăng nhập của bot vào, vào game một lần, kiểm tra `Gateway.ready`, `SceneWorld.player` có vị trí và HP; tuyệt đối chưa bật Auto ở lượt này. Một phiên đăng nhập mỗi tài khoản.
 

@@ -1,5 +1,9 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Spike: chạy client chính thức không hiển thị (hướng B)
+
+Người dùng đề xuất dùng thẳng client (bỏ phần vẽ) vì server giao việc auto/di chuyển cho client. Đã thử offline: `scripts/spike-vendor-client-boot.cjs` nạp 241 script trong `node:vm` với đối tượng giả; 239 nạp được (2 lỗi vô hại), `window.PNTT` có 223 module gồm `Game`, `Gateway`, `SceneWorld`, `Skills`, `Targeting`, `Pathfinder`, `Input`; `SceneWorld.update` và `draw` tách biệt. Chưa khởi động được vòng đời (chưa có socket, `Game.scene` null). Chi tiết và các điều chưa biết ở `AUTO_SPEC.md` mục 15. Giai đoạn 2 (kết nối thật bằng phiên tài khoản) cần người dùng đồng ý; chưa chạy.
+
 ## 2026-10-08 — Đo hành vi mạng của client thật khi đứng yên (đọc mã)
 
 Kết quả chi tiết ở `AUTO_SPEC.md` mục 14. Tóm tắt: client thật chỉ gửi `move` khi trạng thái đổi (tọa độ lệch hơn 0.5 px, hướng, trạng thái, tư thế, bay, câu cá), tick 10 Hz, nên đứng yên là không gửi gì; `ping` kèm thống kê mạng khoảng 30 s một lần với số liệu thật. Bot khác ở hai điểm: `ping` mỗi 8 s với `ns` hằng số, và `refreshVitals`/probe gửi tới 10 gói `move` giống hệt nhau mà client thật không bao giờ gửi. Chưa biết server có phân biệt các mẫu này không. Chưa đối chiếu bằng bắt gói client thật.
