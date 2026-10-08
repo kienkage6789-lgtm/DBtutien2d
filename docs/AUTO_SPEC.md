@@ -512,3 +512,30 @@ Script: `scripts/spike-vendor-auto-online.cjs` (cần `TUTIEN_SPIKE_LIVE=1`; t�
 5. Bàn giao phiên sang trình duyệt (`PLAN_SESSION_HANDOFF.md`) và quy tắc phiên của server.
 6. Điều khoản dịch vụ của game về bot/tự động hóa: người dùng tự cân nhắc.
 
+### 15.8 Lớp an toàn: nhớ vị trí Auto, chết thì quay về tiếp tục, 2026-10-08
+
+Yêu cầu của người dùng: lớp an toàn là **nhớ map và toạ độ nơi bật Auto; sau khi chết thì quay trở lại đúng vị trí đó để tiếp tục**.
+
+Mã: `scripts/lib/auto-supervisor.cjs` (bộ giám sát, chỉ dùng API của client chính thức nên chạy được cho mô phỏng offline lẫn client online), `scripts/spike-vendor-supervisor-offline.cjs` (bài thử offline), tùy chọn `TUTIEN_SPIKE_SUPERVISE=1` trong `scripts/spike-vendor-auto-online.cjs`.
+
+**Vòng đời:** `farming` (Auto bật, đã ghi neo `{mapId, x, y}` lúc bắt đầu) → `down_wait` (gục: tắt Auto, chờ 1,5 s) → `reviving` (gọi `SceneWorld.reviveAtHome()` mặc định; `reviveMode:'spot'` thì thử `reviveOnSpot()` rồi mới về làng) → `recovering` (ngồi thiền bằng `Input.pressMeditate()` tới 90 % HP) → `traveling` (tìm chuỗi map bằng đồ thị cổng `MapData.*.portals`, đi tới ô cổng gần nhất bằng `Pathfinder.route` + `player.setPath`, client tự đổi map khi bước lên cổng; tới map đích thì đi tới đúng toạ độ neo) → `resuming` (bật Auto) → `farming`. `halted` khi vi phạm giới hạn và không tự thoát.
+
+**Giới hạn an toàn:** quá 3 lần chết trong 600 s thì dừng hẳn; hồi sinh quá 20 s, hồi phục quá 180 s, đi về quá 240 s, cổng không mở sau 8 s, không tìm được đường 8 lần, HP dưới 35 % khi đang đi về: đều dừng và báo lý do. Chết ở bất kỳ pha nào kể cả đang đi về đều quay lại vòng hồi sinh.
+
+**[Đã đo] Offline** (mô phỏng cục bộ, `thanh_truc_lam`, neo `(240,92)`), ba lần chạy độc lập 400 s (mô phỏng quái ngẫu nhiên nên mỗi lần khác): mỗi lần chết đều → hồi sinh về `tan_vien` (HP 60 %) → thiền → đi qua cổng `tan_vien` sang `thanh_truc_lam` → về tới **cách neo 13 px** với HP 90 % → bật Auto lại. Tổng 4 đến 5 lần chết mỗi lần chạy, 4 chuyến về đều thành công, không lần nào dừng ngoài ý muốn; với giới hạn 3 lần chết trong 600 s, lần thứ 4 bị chặn (đã thấy ở lần chạy với `maxDeaths=3`). 0 lỗi `update`, 0 `console.error`.
+
+**Ba lỗi tìm ra khi thử và đã sửa:**
+0. Auto vẫn BẬT trong lúc đi về nên nhân vật lao đi đuổi quái thay vì về neo (một lần chạy dừng ở HP 33 % cách neo hơn 200 px). Nay bộ giám sát ép Auto TẮT ở mọi tick của các pha `down_wait`, `reviving`, `recovering`, `traveling`; bộ tìm đường không trả đường cho khoảng cách dưới một ô nên có thêm quy tắc "đã trong một ô quanh neo thì coi là tới"; bán kính mặc định 16 px.
+1. Hàng đợi `requestAnimationFrame` của môi trường giả không bao giờ chạy nên `SceneWorld.transitioning` kẹt `true` sau khi đổi map; nay `env.flushRaf()` chạy hàng đợi mỗi khung hình (đã gắn vào các script).
+2. Lệnh bật/tắt Auto được xếp hàng (`Input._autoToggle`) và chỉ xử lý ở khung sau: bấm khi còn lệnh chờ thì hai lệnh triệt tiêu nhau. Nay `setAuto(desired)` không bấm khi còn lệnh chờ.
+
+Hai lỗi môi trường (ảnh hưởng cả script online) đã nêu ở trên là mục 1 và 2:
+
+**Chưa kiểm chứng (cần lưu ý trước khi dùng trên game thật)**
+- **Chết và hồi sinh trên game thật CHƯA thử.** Lệnh hồi sinh online (`cmd("revive",{mode})`) chỉ đã được đọc từ mã client. Cái chết thật làm mất Đạo Hạnh (`lostExp`) và có giới hạn số lần hồi sinh tại chỗ (`MAX_REVIVES = 3`); không nên thử chết cố ý khi chưa có quyết định của người dùng.
+- Offline dùng logic hồi sinh/quái cục bộ; sát thương, thời gian chờ hồi sinh và gói `down`/`revived` của server có thể khác.
+- Khu (`khu`): neo chưa ghi khu thật; nếu hồi sinh/đi cổng đưa về khu khác thì chưa xử lý (giao thức chọn khu mới chỉ đọc từ mã).
+- Đi về qua cổng có thể bị chặn bởi điều kiện mở khóa của map; supervisor dừng với lý do `cổng ... không mở`.
+- Neo là vị trí lúc bật Auto: Auto của client tự rời neo để đuổi quái, supervisor chỉ đưa về neo sau khi chết, chưa kéo về khi trôi xa (không được yêu cầu).
+- Chưa tích hợp vào `apps/server` (hiện là script spike).
+

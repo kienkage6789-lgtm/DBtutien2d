@@ -8,6 +8,7 @@ const http = require('http');
 const { createRequire } = require('module');
 const { pathToFileURL } = require('url');
 const { createVendorEnv, repo } = require('./lib/vendor-env.cjs');
+const { createSupervisor } = require('./lib/auto-supervisor.cjs');
 
 if (process.env.TUTIEN_SPIKE_LIVE !== '1') {
   console.error('Đặt TUTIEN_SPIKE_LIVE=1 để chạy (kết nối game thật, bật Auto).');
@@ -16,6 +17,8 @@ if (process.env.TUTIEN_SPIKE_LIVE !== '1') {
 const AUTO_MS = Number(process.env.TUTIEN_SPIKE_AUTO_MS || 30000);
 const HP_STOP_RATIO = Number(process.env.TUTIEN_SPIKE_HP_STOP || 0.5);
 const SETTLE_MS = Number(process.env.TUTIEN_SPIKE_SETTLE_MS || 6000);
+// TUTIEN_SPIKE_SUPERVISE=1: nhớ vị trí Auto; chết thì hồi sinh, hồi phục, đi về và tiếp tục (xem lib/auto-supervisor.cjs).
+const SUPERVISE = process.env.TUTIEN_SPIKE_SUPERVISE === '1';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function portOpen(port) {
@@ -105,6 +108,7 @@ async function main() {
     const dt = Math.min(0.05, (now - lastFrame) / 1000);
     lastFrame = now;
     P.Game.time += dt;
+    env.flushRaf();
     frames += 1;
     try { if (P.Game.scene && P.Game.scene.update) P.Game.scene.update(dt); } catch (e) {
       updateErrors += 1;
@@ -139,7 +143,13 @@ async function main() {
   let autoOnAt = null;
   const samples = [];
   if (!abort && AUTO_MS > 0) {
-    P.Input.pressAutoToggle();
+    let sup = null;
+    if (SUPERVISE) {
+      sup = createSupervisor({ P, log: (...a) => console.log('[giám sát]', ...a) });
+      sup.start();
+    } else {
+      P.Input.pressAutoToggle();
+    }
     await sleep(100);
     autoOnAt = Date.now();
     console.log('--- Auto', W.autoOn ? 'BẬT' : 'KHÔNG bật được', '| giới hạn', AUTO_MS, 'ms | dừng khi HP <', Math.round(HP_STOP_RATIO * 100) + '%');
@@ -148,8 +158,13 @@ async function main() {
       await sleep(250);
       if (closeInfo) { abort = 'mất kết nối ' + JSON.stringify(closeInfo); break; }
       if (!me()) { abort = 'mất nhân vật'; break; }
-      if (me().downed || me().state === 'down') { abort = 'nhân vật gục'; break; }
-      if (hpRatio() < HP_STOP_RATIO) { abort = 'HP dưới ngưỡng ' + Math.round(hpRatio() * 100) + '%'; break; }
+      if (sup) {
+        sup.tick();
+        if (sup.phase === 'halted') { abort = 'giám sát dừng: ' + sup.state.reason; break; }
+      } else {
+        if (me().downed || me().state === 'down') { abort = 'nhân vật gục'; break; }
+        if (hpRatio() < HP_STOP_RATIO) { abort = 'HP dưới ngưỡng ' + Math.round(hpRatio() * 100) + '%'; break; }
+      }
       if (Date.now() - lastPrint >= 2000) {
         lastPrint = Date.now();
         const t = Math.round((Date.now() - autoOnAt) / 1000);

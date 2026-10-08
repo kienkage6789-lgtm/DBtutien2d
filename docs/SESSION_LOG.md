@@ -1,5 +1,9 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Lớp an toàn: nhớ vị trí Auto, chết thì quay về tiếp tục (offline)
+
+Theo yêu cầu của người dùng: lớp an toàn là nhớ map và toạ độ nơi bật Auto, chết thì hồi sinh, hồi phục, đi về đúng chỗ rồi tiếp tục. `scripts/lib/auto-supervisor.cjs` + `scripts/spike-vendor-supervisor-offline.cjs`; tùy chọn `TUTIEN_SPIKE_SUPERVISE=1` trong spike online. Offline, 3 lần chạy độc lập: mọi lần chết đều về cách neo 13 px với HP 90 % và bật Auto lại; giới hạn số lần chết dừng hẳn khi vượt. Lỗi tìm ra khi thử: Auto vẫn bật lúc đi về (đã ép tắt), bộ tìm đường không trả đường dưới một ô (thêm quy tắc), hàng đợi rAF của môi trường giả (đã chạy mỗi khung), race của lệnh bật/tắt Auto đã xếp hàng. CHƯA thử chết/hồi sinh trên game thật (mất Đạo Hạnh, cần quyết định của người dùng). Chi tiết: `AUTO_SPEC.md` mục 15.8.
+
 ## 2026-10-08 — Spike giai đoạn 4 (online): Auto của client chạy không hiển thị trên game thật
 
 `scripts/spike-vendor-auto-online.cjs`. Ba phiên Auto ngắn (30 s, 20 s, 15 s) ở `thanh_truc_lam` với lớp an toàn (dừng khi HP dưới 50 %, gục, mất kết nối, hết giờ): client tự đi, đánh thường, dùng kỹ năng, nhặt đồ (`loot.pick`); không có `hurt`, HP 225/225, 0 lỗi; đã hạ quái (6 trong lần 20 s, 3 trong lần 15 s). Chạy không Auto thì client chỉ gửi `hello` (khớp kết quả đọc mã). Chi tiết bảng số liệu và việc tiếp theo ở `AUTO_SPEC.md` mục 15.7. Mỗi phiên kết nối và ngắt sạch; server/bot không chạy trong lúc thử; refresh token xoay vòng đã lưu lại.

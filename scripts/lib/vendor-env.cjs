@@ -105,6 +105,14 @@ function createVendorEnv(opts = {}) {
   return {
     win, ctx, P: win.PNTT, scripts, loaded, loadErrors, consoleErrors, sentPackets, rafQueue,
     advanceClock(ms) { if (fakeNow !== null) fakeNow += ms; },
+    // Chạy các callback requestAnimationFrame đã xếp hàng (client dùng rAF lồng nhau để tắt hiệu ứng mờ
+    // và đặt SceneWorld.transitioning = false). Gọi một lần mỗi khung hình.
+    flushRaf() {
+      if (!rafQueue.length) return 0;
+      const batch = rafQueue.splice(0, rafQueue.length);
+      for (const cb of batch) { try { cb(clock()); } catch { /* bỏ qua */ } }
+      return batch.length;
+    },
     now: clock,
     run(code) { return vm.runInContext(code, ctx); },
   };
