@@ -92,6 +92,9 @@ export interface AccountRuntimeInfo {
   vitals: VitalSnapshot;
   /** Age computed at the backend frame timestamp; null unless canonical vitals are fresh. */
   vitalsAgeMs: number | null;
+  /** Số gói hurt đã nhận từ lúc bot bắt đầu và thời điểm gói gần nhất (ms epoch); để vận hành thấy ngay khi nhân vật bị tấn công. */
+  hurtCount: number;
+  lastHurtAt: number | null;
   derivedMax: DerivedMaxSnapshot;
   downed: boolean | null;
   /** Weak presence signal from the self row; never treated as absolute HP. */
@@ -164,6 +167,8 @@ interface ActiveBot {
   monstersContext: AccountRuntimeInfo['monstersContext'];
   /** Last dashboard world broadcast; snap2 may arrive more frequently than WS clients need. */
   lastWorldSnapshotBroadcastAt: number;
+  hurtCount: number;
+  lastHurtAt: number | null;
   /** Receipt time of the most recent snap2 snapshot accepted by the worker context guard. */
   lastAcceptedWorldAt: number | null;
   lastAcceptedWorldObservedAt: number | null;
@@ -664,6 +669,8 @@ export class WorkerPool {
         playersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
         monstersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
         lastWorldSnapshotBroadcastAt: 0,
+        hurtCount: 0,
+        lastHurtAt: null,
         lastAcceptedWorldAt: null,
         lastAcceptedWorldObservedAt: null,
         lastMapEntryRequestAt: 0,
@@ -986,6 +993,8 @@ export class WorkerPool {
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
       });
       client.on('hurt', (packet: Record<string, unknown>) => {
+        entry.hurtCount += 1;
+        entry.lastHurtAt = Date.now();
         syncCanonicalVitals();
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
       });
@@ -1223,6 +1232,8 @@ export class WorkerPool {
         maxMp: null,
         vitals: emptyVitals(),
         vitalsAgeMs: null,
+        hurtCount: 0,
+        lastHurtAt: null,
         derivedMax: emptyDerivedMax(),
         downed: null,
         selfPresence: null,
@@ -1290,6 +1301,8 @@ export class WorkerPool {
       maxMp: entry.dataStatus.maxMp ? entry.vitals.maxMp : null,
       vitals: { ...entry.vitals },
       vitalsAgeMs: vitalsRuntimeAge(entry.vitals, now),
+      hurtCount: entry.hurtCount,
+      lastHurtAt: entry.lastHurtAt,
       derivedMax: { ...entry.client.state.derivedMax },
       downed: entry.client.state.downed,
       selfPresence: entry.client.state.selfPresence ? { ...entry.client.state.selfPresence } : null,

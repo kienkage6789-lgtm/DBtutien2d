@@ -1,5 +1,40 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Kịch bản live P2 (tiếp cận): harness hủy an toàn, và sự cố nhân vật bị tấn công khi đứng yên
+
+Chạy bởi Claude Code với `TUTIEN_PACKET_TAP=300 TUTIEN_PROBE_APPROACH=1`. Evidence đã redact: `docs/evidence/packet-tap-2026-10-08T03-51-44-595Z.json` (không nằm trong git).
+
+### Kết quả
+
+| Quan sát | Giá trị |
+|---|---|
+| Vị trí | Bot đăng nhập thẳng vào `thanh_truc_lam` (phiên trước để lại), `(286,116)`, khu 1; không cần đi cổng |
+| Harness | Hủy với `window_expired:no_safe_target` sau cửa sổ 240 s: không có quái nào đạt mọi điều kiện an toàn |
+| Di chuyển do harness | 0 (không có kế hoạch, không đi, không đánh, không dùng kỹ năng) |
+| Move đã gửi | 3 move `idle` của `refreshVitals`, ở `(286,116)` |
+| Gói `hurt` | **14 gói** trong phiên, đầu tiên ở giây thứ 99, sau đó từng loạt cách nhau khoảng 1,2 s (giây 257 đến 264). Cả 14 gói có `hp=225` |
+
+Lý do `no_safe_target` (suy ra từ vị trí quái, chưa log từng điều kiện): quái ở đây đứng thành cụm (3 con `son_chuot` cách nhau chục px nên vi phạm luật "không có quái khác trong vùng aggro quanh điểm đích"), con `tieu_phu` ở 502 px vượt giới hạn 450 px, và HP đã cũ quá 30 s trong phần lớn thời gian. Các luật an toàn không bị nới.
+
+### Sự cố: nhân vật bị tấn công khi đứng yên mà người vận hành không thấy
+
+- 14 gói `hurt` đều mang `hp=225` (đầy). Gói `hurt` có các trường `bp`, `byId`, `dmg`, `hp`; tap chỉ ghi `hp`, nên chưa xác nhận lớp giáp `bp` có hấp thụ sát thương hay không. Giả thuyết hợp lý nhưng CHƯA XÁC MINH: `bp` hấp thụ trước nên `hp` không đổi.
+- Người vận hành (Claude Code) đã báo sai "không bị hurt": script theo dõi không hiển thị `hurt`, và việc tìm chữ "hurt" trong log server không có tác dụng vì server không log gói này. Bot đứng ở chỗ có quái tấn công khoảng 3 phút trước khi dừng.
+- Sau khi dừng bot, trạng thái nhân vật trong game (còn lại trong map hay bị gỡ khi ngắt kết nối, `bp`/`hp` thực) CHƯA XÁC MINH; kiểm tra khi đăng nhập lần sau.
+- Vitals lần này thành `fresh` qua gói `hurt` (không qua `you`): `hurt` chỉ mang `hp`/`bp`, nên `mp` vẫn `null`.
+- Lần `refreshVitals` đầu gửi 3 move rồi dừng (`no_ack`) vì guard phát hiện quái đi vào vùng 300 px giữa chừng; đúng thiết kế.
+
+### Đã sửa
+
+- Runtime có thêm `hurtCount` và `lastHurtAt` (worker-pool); script theo dõi hiển thị `hurtCount` và `lastHurtAgoS`. Build 4/4 và test server liên quan pass.
+- `AGENTS.md` và `LIVE_SCENARIO_APPROACH.md`: bắt buộc theo dõi `hurtCount` khi chạy live; `hurtCount` tăng thì dừng bot ngay, không chờ tiêu chí khác.
+
+### Chưa xác minh / cần làm tiếp
+
+- Tiếp cận quái thật chưa chạy được: harness đúng khi từ chối, nhưng ở vị trí này quái dày đặc và tấn công bot ngay cả khi đứng yên. Cần chọn vị trí khác (ít quái, cách xa cụm spawn) hoặc cho phép người vận hành đưa bot tới một điểm cách quái an toàn bằng move-to trước khi harness chạy.
+- Ghi `bp`, `dmg`, `byId` của `hurt` vào tap (chỉ số, không ghi id người chơi) để biết sát thương thực và nguồn (quái hay người).
+- Quái tự tấn công khi chưa tới gần: cần đo bán kính aggro thực tế so với `aggro` trong ENEMY_DEFS (72 px với `son_chuot`); ở `(286,116)` quái ở 22 đến 27 px từng xuất hiện thoáng qua.
+
 ## 2026-10-08 — Nghiệm thu P2 (tiếp cận mục tiêu) của Claude Code
 
 Commit `a6fc5c9`. Codex không build được trong sandbox; Claude Code build và chạy lại.

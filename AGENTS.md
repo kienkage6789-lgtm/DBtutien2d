@@ -35,6 +35,7 @@ Test JS/TS của core-client, automation-engine, server nằm cạnh package (xe
 - Không gửi lệnh tấn công, skill hay di chuyển tự động ngoài phạm vi nhiệm vụ được giao. Không retry mù attack/skill (game không có ACK riêng cho chúng).
 - Không bypass portal để đổi map; protocol chọn `khu` và hồi sinh chưa được xác minh nên giữ nguyên các khóa `KHU_PROTOCOL_UNAVAILABLE`, `RESPAWN_PROTOCOL_UNAVAILABLE`.
 - Không dừng/xóa/sửa tài khoản, cấu hình bot hoặc database khi không được yêu cầu.
+- Khi chạy live, theo dõi `hurtCount`/`lastHurtAt` trong runtime (server không log gói `hurt`). Quái có thể tấn công bot kể cả khi đứng yên; `hurtCount` tăng thì dừng bot ngay (`POST /api/accounts/:id/stop`). Không để bot đứng chờ ở map có quái khi chưa cần.
 
 ### Bảo mật control-plane
 - Server mặc định bind `127.0.0.1`. Bind ngoài loopback bắt buộc `API_TOKEN` >= 32 ký tự. Không nới allowlist origin (`ALLOWED_ORIGINS`), không dùng `*`, không tắt auth.

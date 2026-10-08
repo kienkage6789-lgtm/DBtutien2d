@@ -54,6 +54,11 @@ Thời gian chọn đường tối đa 480 px có dư địa so với giới h�
 | Bề mặt lệnh | Không có attack, skill, packet mới hoặc move sau khi arrived |
 | Evidence | Packet tap có plan/result đã redact và lý do nếu hủy |
 
+## Theo dõi bắt buộc khi chạy
+
+Runtime có `hurtCount` (số gói `hurt` đã nhận) và `lastHurtAt`. Theo dõi chúng mỗi giây từ lúc bot vào game, KHÔNG chỉ trong lúc harness chạy: quái có thể tấn công bot ngay cả khi bot đứng yên (đã xảy ra ở lần chạy 2026-10-08: 14 gói `hurt` khi đứng yên ở `thanh_truc_lam`). `hurtCount` tăng là dừng bot ngay (`POST /api/accounts/:id/stop`), không chờ tiêu chí khác. Server không log gói `hurt`, nên không dùng log server để phát hiện.
+
+Khi harness hủy với `window_expired:no_safe_target`, bot vẫn đang đứng tại chỗ: dừng bot, đừng để chờ.
 ## Dừng khẩn cấp và dừng bình thường
 
 Dừng ngay bot qua cơ chế `stop` hiện có khi thấy `hurt`, HP giảm, `downed`, quái khác xuất hiện trong vùng nguy hiểm, map/context sai, kết nối chập chờn hoặc vị trí đi lệch. Runner sẽ hủy move-to đang chạy khi quan sát các điều kiện này; người vận hành vẫn phải dừng bot ngay, không chờ retry.
