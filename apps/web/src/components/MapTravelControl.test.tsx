@@ -10,8 +10,8 @@ describe('map travel control', () => {
   };
 
   it('explains why map travel is locked', () => {
-    expect(getMapTravelLockReason({ ...base, runnerReady: false })).toContain('VendorRunner');
-    expect(getMapTravelLockReason({ ...base, contextUsable: false })).toContain('Map context');
+    expect(getMapTravelLockReason({ ...base, runnerReady: false })).toContain('Bot chưa chạy');
+    expect(getMapTravelLockReason({ ...base, contextUsable: false })).toContain('vị trí map');
     expect(getMapTravelLockReason({ ...base, autoActive: true })).toContain('Auto');
     expect(getMapTravelLockReason(base)).toBeNull();
   });
