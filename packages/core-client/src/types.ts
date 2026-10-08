@@ -200,7 +200,7 @@ export interface FormationPacket {
 }
 
 export type VitalsStatus = 'unknown' | 'fresh' | 'stale' | 'invalid' | 'conflict';
-export type VitalsSource = 'state' | 'status' | 'you' | 'hurt' | 'revived' | null;
+export type VitalsSource = 'state' | 'status' | 'you' | 'hurt' | 'revived' | 'client' | null;
 
 export type StonesStatus = 'unknown' | 'fresh' | 'stale' | 'invalid';
 export type StonesSource = 'state' | 'formation' | null;

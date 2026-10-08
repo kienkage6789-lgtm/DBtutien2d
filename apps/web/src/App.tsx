@@ -13,6 +13,8 @@ import { AccountRuntime, MapCatalog } from './types';
 import {
   startBot,
   stopBot,
+  startVendorAuto,
+  stopVendorAuto,
   startAllBots,
   stopAllBots,
   deleteAccount,
@@ -157,6 +159,29 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleStartVendorAuto = async (account: AccountRuntime) => {
+    try {
+      const location = resolveMapContext(account);
+      const anchor = location.usable && typeof account.x === 'number' && Number.isFinite(account.x)
+        && typeof account.y === 'number' && Number.isFinite(account.y)
+        ? { mapId: location.mapId, khu: location.khu, x: account.x, y: account.y }
+        : undefined;
+      await startVendorAuto(account.id, anchor);
+      await refreshAccounts();
+    } catch (err: any) {
+      alert(`Lỗi khi bật Auto chính thức: ${err.message}`);
+    }
+  };
+
+  const handleStopVendorAuto = async (id: string) => {
+    try {
+      await stopVendorAuto(id);
+      await refreshAccounts();
+    } catch (err: any) {
+      alert(`Lỗi khi dừng Auto chính thức: ${err.message}`);
+    }
+  };
+
   const handleStartAll = async () => {
     try {
       await startAllBots();
@@ -253,6 +278,8 @@ export const App: React.FC = () => {
                   onRefreshVitals={handleRefreshVitals}
                   onStart={handleStartBot}
                   onStop={handleStopBot}
+                  onStartVendorAuto={handleStartVendorAuto}
+                  onStopVendorAuto={handleStopVendorAuto}
                   onOpenInventory={setActiveInventoryAccount}
                   onOpenConfig={setActiveConfigAccount}
                   onUpdatePassword={setActivePasswordAccount}

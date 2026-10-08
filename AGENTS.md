@@ -55,3 +55,9 @@ Test JS/TS của core-client, automation-engine, server nằm cạnh package (xe
 - Sau khi làm xong: cập nhật `docs/SESSION_LOG.md` (mục mới ở ĐẦU file: thay đổi, lệnh đã chạy, kết quả thật, mục còn chờ xác minh) và checklist ở cuối `docs/FIX_GUIDE.md`.
 - Báo cáo kết quả bằng bảng trạng thái (xong / chặn / chưa xác minh) kèm bằng chứng ngắn. Nếu test hoặc build fail, nói thẳng và kèm output; không tuyên bố đã xong.
 - Git: repo mới khởi tạo. Không commit khi không được yêu cầu, không force-push, không đụng `.gitignore` để bỏ qua file bí mật.
+
+### Headless vendor engine
+- Mỗi tài khoản chỉ có một engine/phiên: `core` hoặc `vendor`; không khởi động engine thứ hai khi engine kia còn chạy.
+- Auto vendor chỉ được bật sau yêu cầu rõ ràng từ API/UI; không tự bật khi server khởi động. Luôn theo dõi `hurtCount`/`lastHurtAt`; khi live có hurt phải dừng bằng `POST /api/accounts/:id/stop`.
+- Vòng `node:vm` phải giữ `fetch`/XHR/`require`/`process` và file system ngoài tầm vendor; đây không phải sandbox bảo mật. Khi gọi `SceneWorld.update(dt)` phải tăng `Game.time`, chạy `flushRaf`, và không `draw`; `Assets.ensureMap`/`Assets.idle` phải settle ngay.
+- Trong supervisor, không toggle Auto khi `Input._autoToggle` còn queue; Auto phải tắt trong mọi pha hồi sinh/hồi phục/đi về. Không suy đoán map/khu/HP khi client chưa cung cấp dữ liệu.

@@ -7,6 +7,8 @@ import { type BotConfig } from '@tutien2d/automation-engine';
 import { getWalkGrid, WALK_TILE_SIZE } from '../config/walk-grid.js';
 import { VERIFIED_PORTAL_EDGES } from '../config/portal-catalog.js';
 import { findNearestWalkableTarget } from '../orchestrator/walk-path.js';
+import type { AutoAnchor } from '../headless/auto-supervisor.js';
+import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
 
 export const apiRouter: Router = Router();
 
@@ -53,6 +55,21 @@ export function vitalsRefreshErrorResponse(reason: string): {
         ? 'VITALS_REFRESH_NOT_CONNECTED'
         : 'VITALS_REFRESH_NOT_ALLOWED';
   return { status: 409, body: { success: false, error: reason, errorCode, retryable } };
+}
+
+function parseVendorAutoAnchor(raw: unknown): AutoAnchor | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('INVALID_AUTO_ANCHOR');
+  const anchor = raw as Record<string, unknown>;
+  if (typeof anchor.mapId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(anchor.mapId)
+    || typeof anchor.x !== 'number' || !Number.isFinite(anchor.x)
+    || typeof anchor.y !== 'number' || !Number.isFinite(anchor.y)) {
+    throw new Error('INVALID_AUTO_ANCHOR');
+  }
+  if (anchor.khu !== undefined && (!Number.isInteger(anchor.khu) || (anchor.khu as number) < 1)) {
+    throw new Error('INVALID_AUTO_ANCHOR');
+  }
+  return { mapId: anchor.mapId, khu: anchor.khu as number | undefined, x: anchor.x as number, y: anchor.y as number };
 }
 
 // GET all accounts with runtime stats
@@ -352,7 +369,12 @@ apiRouter.post('/accounts/:id/start', async (req: Request, res: Response) => {
     await workerPool.startAccount(id);
     res.json({ success: true, data: workerPool.getRuntimeInfo(id) });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    const error = String(err?.message || err);
+    if (error.startsWith('ENGINE_ALREADY_RUNNING')) {
+      res.status(409).json({ success: false, error: 'ENGINE_ALREADY_RUNNING', errorCode: 'ENGINE_ALREADY_RUNNING', retryable: false });
+      return;
+    }
+    res.status(500).json({ success: false, error });
   }
 });
 
@@ -364,6 +386,44 @@ apiRouter.post('/accounts/:id/stop', async (req: Request, res: Response) => {
     res.json({ success: true, data: workerPool.getRuntimeInfo(id) });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/accounts/:id/auto/start', async (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body as Record<string, unknown> : {};
+    const unknown = Object.keys(body).filter((key) => key !== 'anchor');
+    if (unknown.length > 0) throw new Error('INVALID_REQUEST');
+    const anchor = parseVendorAutoAnchor(body.anchor);
+    await workerPool.startVendorAuto(accountId, anchor);
+    res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
+  } catch (err: any) {
+    const error = String(err?.message || err);
+    const response = error === 'INVALID_REQUEST' || error === 'INVALID_AUTO_ANCHOR'
+      ? { status: 400, body: { success: false, error, errorCode: error, retryable: false } }
+      : vendorAutoErrorResponse(error);
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/auto/stop', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    workerPool.stopVendorAuto(accountId);
+    res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
+  } catch (err: any) {
+    const response = vendorAutoErrorResponse(String(err?.message || err));
+    res.status(response.status).json(response.body);
   }
 });
 
@@ -432,6 +492,7 @@ apiRouter.put('/accounts/:id/config', (req: Request, res: Response) => {
     // Keep this allowlist explicit: optional BotConfig fields may not exist in
     // DEFAULT_BOT_CONFIG, and credentials/secrets must never be config fields.
     const allowed = new Set<string>([
+      'engine',
       'legacyAutomationEnabled',
       'autoSell',
       'sellRules',
@@ -462,6 +523,21 @@ apiRouter.put('/accounts/:id/config', (req: Request, res: Response) => {
     const unknown = Object.keys(input).filter((key) => !allowed.has(key));
     if (unknown.length > 0) {
       res.status(400).json({ success: false, error: `Field cấu hình không hỗ trợ: ${unknown.join(', ')}.` });
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(input, 'engine')
+      && input.engine !== 'core' && input.engine !== 'vendor') {
+      res.status(400).json({ success: false, error: 'engine phải là core hoặc vendor.', errorCode: 'INVALID_ENGINE', retryable: false });
+      return;
+    }
+    const activeEngine = workerPool.getActiveEngine(id);
+    if (activeEngine && input.engine !== undefined && input.engine !== activeEngine) {
+      res.status(409).json({
+        success: false,
+        error: 'Không thể đổi engine khi phiên hiện tại còn chạy.',
+        errorCode: 'ENGINE_ALREADY_RUNNING',
+        retryable: false,
+      });
       return;
     }
     if (Object.prototype.hasOwnProperty.call(input, 'trainingMonsterType')) {

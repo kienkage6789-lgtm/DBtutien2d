@@ -35,3 +35,4 @@ Bàn giao phải có thứ tự: nhả kết nối, đợi server xác nhận ph
 - Trạng thái cục bộ của client chạy ngầm (cooldown, hàng đợi) mất khi bàn giao: chưa đánh giá tác hại.
 - Chi phí CPU/RAM mỗi tài khoản khi chạy ngầm trên Linux: chưa đo.
 - Điều khoản dịch vụ của game về bot/tự động hóa: người dùng tự cân nhắc.
+Trạng thái triển khai headless: `VendorRunner` là chủ phiên `headless` cho account `engine: "vendor"`. `core` vẫn là mặc định và không tự chuyển. API release/resume sang browser/viewer chưa được code; vì vậy phần bàn giao hai chiều dưới đây vẫn là kế hoạch, không được suy ra là đã hỗ trợ.

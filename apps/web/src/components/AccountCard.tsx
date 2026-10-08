@@ -35,6 +35,8 @@ interface AccountCardProps {
   account: AccountRuntime;
   onStart: (id: string) => void;
   onStop: (id: string) => void;
+  onStartVendorAuto: (account: AccountRuntime) => void;
+  onStopVendorAuto: (id: string) => void;
   onOpenInventory: (account: AccountRuntime) => void;
   onOpenConfig: (account: AccountRuntime) => void;
   onUpdatePassword: (account: AccountRuntime) => void;
@@ -53,6 +55,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   account,
   onStart,
   onStop,
+  onStartVendorAuto,
+  onStopVendorAuto,
   onOpenInventory,
   onOpenConfig,
   onUpdatePassword,
@@ -372,6 +376,44 @@ export const AccountCard: React.FC<AccountCardProps> = ({
           </div>
           {account.training.reason && <p className="mt-1 text-amber-300">{account.training.reason}</p>}
           <p className="mt-1 text-slate-300">Quái mục tiêu: {account.training.target.monsterType?.trim() || 'Mọi loại'}</p>
+        </div>
+      )}
+
+      {account.engine === 'vendor' && account.vendor && (
+        <div className="mb-3 rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2 text-[11px]">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-cyan-200">Auto chính thức · {account.vendor.supervisor.phase}</span>
+            <span className={account.vendor.autoRequested ? 'text-emerald-300' : 'text-slate-400'}>
+              {account.vendor.autoRequested ? 'Đang bật' : 'Đang tắt'}
+            </span>
+          </div>
+          <p className="mt-1 text-slate-300">
+            Neo: {account.vendor.supervisor.anchor
+              ? `${account.vendor.supervisor.anchor.mapId} · Khu ${account.vendor.supervisor.anchor.khu ?? '—'} · X ${displayNumber(account.vendor.supervisor.anchor.x)} · Y ${displayNumber(account.vendor.supervisor.anchor.y)}`
+              : 'chưa đặt'}
+          </p>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
+            <span>Chết: {account.vendor.supervisor.stats.deaths}</span>
+            <span>Chuyến về: {account.vendor.supervisor.stats.trips}</span>
+            <span>Hurt: {account.vendor.hurtCount}</span>
+          </div>
+          {account.vendor.supervisor.phase === 'halted' && (
+            <p role="alert" className="mt-1 text-rose-300">Đã dừng an toàn: {account.vendor.supervisor.reasonCode || 'không rõ lý do'}</p>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={account.vendor.autoRequested || account.vendor.downed === true || account.vitals?.status !== 'fresh'}
+              onClick={() => onStartVendorAuto(account)}
+              className="rounded-lg border border-cyan-500/40 bg-cyan-600/20 px-2.5 py-1.5 text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >Bật Auto tại vị trí này</button>
+            <button
+              type="button"
+              disabled={!account.vendor.autoRequested && account.vendor.supervisor.phase === 'idle'}
+              onClick={() => onStopVendorAuto(account.id)}
+              className="rounded-lg border border-rose-500/40 bg-rose-600/20 px-2.5 py-1.5 text-rose-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >Dừng Auto</button>
+          </div>
         </div>
       )}
 

@@ -2,10 +2,12 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { fileURLToPath } from 'node:url';
 
 dotenv.config();
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../');
 
 /**
  * Master key used to encrypt stored passwords / refresh tokens (AES-256-GCM).
@@ -51,6 +53,7 @@ export const CONFIG = {
   DATA_DIR,
   ENCRYPTION_SECRET: resolveEncryptionSecret(),
   GAME_SERVER_URL: process.env.GAME_SERVER_URL || 'wss://game.tutien2d.online/',
+  VENDOR_CLIENT_DIR: process.env.VENDOR_CLIENT_DIR || path.join(REPO_ROOT, 'vendor/tutien2d-public-client/2026-10-06'),
   // Public values shipped by the game itself in runtime-config.js (anon key is public by design).
   SUPABASE_URL: process.env.SUPABASE_URL || 'https://qrheujgqeplgozswcsun.supabase.co',
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'sb_publishable_v4IGMcr9d15bJCrzq83itw_JfwhpjcZ',

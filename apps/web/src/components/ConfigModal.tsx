@@ -92,6 +92,19 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ account, mapCatalog, o
           <div className="py-16 text-center text-slate-400 text-sm">{loadError || 'Đang tải cấu hình bot...'}</div>
         ) : (
           <div className="space-y-5 my-6 max-h-[60vh] overflow-y-auto pr-1 text-sm text-slate-200">
+            <div className="p-4 rounded-xl bg-cyan-950/20 border border-cyan-500/25 space-y-2">
+              <h3 className="font-semibold text-cyan-100">Engine chạy bot</h3>
+              <p className="text-xs text-slate-400">Core giữ hành vi hiện tại. Vendor nạp client chính thức ở chế độ headless; một tài khoản chỉ có một phiên.</p>
+              <select
+                value={config.engine ?? 'core'}
+                onChange={(e) => setConfig({ ...config, engine: e.target.value as 'core' | 'vendor' })}
+                className="w-full rounded-lg bg-slate-950 border border-slate-800 px-3 py-1.5 text-slate-100"
+              >
+                <option value="core">Core (mặc định)</option>
+                <option value="vendor">Vendor · client chính thức</option>
+              </select>
+            </div>
+
             {/* Auto Sell Section */}
             <div className="hidden p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">

@@ -1346,3 +1346,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Tài liệu `docs/LIVE_SCENARIO_APPROACH.md` đã mô tả điều kiện, API map/enter, vitals/refresh, tiêu chí thành công và dừng khẩn.
 5. [~] Test TypeScript/server và `pnpm build` bị chặn bởi toolchain sandbox (`pnpm` thiếu PATH, Corepack EACCES, TypeScript EPERM); live P2 chưa chạy.
 6. [ ] Xác minh live: tới tầm ≤8 giây, không `hurt`, không xuyên vật cản, không move sau arrived; đo quái đuổi/leash và độ ổn định đứng yên.
+## L. Engine vendor headless — checklist 2026-10-08
+
+1. [x] `vendor-env.ts` nap read-only 241 script theo `index.html`; co DOM/canvas stub, RNG/clock offline, WebSocket inject duoc, `flushRaf`, Assets settle ngay, chan fetch/XHR/require/process va gioi han console error.
+2. [x] `auto-supervisor.ts` giu neo va cac pha farming/down_wait/reviving/recovering/traveling/resuming/halted; Auto off trong pha an toan, max deaths/timeout/HP gate, under-one-tile arrival.
+3. [x] `vendor-runner.ts` mot account/mot phien, TokenManager/sessionUpdated, Gateway.login truoc scene, real clock loop khong draw, counters/reconnect/watchdog/stop cleanup.
+4. [x] Worker/API/UI engine vendor opt-in, mot engine moi account, Auto API qua auth/error envelope, dashboard hien phase/neo/death-trip/hurt va halt.
+5. [x] Test source moi cho vm env, supervisor traps 1–6, runner fake WebSocket, engine exclusivity va Auto error envelope; nhom headless/API moi nhat 8/8 pass bang Node + tsx workaround.
+6. [~] `pnpm build`/full test chua chay duoc trong sandbox: pnpm thieu PATH, Corepack bi EACCES mang, TypeScript bi EPERM, tsx bi ENOMEM; live reconnect/token-expiry/death/revive/long-run chua xac minh.

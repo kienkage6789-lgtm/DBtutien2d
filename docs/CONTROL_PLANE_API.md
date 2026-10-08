@@ -21,6 +21,8 @@ reverse proxy và biện pháp authorization phù hợp.
 
 ## 2. Response envelope
 
+Vendor Auto routes use the stable machine-readable form `{success:false,error,errorCode,retryable}`; authenticated requests also retain the existing request-id behavior from the control-plane middleware.
+
 Thành công thường có:
 
 ```json
@@ -363,3 +365,22 @@ cho mọi client kết nối. Không gửi credential qua kênh này.
 6. Thêm idempotency key cho start/stop/restart/action và mọi mutation.
 7. Thêm rate limit, timeout, cancellation và metrics cho các route/action.
 8. Redact credential trong log; revoke mọi token từng commit vào repo.
+### 3.5. Vendor engine va Auto headless
+
+Moi route `/api` deu nam sau `requireAuth`; khong co route public rieng cho vendor. `BotConfig.engine` nhan `core` (mac dinh, giu hanh vi hien tai) hoac `vendor`. Khong the doi engine khi account dang co phien; account chi co mot engine mot luc.
+
+| Method | Path | Body | Thanh cong | Loi chinh |
+| --- | --- | --- | --- | --- |
+| `PUT` | `/api/accounts/:id/config` | `{ "engine": "core" | "vendor" }` hoac partial config | `200`, tra `data` config merge va `runtime` | `400 INVALID_ENGINE`, `409 ENGINE_ALREADY_RUNNING` (`retryable:false`) |
+| `POST` | `/api/accounts/:id/auto/start` | `{}` de lay neo vi tri hien tai, hoac `{ "anchor": { "mapId", "khu?", "x", "y" } }` | `200`, runtime co `engine:"vendor"` va `vendor` snapshot | `404 ACCOUNT_NOT_FOUND`; `409` neu chua chay vendor, chua vao game, vitals chua fresh, hoac dang gục |
+| `POST` | `/api/accounts/:id/auto/stop` | none | `200`, runtime vendor voi Auto idle/tat | `404 ACCOUNT_NOT_FOUND`; `409` neu khong co vendor session |
+
+`anchor.mapId` phai khop `[a-zA-Z0-9_-]{1,64}`, `x/y` la so huu han, `khu` neu co la so nguyen >= 1; runner con kiem tra map co trong `MapData`. Neu vitals client chua ro hoac nhan vat dang gục, start bi chan, khong thay gia tri bang 0.
+
+Error envelope cho Auto:
+
+```json
+{ "success": false, "error": "VENDOR_VITALS_UNKNOWN", "errorCode": "VENDOR_VITALS_UNKNOWN", "retryable": true }
+```
+
+`retryable:true` chi dung cho trang thai co the tu het khi runner nhan them state/vitals (`VENDOR_NOT_IN_GAME`, `VENDOR_VITALS_UNKNOWN`, `VENDOR_NOT_RUNNING`); `VENDOR_CHARACTER_DOWN`, `ENGINE_*`, map neo sai va halted safety la `false`. Runtime vendor gom lifecycle/connection, supervisor phase + anchor, stats deaths/revives/trips/resumed, `hurtCount`/`lastHurtAt`, packet op counters, move/attack/skill/cmd, packet/update/console errors, fps/uptime/RSS va vitals `source:"client"`. Token/self id/ten nhan vat/id nguoi choi khac khong nam trong envelope hay log.

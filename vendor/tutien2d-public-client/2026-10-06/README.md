@@ -3,8 +3,16 @@
 - Source: https://tutien2d.online/
 - Snapshot date: 2026-10-06
 - Downloaded: 246 same-origin script/style/manifest references plus this index
-- Purpose: local protocol and UI analysis only; this snapshot is not imported by
-  the bot build.
+- Purpose: local protocol/UI analysis and read-only runtime loading by the
+  server's headless vendor engine. The snapshot is loaded at runtime exactly as
+  checked in; it is never modified or bundled into the core bot build.
+
+The server uses `apps/server/src/headless/vendor-env.ts` to load the snapshot in
+Node's `node:vm` with DOM/canvas stand-ins and no `require`, `process`, file
+system, `fetch`, or XHR capability exposed to vendor code. This is capability
+control for a trusted, reviewed snapshot, not a security sandbox: `node:vm` is
+not a hardened isolation boundary. The environment does not draw and the
+server owns the real-time update loop.
 
 Relevant files for packet analysis:
 

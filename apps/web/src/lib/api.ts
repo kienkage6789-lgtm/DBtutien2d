@@ -295,6 +295,24 @@ export async function stopBot(id: string): Promise<AccountRuntime> {
   return json.data;
 }
 
+export async function startVendorAuto(id: string, anchor?: { mapId: string; khu?: number | null; x: number; y: number }): Promise<AccountRuntime> {
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/auto/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(anchor ? { anchor } : {}),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.errorCode ? `${json.error} [${json.errorCode}]` : json.error);
+  return json.data;
+}
+
+export async function stopVendorAuto(id: string): Promise<AccountRuntime> {
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/auto/stop`, { method: 'POST' });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.errorCode ? `${json.error} [${json.errorCode}]` : json.error);
+  return json.data;
+}
+
 export async function restartBot(id: string): Promise<AccountRuntime> {
   const res = await apiFetch(`${API_BASE}/accounts/${id}/restart`, { method: 'POST' });
   const json = await res.json();

@@ -24,6 +24,12 @@ import { StationaryProbe, type StationaryProbeSnapshot } from '../debug/stationa
 import { ApproachProbe } from '../debug/approach-probe.js';
 import type { ApproachSnapshot } from './approach-runner.js';
 import { refreshVitals as runVitalsRefresh, type VitalsRefreshResult } from './vitals-refresh.js';
+import { VendorRunner, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import type { AutoAnchor } from '../headless/auto-supervisor.js';
+import { assertSingleEngine } from '../headless/engine-selection.js';
+
+export type { RuntimeEngine } from '../headless/engine-selection.js';
+import type { RuntimeEngine } from '../headless/engine-selection.js';
 
 export interface TrainingRuntimeInfo {
   enabled: boolean;
@@ -63,9 +69,9 @@ export interface MoveToRuntimeInfo {
   operationId: string;
   status: 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';
   mapId: string;
-  khu: number;
-  x: number;
-  y: number;
+  khu: number | null;
+  x: number | null;
+  y: number | null;
   updatedAt: number;
   reason: string | null;
 }
@@ -73,6 +79,7 @@ export interface MoveToRuntimeInfo {
 export interface AccountRuntimeInfo {
   id: string;
   accountName: string;
+  engine: RuntimeEngine;
   status: 'running' | 'stopped' | 'error';
   /** Raw connection state: DISCONNECTED | CONNECTING | HANDSHAKING | IN_GAME | RECONNECTING */
   connection: string;
@@ -102,9 +109,9 @@ export interface AccountRuntimeInfo {
   stones: number | null;
   stonesSnapshot: StonesSnapshot;
   mapId: string;
-  khu: number;
-  x: number;
-  y: number;
+  khu: number | null;
+  x: number | null;
+  y: number | null;
   bagCount: number;
   latencyMs: number;
   activity: string;
@@ -113,9 +120,9 @@ export interface AccountRuntimeInfo {
   training: TrainingRuntimeInfo;
   bag: Record<string, number>;
   farmMapId: string;
-  farmKhu: number;
-  farmX: number;
-  farmY: number;
+  farmKhu: number | null;
+  farmX: number | null;
+  farmY: number | null;
   soKhu: number | null;
   mapContext: {
     mapId: string | null;
@@ -145,6 +152,7 @@ export interface AccountRuntimeInfo {
   };
   monsters: Array<{ id: string; name?: string; x: number; y: number; hp?: number; maxHp?: number }>;
   players: Array<{ id: string; name?: string; x: number; y: number; realm?: string; hp?: number }>;
+  vendor?: VendorRunnerSnapshot;
 }
 
 interface ActiveBot {
@@ -178,6 +186,10 @@ interface ActiveBot {
   navigationTarget?: string;
   moveTo?: MoveToRuntimeInfo | null;
   moveToPromise?: Promise<void>;
+}
+
+interface ActiveVendor {
+  runner: VendorRunner;
 }
 
 export interface ObservedMap {
@@ -563,6 +575,7 @@ const emptyNavigation = (): NavigationRuntimeInfo => ({
 
 export class WorkerPool {
   private activeBots: Map<string, ActiveBot> = new Map();
+  private activeVendors: Map<string, ActiveVendor> = new Map();
   private readonly stationaryProbe = new StationaryProbe();
   private readonly approachProbe = new ApproachProbe();
   private lastMoveToByAccount: Map<string, MoveToRuntimeInfo> = new Map();
@@ -589,10 +602,16 @@ export class WorkerPool {
     const account = db.getAccountById(accountId);
     if (!account) throw new Error(`Account not found: ${accountId}`);
 
-    if (this.activeBots.has(accountId)) {
-      // Already running
+    const botConfig = db.getBotConfig(accountId);
+    const requestedEngine: RuntimeEngine = botConfig.engine === 'vendor' ? 'vendor' : 'core';
+
+    if (this.activeBots.has(accountId) || this.activeVendors.has(accountId)) {
+      const activeEngine: RuntimeEngine = this.activeVendors.has(accountId) ? 'vendor' : 'core';
+      assertSingleEngine(activeEngine, requestedEngine);
       return true;
     }
+
+    if (requestedEngine === 'vendor') return await this.startVendorAccount(accountId, account);
 
     const creds = db.getCredentials(accountId);
     if (!creds.password && !creds.legacyToken) {
@@ -603,8 +622,6 @@ export class WorkerPool {
     }
 
     try {
-      const botConfig = db.getBotConfig(accountId);
-
       let entry!: ActiveBot;
       const client = new TuTienClient({
         serverUrl: CONFIG.GAME_SERVER_URL,
@@ -1093,10 +1110,65 @@ export class WorkerPool {
     }
   }
 
+  private async startVendorAccount(accountId: string, account: NonNullable<ReturnType<typeof db.getAccountById>>): Promise<boolean> {
+    const creds = db.getCredentials(accountId);
+    if (!creds.password && !creds.refreshToken && !creds.legacyToken) {
+      const msg = 'VENDOR_CREDENTIALS_MISSING: account has no password, refresh token, or legacy token.';
+      db.updateAccount(accountId, { status: 'error', authError: msg });
+      wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      throw new Error(msg);
+    }
+
+    const runner = new VendorRunner({
+      accountName: account.accountName,
+      credentials: creds,
+      gameServerUrl: CONFIG.GAME_SERVER_URL,
+      allowedGameServerUrl: CONFIG.GAME_SERVER_URL,
+      vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
+      supabaseUrl: CONFIG.SUPABASE_URL,
+      supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
+      onSessionUpdated: (session) => {
+        db.updateCredentials(accountId, { refreshToken: session.refreshToken });
+      },
+      onLog: (event) => {
+        const level = event.code.includes('failed') || event.code.includes('error') || event.code.includes('halted') ? 'error'
+          : event.code.includes('warning') || event.code.includes('death') ? 'warn' : 'info';
+        const message = `Vendor ${event.code}${event.reasonCode ? ` (${event.reasonCode})` : ''}`;
+        const saved = db.addLog(accountId, level, 'VendorRunner', message);
+        wsHub.broadcastLog(saved);
+        wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      },
+    });
+    this.activeVendors.set(accountId, { runner });
+    try {
+      await runner.start();
+      db.updateAccount(accountId, { status: 'running', authError: null });
+      wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      return true;
+    } catch (error) {
+      this.activeVendors.delete(accountId);
+      db.updateAccount(accountId, { status: 'error' });
+      const rawCode = error instanceof Error ? error.message.split(':', 1)[0].trim() : '';
+      const code = /^[A-Z][A-Z0-9_]{2,79}$/.test(rawCode) ? rawCode : 'UNKNOWN';
+      const saved = db.addLog(accountId, 'error', 'VendorRunner', `Vendor runner start failed (${code})`);
+      wsHub.broadcastLog(saved);
+      wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      throw error;
+    }
+  }
+
   /**
    * Stop an active bot instance
    */
   public async stopAccount(accountId: string, opts: { keepStatus?: boolean } = {}): Promise<boolean> {
+    const vendor = this.activeVendors.get(accountId);
+    if (vendor) {
+      this.activeVendors.delete(accountId);
+      await vendor.runner.stop();
+      if (!opts.keepStatus) db.updateAccount(accountId, { status: 'stopped' });
+      wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      return true;
+    }
     const entry = this.activeBots.get(accountId);
     const finalStatus = opts.keepStatus ? undefined : ({ status: 'stopped' } as const);
 
@@ -1133,7 +1205,7 @@ export class WorkerPool {
     const accounts = db.getAccounts();
     let first = true;
     for (const acc of accounts) {
-      if (this.activeBots.has(acc.id)) continue;
+      if (this.activeBots.has(acc.id) || this.activeVendors.has(acc.id)) continue;
       try {
         if (!first) {
           const { min, max } = CONFIG.LOGIN_STAGGER_MS;
@@ -1148,13 +1220,49 @@ export class WorkerPool {
   }
 
   public async stopAll(): Promise<void> {
-    const ids = Array.from(this.activeBots.keys());
+    const ids = Array.from(new Set([...this.activeBots.keys(), ...this.activeVendors.keys()]));
     for (const id of ids) {
       await this.stopAccount(id);
     }
   }
 
+  public getActiveEngine(accountId: string): RuntimeEngine | null {
+    if (this.activeVendors.has(accountId)) return 'vendor';
+    if (this.activeBots.has(accountId)) return 'core';
+    return null;
+  }
+
+  public async startVendorAuto(accountId: string, anchor?: AutoAnchor): Promise<VendorRunnerSnapshot> {
+    const activeEngine = this.getActiveEngine(accountId);
+    if (activeEngine !== 'vendor') {
+      throw new Error(activeEngine
+        ? 'ENGINE_CORE_ACTIVE: stop the core engine before starting vendor Auto'
+        : 'ENGINE_VENDOR_REQUIRED: start the vendor engine first');
+    }
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    await active.runner.startAuto(anchor);
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return active.runner.getSnapshot();
+  }
+
+  public stopVendorAuto(accountId: string): VendorRunnerSnapshot {
+    const activeEngine = this.getActiveEngine(accountId);
+    if (activeEngine !== 'vendor') {
+      throw new Error(activeEngine ? 'ENGINE_CORE_ACTIVE: core engine has no vendor Auto' : 'VENDOR_NOT_RUNNING');
+    }
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    active.runner.stopAuto();
+    const snapshot = active.runner.getSnapshot();
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return snapshot;
+  }
+
   public refreshVitals(accountId: string, options: { allowNearMonsters?: boolean } = {}): Promise<VitalsRefreshResult> {
+    if (this.activeVendors.has(accountId)) {
+      return Promise.resolve({ status: 'skipped', reason: 'vendor_engine', movesSent: 0 });
+    }
     const entry = this.activeBots.get(accountId);
     if (!entry) return Promise.resolve({ status: 'skipped', reason: 'disconnected', movesSent: 0 });
     return runVitalsRefresh({
@@ -1175,6 +1283,9 @@ export class WorkerPool {
   public getRuntimeInfo(accountId: string): AccountRuntimeInfo {
     const acc = db.getAccountById(accountId);
     const entry = this.activeBots.get(accountId);
+    const vendor = this.activeVendors.get(accountId);
+    if (vendor) return this.getVendorRuntimeInfo(accountId, acc, vendor.runner);
+    const configuredEngine: RuntimeEngine = db.getBotConfig(accountId).engine === 'vendor' ? 'vendor' : 'core';
     const authInfo = {
       authError: acc?.authError ?? null,
       hasPassword: !!acc?.encryptedPassword,
@@ -1220,6 +1331,7 @@ export class WorkerPool {
       return {
         id: accountId,
         accountName: acc?.accountName || 'Unknown',
+        engine: configuredEngine,
         status: (acc?.status as any) || 'stopped',
         connection: 'DISCONNECTED',
         ...authInfo,
@@ -1289,6 +1401,7 @@ export class WorkerPool {
     return {
       id: accountId,
       accountName: acc?.accountName || overview.name,
+      engine: 'core',
       status: 'running',
       connection: String(overview.connectionStatus),
       ...authInfo,
@@ -1334,6 +1447,102 @@ export class WorkerPool {
       playersContext: { ...entry.playersContext, fresh: playersFresh },
       monstersContext: { ...entry.monstersContext, fresh: monstersFresh },
       worldSync: entry.client.getSnap2Stats(),
+    };
+  }
+
+  private getVendorRuntimeInfo(
+    accountId: string,
+    acc: ReturnType<typeof db.getAccountById>,
+    runner: VendorRunner,
+  ): AccountRuntimeInfo {
+    const snapshot = runner.getSnapshot();
+    const locationKnown = snapshot.mapId !== null && snapshot.khu !== null && snapshot.x !== null && snapshot.y !== null;
+    const vitalsFresh = snapshot.vitals.fresh;
+    const emptyTraining: TrainingRuntimeInfo = {
+      enabled: false,
+      phase: 'STOPPED',
+      sessionId: null,
+      reason: null,
+      pending: null,
+      target: { mapId: '', khu: 1, x: null, y: null, radius: 0, attackIntervalMs: 0, monsterType: null },
+      protocol: { khuSelectionSupported: false, respawnSupported: false },
+    };
+    const mapContext: AccountRuntimeInfo['mapContext'] = {
+      mapId: snapshot.mapId,
+      khu: snapshot.khu,
+      soKhu: null,
+      observedAt: locationKnown ? Date.now() : null,
+      fresh: locationKnown,
+    };
+    return {
+      id: accountId,
+      accountName: acc?.accountName || 'Unknown',
+      engine: 'vendor',
+      status: snapshot.lifecycle === 'error' ? 'error' : 'running',
+      connection: snapshot.connection,
+      authError: acc?.authError ?? null,
+      hasPassword: !!acc?.encryptedPassword,
+      tokenExpiresAt: snapshot.tokenExpiresAt,
+      characterName: acc?.characterName || acc?.accountName || 'Unknown',
+      realm: '',
+      hp: vitalsFresh ? snapshot.hp : null,
+      maxHp: vitalsFresh ? snapshot.maxHp : null,
+      mp: vitalsFresh ? snapshot.mp : null,
+      maxMp: vitalsFresh ? snapshot.maxMp : null,
+      vitals: {
+        hp: snapshot.hp,
+        maxHp: snapshot.maxHp,
+        mp: snapshot.mp,
+        maxMp: snapshot.maxMp,
+        status: vitalsFresh ? 'fresh' : 'unknown',
+        source: vitalsFresh ? 'client' : null,
+        observedAt: snapshot.vitals.observedAt,
+      },
+      vitalsAgeMs: vitalsFresh && snapshot.vitals.observedAt !== null ? Math.max(0, Date.now() - snapshot.vitals.observedAt) : null,
+      hurtCount: snapshot.hurtCount,
+      lastHurtAt: snapshot.lastHurtAt,
+      derivedMax: emptyDerivedMax(),
+      downed: snapshot.downed,
+      selfPresence: null,
+      stones: null,
+      stonesSnapshot: emptyStones(),
+      mapId: snapshot.mapId ?? '',
+      khu: snapshot.khu,
+      x: snapshot.x,
+      y: snapshot.y,
+      bagCount: 0,
+      latencyMs: 0,
+      activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
+      navigation: emptyNavigation(),
+      moveTo: null,
+      training: emptyTraining,
+      bag: {},
+      farmMapId: '',
+      farmKhu: null,
+      farmX: null,
+      farmY: null,
+      soKhu: null,
+      mapContext,
+      mapContextAgeMs: mapContext.observedAt === null ? null : Math.max(0, Date.now() - mapContext.observedAt),
+      mapContextIsCurrent: locationKnown,
+      lastAcceptedWorldAt: null,
+      playersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
+      monstersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
+      worldSync: emptySnap2Stats(),
+      dataStatus: {
+        realm: false,
+        hp: vitalsFresh && snapshot.hp !== null,
+        maxHp: vitalsFresh && snapshot.maxHp !== null,
+        mp: vitalsFresh && snapshot.mp !== null,
+        maxMp: vitalsFresh && snapshot.maxMp !== null,
+        stones: false,
+        location: locationKnown,
+        monsters: false,
+        players: false,
+      },
+      monsters: [],
+      players: [],
+      vendor: snapshot,
     };
   }
 
@@ -1530,6 +1739,11 @@ export class WorkerPool {
   ): Promise<void> {
     const operation = entry.moveTo!;
     const { mapId, khu, x: targetX, y: targetY } = operation;
+    // MoveToRuntimeInfo cho phép x/y null (engine vendor); engine core luôn có đích số.
+    if (targetX === null || targetY === null) {
+      this.setMoveToStatus(accountId, entry, 'failed', 'invalid_target');
+      return;
+    }
     const startedAt = Date.now();
     const initialLocationObservedAt = entry.mapContext.observedAt ?? 0;
     const maxDurationMs = 45_000;

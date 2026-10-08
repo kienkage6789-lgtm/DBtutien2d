@@ -6,6 +6,8 @@ export interface ItemSellRules {
 }
 
 export interface BotConfig {
+  /** Runtime engine. Core remains the backwards-compatible default. */
+  engine?: 'core' | 'vendor';
   /** Master kill switch for legacy quest, inventory, and potion automation. */
   legacyAutomationEnabled?: boolean;
   autoSell: boolean;
@@ -42,6 +44,7 @@ export interface BotConfig {
 }
 
 export const DEFAULT_BOT_CONFIG: BotConfig = {
+  engine: 'core',
   legacyAutomationEnabled: false,
   autoSell: false,
   sellRules: {

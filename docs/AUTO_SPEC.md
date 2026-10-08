@@ -538,4 +538,12 @@ Hai lỗi môi trường (ảnh hưởng cả script online) đã nêu ở trên
 - Đi về qua cổng có thể bị chặn bởi điều kiện mở khóa của map; supervisor dừng với lý do `cổng ... không mở`.
 - Neo là vị trí lúc bật Auto: Auto của client tự rời neo để đuổi quái, supervisor chỉ đưa về neo sau khi chết, chưa kéo về khi trôi xa (không được yêu cầu).
 - Chưa tích hợp vào `apps/server` (hiện là script spike).
+### 15.9 Quyết định tích hợp server, 2026-10-08
 
+Các spike ở 15.5–15.8 nay được viết lại thành module TypeScript trong `apps/server/src/headless/`: `vendor-env.ts`, `vendor-runner.ts`, `auto-supervisor.ts`. Đây là đường chính cho tài khoản chọn `engine: "vendor"`; các pha P2 đến P7 viết tay trong `automation-engine` chỉ còn là đường legacy cho `engine: "core"`, không bị xóa và không tự chuyển account hiện có.
+
+Runner giữ một phiên cho một account, lấy token bằng `TokenManager`, chỉ dùng `CONFIG.GAME_SERVER_URL`, dựng cảnh sau `Gateway.login`, chạy đồng hồ thật khoảng 16 ms và không gọi `draw`. Auto chỉ bật qua API/UI; runtime/dashboard hiển thị lifecycle, pha supervisor, neo, chết/chuyến về, `hurtCount`, packet counters, lỗi xử lý và cảnh báo halted. `start` bị từ chối khi engine khác đang chạy; `stop` luôn tắt Auto, dừng player và ngắt socket.
+
+Các bẫy 1–6 của 15.6/15.8 được giữ thành invariant/test: tăng `Game.time`, flush rAF, Assets settle ngay, không toggle khi queue còn lệnh, Auto off trong mọi pha hồi sinh/hồi phục/đi về, và coi khoảng cách dưới một ô là đã tới nếu Pathfinder không trả route. Đồng hồ giả/RNG có hạt giống chỉ dùng offline test; runner online dùng `Date.now()`/`performance.now()` thật.
+
+Chưa xác minh live sau khi chuyển module: reconnect thật, refresh token hết hạn giữa phiên, chạy dài/CPU-RSS, chết/hồi sinh thật và quy tắc khu. Không dùng `process.chdir`; vendor snapshot được nạp read-only và `node:vm` chỉ là capability boundary cho mã trusted, không phải sandbox bảo mật.

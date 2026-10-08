@@ -1,6 +1,40 @@
+export interface VendorRuntimeSnapshot {
+  lifecycle: string;
+  connection: string;
+  autoRequested: boolean;
+  supervisor: {
+    phase: string;
+    anchor: { mapId: string; khu?: number | null; x: number; y: number } | null;
+    reasonCode: string | null;
+    stats: { deaths: number; revives: number; trips: number; resumed: number };
+  };
+  hurtCount: number;
+  lastHurtAt: number | null;
+  killsBySelf: number;
+  packetErrors: number;
+  updateErrors: number;
+  frames: number;
+  fps: number;
+  uptimeMs: number;
+  memory: { rssBytes: number; rssGrowthBytes: number };
+  tokenExpiresAt: number | null;
+  mapId: string | null;
+  khu: number | null;
+  x: number | null;
+  y: number | null;
+  hp: number | null;
+  maxHp: number | null;
+  mp: number | null;
+  maxMp: number | null;
+  downed: boolean | null;
+  consoleErrors: string[];
+}
+
 export interface AccountRuntime {
   id: string;
   accountName: string;
+  engine?: 'core' | 'vendor';
+  vendor?: VendorRuntimeSnapshot;
   status: 'running' | 'stopped' | 'error';
   connection?: string;
   authError?: string | null;
@@ -19,7 +53,7 @@ export interface AccountRuntime {
     maxMp: number | null;
     status: 'unknown' | 'fresh' | 'stale' | 'invalid' | 'conflict';
     reason?: string;
-    source: 'state' | 'status' | 'you' | 'hurt' | 'revived' | null;
+    source: 'state' | 'status' | 'you' | 'hurt' | 'revived' | 'client' | null;
     observedAt: number | null;
   };
   /** Backend-computed age at frame send time; null unless vitals are fresh. */
@@ -44,9 +78,9 @@ export interface AccountRuntime {
     observedAt: number | null;
   };
   mapId: string;
-  khu: number;
-  x: number;
-  y: number;
+  khu: number | null;
+  x: number | null;
+  y: number | null;
   bagCount: number;
   latencyMs: number;
   activity: string;
@@ -77,9 +111,9 @@ export interface AccountRuntime {
   } | null;
   bag: Record<string, number>;
   farmMapId: string;
-  farmKhu: number;
-  farmX: number;
-  farmY: number;
+  farmKhu: number | null;
+  farmX: number | null;
+  farmY: number | null;
   training?: {
     enabled: boolean;
     phase: string;
@@ -200,6 +234,7 @@ export interface MapRequestReceipt {
 }
 
 export interface BotConfig {
+  engine?: 'core' | 'vendor';
   autoSell: boolean;
   sellRules: {
     whitelist: string[];

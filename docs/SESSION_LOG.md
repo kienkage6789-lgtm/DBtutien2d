@@ -1,5 +1,47 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Nghiệm thu tích hợp engine vendor (client không hiển thị) vào server
+
+Codex tích hợp theo `PROMPT_VENDOR_RUNNER.md`: `apps/server/src/headless/` (`vendor-env.ts`, `auto-supervisor.ts`, `vendor-runner.ts`, `engine-selection.ts`), engine `core` | `vendor` mỗi tài khoản (mặc định `core`), API `POST /accounts/:id/auto/start|stop`, dashboard. Sandbox của Codex không build được; Claude Code build và chạy lại.
+
+### Lỗi tìm ra khi nghiệm thu và đã sửa
+
+1. **16 lỗi kiểu chỉ lộ khi build** (đợt thứ năm liên tiếp có lỗi loại này): nhánh `switch` không tới được trong supervisor, spread vào `Date`, export thiếu trong test, `khu` null, thu hẹp kiểu sau `await` của `lifecycle`, `stopAuto()` trả sai kiểu snapshot, `MoveToRuntimeInfo.x/y` thành nullable làm hỏng `runMoveTo` (thêm kiểm tra đích hợp lệ).
+2. **Vòng luẩn quẩn vitals (nghiêm trọng, test không bắt được):** `startAuto` đòi đã nhận gói vitals chính thức (`you`/`hurt`/`revived`), nhưng server thật chỉ gửi `you` SAU khi nhân vật di chuyển; nhân vật đứng yên không bao giờ bật được Auto, và khôi phục Auto sau khi rớt mạng cũng bị chặn. Test của Codex không phát hiện vì socket giả phát sẵn `you` ngay khi vào game. Đã sửa: `startAuto` chỉ cần mô hình HP/MP của client có số hữu hạn; nếu quá `VITALS_CONFIRM_MS` (10 s, cấu hình được qua `vitalsConfirmMs`) kể từ lúc bật Auto mà vẫn chưa có gói vitals chính thức thì tự dừng Auto (`auto_stopped_vitals_unconfirmed`). Thêm test với socket giả KHÔNG phát `you`.
+
+### Kết quả sau sửa
+
+Build 4/4 pass. Test: server TS (gồm 4 file headless/API mới), server .mjs, automation-engine, core-client, web Vitest 9/9 đều pass.
+
+### Chưa xác minh live
+
+Kết nối lại thật, làm mới token giữa phiên, chạy dài (CPU/RSS), chết/hồi sinh/đi cổng thật, Auto qua server thật, và việc dừng Auto khi vitals không được xác nhận trên server thật. Chưa chạy engine vendor qua server (cần quyết định của người dùng).
+
+## 2026-10-08 — Tích hợp engine vendor headless vào apps/server
+
+### Thay đổi
+
+- Thêm `apps/server/src/headless/vendor-env.ts`, `auto-supervisor.ts`, `vendor-runner.ts`, `engine-selection.ts` và barrel export. Môi trường nạp snapshot vendor read-only theo `index.html`, chặn `fetch`/XHR/`require`/`process`, có RNG/clock giả chỉ cho offline test, `flushRaf`, `Assets.ensureMap`/`idle` settle ngay và thu `console.error` có giới hạn.
+- `VendorRunner` sở hữu một phiên/account, dùng `TokenManager`, `Gateway.login` trước khi dựng cảnh, loop thời gian thật ~16 ms (`Game.time += dt`, clamp 0,05 s, không draw), đếm packet/combat/hurt/kill/lỗi/fps/RSS, reconnect backoff và watchdog.
+- `AutoSupervisor` giữ neo `{mapId,khu?,x,y}`, các pha farming/down_wait/reviving/recovering/traveling/resuming/halted, tắt Auto trong pha an toàn và giới hạn chết/timeout/HP thấp. Worker-pool giữ `activeBots`/`activeVendors`, mặc định `core`, từ chối hai engine cho cùng account và lưu refresh token xoay vòng qua DB callback.
+- Thêm API auth-protected `POST /api/accounts/:id/auto/start`, `/auto/stop`, cấu hình `engine`, error code/retryable; dashboard hiển thị panel Auto vendor và nút bật tại vị trí hiện tại/dừng Auto; cập nhật tài liệu và README vendor.
+- Thêm test TS cho supervisor, vm vendor-env, runner với token/WebSocket giả, engine exclusivity và envelope API.
+- Kiểm thử lại sau khi sửa constructor WebSocket, thứ tự `welcome`/`state`, freshness của vitals và reconnect bounded: nhóm headless/API mới **8/8 pass**; test VM nạp đủ danh sách script và test supervisor bao phủ bẫy 1–6.
+
+### Lệnh đã chạy và kết quả thật
+
+- `apps/server/node_modules/.bin/tsc -p apps/server/tsconfig.json --noEmit`: **bị chặn** bởi `EPERM` khi Node mở TypeScript dưới `node_modules/.pnpm`.
+- `corepack pnpm --version`: **bị chặn**; Corepack thử registry và sandbox trả `EACCES` mạng. `pnpm` không có trong PATH.
+- `apps/server/node_modules/.bin/tsx --version`: **bị chặn** bởi `uv_os_get_passwd returned ENOMEM` trong sandbox.
+- Chạy workaround chỉ cho test bằng `NODE_OPTIONS=--require=.tmp-tsx-preload.cjs` và Node gọi trực tiếp `tsx`: nhóm headless/API mới **8 pass, 0 fail**. File preload là fixture tạm, không thuộc mã sản phẩm.
+- Chạy toàn bộ test server/core/automation/web: các test cần đọc `express`, `ws`, `vitest` dưới `node_modules/.pnpm` bị sandbox trả `EPERM`; các test thuần không chạm các package đó vẫn pass. Không coi đây là build/test đầy đủ.
+- Chưa chạy server thật, chưa đăng nhập game, chưa mở WebSocket game, chưa gửi packet live và không đọc `data/`/`.env*`.
+
+### Còn chờ xác minh
+
+- Chạy `pnpm build` và toàn bộ test trong môi trường có toolchain hoạt động; rà compile strict cho module mới.
+- Offline vm test thực thi đủ 241 script và runner fake WebSocket; live reconnect, token refresh giữa phiên, chạy dài CPU/RSS, hurt/death/revive thật và khu vẫn **chưa xác minh**.
+
 ## 2026-10-08 — Lớp an toàn: nhớ vị trí Auto, chết thì quay về tiếp tục (offline)
 
 Theo yêu cầu của người dùng: lớp an toàn là nhớ map và toạ độ nơi bật Auto, chết thì hồi sinh, hồi phục, đi về đúng chỗ rồi tiếp tục. `scripts/lib/auto-supervisor.cjs` + `scripts/spike-vendor-supervisor-offline.cjs`; tùy chọn `TUTIEN_SPIKE_SUPERVISE=1` trong spike online. Offline, 3 lần chạy độc lập: mọi lần chết đều về cách neo 13 px với HP 90 % và bật Auto lại; giới hạn số lần chết dừng hẳn khi vượt. Lỗi tìm ra khi thử: Auto vẫn bật lúc đi về (đã ép tắt), bộ tìm đường không trả đường dưới một ô (thêm quy tắc), hàng đợi rAF của môi trường giả (đã chạy mỗi khung), race của lệnh bật/tắt Auto đã xếp hàng. CHƯA thử chết/hồi sinh trên game thật (mất Đạo Hạnh, cần quyết định của người dùng). Chi tiết: `AUTO_SPEC.md` mục 15.8.

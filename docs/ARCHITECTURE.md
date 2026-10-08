@@ -143,3 +143,13 @@ Công cụ chẩn đoán (mặc định tắt): packet tap (`TUTIEN_PACKET_TAP=<
 ## 14. Tài liệu liên quan
 
 `AGENTS.md` · `AUTO_SPEC.md` (vòng lặp auto) · `LIVE_SCENARIO_APPROACH.md` (kịch bản live P2) · `UI_FEATURE_INVENTORY.md` (chức năng client) · `FIX_GUIDE.md` (sửa lỗi và checklist) · `CONTROL_PLANE_API.md`, `API_REFERENCE.md` (API) · `PORTAL_NAVIGATION.md`, `MINIMAP_NAVIGATION.md` · `VITALS_SYNC_FIX.md` · `TRAINING_PROTOCOL_GAPS.md` · `SESSION_LOG.md` (nhật ký, mới nhất ở đầu).
+## 2A. Engine vendor: chay client chinh thuc khong hien thi [Code; live chua xac minh trong module]
+
+`apps/server/src/headless/` la adapter chinh thuc cho spike vendor, khong copy logic gameplay sang bot:
+
+- `vendor-env.ts` nap snapshot theo thu tu `index.html` trong `node:vm`, cung cap DOM/canvas stub, WebSocket tiem duoc, RNG/clock gia cho test offline, rAF queue va bao cao `console.error` co gioi han. `node:vm` khong phai security sandbox; vendor la snapshot da kiem tra va chay trong capability set toi thieu.
+- `vendor-runner.ts` so huu mot phien/mot tai khoan: `TokenManager` lay access token, luu refresh token xoay vong qua DB callback, `Gateway.login` xong moi dung `SceneWorld`, update 16 ms theo dong ho that, khong `draw`, tu tang `Game.time` va flush rAF. WebSocket chi nhan dung `CONFIG.GAME_SERVER_URL`.
+- `auto-supervisor.ts` la safety state machine theo neo `{mapId, khu?, x, y}`. Auto tat trong down/revive/recover/travel; qua gioi han chet, timeout, HP thap, map/portal khong co route thi `halted`. `haltMode=disconnect` la mac dinh; `stay` giu socket nhung van tat Auto.
+- `worker-pool.ts` giu `activeBots` va `activeVendors` rieng nhung chua bao gio cho cung account. Engine `core` la mac dinh; vendor chinh la opt-in qua config va Auto API. Dashboard nhan `runtime.engine` + `runtime.vendor` va khong thay doi UI core.
+
+Khong dung `process.chdir`; vendor dir la `CONFIG.VENDOR_CLIENT_DIR`, mac dinh tuong doi repo. Khu/resurrect live va behavior dai ngay van la **chua xac minh**.
