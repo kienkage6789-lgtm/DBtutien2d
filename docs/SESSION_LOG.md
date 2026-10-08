@@ -1,5 +1,32 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Nghiệm thu P2 (tiếp cận mục tiêu) của Claude Code
+
+Commit `a6fc5c9`. Codex không build được trong sandbox; Claude Code build và chạy lại.
+
+### Kết quả
+
+| Hạng mục | Kết quả |
+|---|---|
+| `pnpm build` | 4/4 pass ngay lần đầu (đợt đầu tiên không có lỗi kiểu) |
+| Test | automation-engine 4 file, core-client toàn bộ, server TS 9 file, server .mjs 3 file, web Vitest 9/9: pass |
+| Phạm vi | Không có route API/UI mới, không có `attack`/`skill`, `vendor/` và `.gitignore` không bị đụng |
+| Quét 62 điểm sinh quái của `thanh_truc_lam` | không có đích bị chặn |
+
+### Lỗi thiết kế tìm ra khi review và đã sửa
+
+Harness `approach-probe` chạy một lần duy nhất ở 20 s sau `welcome`, nhưng kịch bản live yêu cầu bot đi cổng sang `thanh_truc_lam` trước. Hệ quả: harness bắn ở `tan_vien` (không có quái), tự hủy và tiêu mất lượt duy nhất. Đã đổi: sau độ trễ ban đầu, thăm dò mỗi giây trong cửa sổ `APPROACH_PROBE_WINDOW_MS = 240000`; lý do tạm thời thì chờ, lý do dứt khoát (`downed_true`, `not_in_game`, mất kết nối) hủy ngay, hết cửa sổ hủy với `window_expired:<lý do cuối>`. Thêm test (chờ rồi chạy, gục hủy ngay, hết cửa sổ). Kịch bản live đã cập nhật.
+
+### Sự cố trong lúc làm (ghi lại để tránh lặp)
+
+- Test cũ của harness dùng đồng hồ cố định nên vòng chờ mới chạy thật và treo hơn 300 s; đã dừng các tiến trình test treo (lọc theo dòng lệnh `approach-probe.test`) và chuyển sang đồng hồ giả.
+- Lặp lại lỗi backtick trong chuỗi nháy kép của bash làm hỏng một dòng bản vá (build báo lỗi ngay). Quy tắc: sửa mã bằng công cụ Edit hoặc script ghi ra file, không nhúng mã có backtick vào `node -e "..."`.
+- Mọi lệnh test từ nay dùng `timeout`.
+
+### Chưa xác minh (chờ kịch bản live)
+
+Thời gian tới tầm, có bị `hurt` khi lại gần quái có `aggro` không, quái có đuổi theo hay quay về điểm sinh, độ ổn định khi đứng yên trong tầm, và `refreshVitals` ở `thanh_truc_lam` khi chưa có quái trong 300 đơn vị.
+
 ## 2026-10-08 — P2 verification addendum (offline)
 
 - Pure approach/tracker: pass; deterministic goal tests include all 62 `thanh_truc_lam` spawn points.
