@@ -342,3 +342,46 @@ Tổng 187 điểm/37 dòng map-loại. Một điểm rơi vào ô chặn: `mo_l
 | `revived` | `ep,x,y,hp,mp,bp`: number-like, `ep/x/y/bp` tùy chọn | cập nhật vị trí/vitals; nếu epoch hợp lệ thì revive và đóng UI gục |
 
 Biến thể `act` đọc được rõ trong gateway gồm `enemy_poison` (`x,y,targets,dps`, target có `id,x,y,t`), `ll_tru_ban` (`id,t,x,y,tx,ty,mau,bay`), `ll_kim_kiem` (`id,t,tx,ty,w`), `ll_ta_hoa` (`pts,w,r`), `long_luu_tinh` (`pts,w,r,mau,tu`), `quy_an` (`id,t,tx,ty,w`), `huyet_hut` (`id,src,n`), `xuyen_kich` (`id,x,y,w`), `vankiem_release` (`id,t,ax,ay,flight`) và `duel_result` (`id,result,ttl`). Những nhánh UI/remote còn lại nhận nguyên packet; schema server đầy đủ của chúng **[Chưa biết]**.
+
+## 14. Client thật gửi gì khi đứng yên (đo bằng đọc mã, 2026-10-08)
+
+Nguồn: `vendor/.../src/net/gateway.js` (hàm tick mạng, hàm báo cáo mạng `sendNetReport`), `core/config.js`, `runtime-config.js`. Chưa đối chiếu bằng bắt gói của client thật (cần đăng nhập vào trang game trong trình duyệt). Nhãn: **[Đọc được]** từ mã; **[Suy ra]** suy luận từ mã.
+
+### 14.1 Gói `move`: chỉ gửi khi có thay đổi **[Đọc được]**
+
+Mỗi `1 / netTickHz` giây (`netTickHz` mặc định 10, đọc từ `runtime-config.js`, nên khoảng 10 Hz), client so trạng thái hiện tại với trạng thái đã gửi lần trước và chỉ gửi `move` nếu có ít nhất một khác biệt:
+
+- `|x - x_trước| > 0.5` hoặc `|y - y_trước| > 0.5`;
+- đổi `dir`;
+- đổi `state` (idle, walk, attack, pose...);
+- đổi tên bước tư thế (`pose`);
+- đổi cờ bay (`fly`);
+- đổi cờ câu cá (`fs`) hoặc vị trí phao (`fx`, `fy`).
+
+Hệ quả: nhân vật đứng yên, không đổi tư thế thì client **không gửi gói `move` nào**. Khi vừa dừng lại, nó gửi đúng một gói cuối với `st` đã chuyển (thường `idle`). Client không bao giờ gửi liên tiếp nhiều gói `move` giống hệt nhau. Cũng vì vậy, ở client thật khi đứng yên không có `you` (vì `you` chỉ đến theo `seq` của luồng `move`).
+
+### 14.2 Gói `ping` kèm thống kê mạng: khoảng 30 s một lần **[Suy ra]**
+
+`sendNetReport` gửi `{op:"ping", t, ns:{v:1, s, u, l, d, n, q, g?, f?, r?}}`: `s` là số giây thực tế kể từ báo cáo trước, `u`/`l` là số lần cạn mốc nội suy và số khung khựng trong khoảng đó, `d` là độ trễ vẽ, `n` số người đang thấy, `q` mức chất lượng đồ họa, `g`/`f`/`r` là phân vị 90 của độ trễ, p95 của khung hình, và một số đo khác. Hàm chỉ gửi khi `Gateway.ready` và tab đang hiển thị (`document.hidden` sai). Nơi duy nhất tìm thấy gọi hàm này là trong trình xử lý gói `snap`: được gọi khi chưa có báo cáo nào trong 30 s gần nhất (`Date.now() - I.at >= 30000`); lần gọi đầu tiên chỉ ghi mốc, không gửi. Nên chu kỳ thực tế khoảng 30 s hoặc hơn, tùy gói `snap` đến.
+
+### 14.3 Các op khác client chủ động gửi
+
+Chỉ khi người chơi hoặc sự kiện cục bộ kích hoạt: `hello` (lúc kết nối), `create_char`, `resync` (khi snap2 lệch), `formation`, `skill`, `duel`, `dosat`, `enter`, `chat`, `whisper`, `act`, `khu`, cùng các lệnh RPC `cmd(...)`. Không thấy gói giữ nhịp (heartbeat) nào khác. Lưu tiến trình định kỳ (`saveIntervalSec` 20 s trong cấu hình) không đi qua WebSocket của game theo kết quả quét các op gửi **[Suy ra]**; có thể là kênh khác (lưu trữ đám mây), chưa kiểm tra.
+
+### 14.4 So với bot hiện tại
+
+| Hành vi | Client thật | Bot hiện tại |
+|---|---|---|
+| `move` khi đứng yên | không gửi | không gửi (khớp) |
+| `ping` | khoảng 30 s, `s` và thống kê thật | mỗi 8 s (`pingIntervalMs: 8000`), `ns` là hằng số (`s:15, u:0, l:0, d:160, n:6, q:2`) |
+| `move` liên tiếp giống hệt | không bao giờ | `refreshVitals` và hai probe đứng yên gửi tới 10 gói giống hệt nhau, 10 Hz |
+| `move` khi đi | khi tọa độ lệch hơn 0.5 px, tick 10 Hz | tick 100 ms; gửi mỗi bước kể cả khi vị trí xác thực chưa đổi (chưa kiểm tra có gửi trùng không) |
+
+**Rủi ro [Chưa biết]:** server có phát hiện hay xử lý khác các mẫu trên hay không (chuỗi `move` giống hệt, tần suất `ping` và `ns` cố định) thì chưa có dữ liệu. Chúng là các điểm bot khác client thật và có thể phân biệt được từ phía server. `refreshVitals` hiện là cách duy nhất đã biết để lấy HP chủ động lúc đứng yên và nó phụ thuộc vào đúng mẫu "move giống hệt" này.
+
+### 14.5 Hướng xử lý đề xuất (chưa làm)
+
+1. Đưa `ping` về nhịp gần client: khoảng 30 s, `ns.s` bằng số giây thực tế, `n` bằng số người đang thấy thực tế, các trường còn lại lấy từ số liệu thật hoặc ít nhất thay đổi hợp lý.
+2. Hạn chế `refreshVitals`: chỉ khi thật cần (HP cũ quá ngưỡng trước khi tấn công), tần suất thấp, ưu tiên lấy HP qua `hurt` và qua luồng `move` đang có sẵn khi di chuyển thật.
+3. Kiểm chứng bằng bắt gói của client thật (người dùng tự chạy trong trình duyệt của mình, không gửi mật khẩu cho agent) để xác nhận 14.1 và 14.2.
+

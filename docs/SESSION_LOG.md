@@ -1,5 +1,9 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Đo hành vi mạng của client thật khi đứng yên (đọc mã)
+
+Kết quả chi tiết ở `AUTO_SPEC.md` mục 14. Tóm tắt: client thật chỉ gửi `move` khi trạng thái đổi (tọa độ lệch hơn 0.5 px, hướng, trạng thái, tư thế, bay, câu cá), tick 10 Hz, nên đứng yên là không gửi gì; `ping` kèm thống kê mạng khoảng 30 s một lần với số liệu thật. Bot khác ở hai điểm: `ping` mỗi 8 s với `ns` hằng số, và `refreshVitals`/probe gửi tới 10 gói `move` giống hệt nhau mà client thật không bao giờ gửi. Chưa biết server có phân biệt các mẫu này không. Chưa đối chiếu bằng bắt gói client thật.
+
 ## 2026-10-08 — Kịch bản live P2 (tiếp cận): harness hủy an toàn, và sự cố nhân vật bị tấn công khi đứng yên
 
 Chạy bởi Claude Code với `TUTIEN_PACKET_TAP=300 TUTIEN_PROBE_APPROACH=1`. Evidence đã redact: `docs/evidence/packet-tap-2026-10-08T03-51-44-595Z.json` (không nằm trong git).
