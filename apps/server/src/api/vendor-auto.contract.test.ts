@@ -51,5 +51,7 @@ test('move-to errors follow the approved HTTP table and retry envelope', () => {
   assert.equal(moveToErrorResponse('TARGET_INVALID').status, 400);
   assert.equal(moveToErrorResponse('TARGET_UNREACHABLE').status, 422);
   assert.equal(moveToErrorResponse('TARGET_ON_PORTAL').status, 422);
+  assert.equal(moveToErrorResponse('ROUTE_UNAVAILABLE').status, 422);
+  assert.equal(moveToErrorResponse('PATH_CROSSES_PORTAL').status, 422);
   assert.equal(moveToErrorResponse('OPERATION_NOT_FOUND').status, 404);
 });

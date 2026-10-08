@@ -32,9 +32,13 @@ class FakeSocket implements VendorSocketLike {
   public static mapId = 'tan_vien';
   public static mapKhu: number | undefined = 1;
   public static mapDelayMs = 0;
+  public static respondToEnter = false;
+  public static enterDelayMs = 25;
+  public static enterSpawns: Record<string, { x: number; y: number }> = {};
   /** Điểm xuất hiện trong gói `map`; mặc định cũ nằm trong ô bị chặn của tan_vien nên không đi bộ được. */
   public static spawn = { x: 240, y: 192 };
   public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
+  public static outgoing: Array<{ op?: string; mapId?: string }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
   public static readonly CONNECTING = 0;
@@ -57,7 +61,8 @@ class FakeSocket implements VendorSocketLike {
   }
 
   public send(data: string): void {
-    const packet = JSON.parse(data) as { op?: string; seq?: number; st?: string; x?: number; y?: number };
+    const packet = JSON.parse(data) as { op?: string; mapId?: string; seq?: number; st?: string; x?: number; y?: number };
+    FakeSocket.outgoing.push({ op: packet.op, mapId: (packet as { mapId?: string }).mapId });
     if (packet.op === 'move' && typeof packet.seq === 'number') {
       FakeSocket.moves.push({ seq: packet.seq, st: packet.st, x: packet.x, y: packet.y });
       const moveCount = FakeSocket.moves.length;
@@ -69,6 +74,15 @@ class FakeSocket implements VendorSocketLike {
         FakeSocket.emitYouAfterMoveCount = null;
         queueMicrotask(() => this.emit({ op: 'you', seq: packet.seq, x: packet.x, y: packet.y, hp: 100, mp: 50, dn: false, fix: true }));
       }
+    }
+    if (packet.op === 'enter' && FakeSocket.respondToEnter && typeof packet.mapId === 'string') {
+      const targetMapId = packet.mapId;
+      FakeSocket.mapId = targetMapId;
+      const spawn = FakeSocket.enterSpawns[targetMapId] ?? FakeSocket.spawn;
+      setTimeout(() => {
+        this.emit({ op: 'map', mapId: targetMapId, khu: 1, soKhu: 1, ep: 1, x: spawn.x, y: spawn.y, dir: 0, p: [] });
+        this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
+      }, FakeSocket.enterDelayMs);
     }
     if (packet.op !== 'hello') return;
     queueMicrotask(() => {
@@ -265,7 +279,7 @@ test('VendorRunner starts Auto without an authoritative vitals packet, then stop
     await runner.startAuto();
     const started = runner.getSnapshot();
     assert.equal(started.autoRequested, true, 'phải bật được Auto khi chưa có gói vitals chính thức');
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    for (let i = 0; i < 120 && runner.getSnapshot().autoRequested; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     const after = runner.getSnapshot();
     assert.ok(after.vitalsProbeMoves <= 10, 'vitals probe must be bounded to ten moves');
     assert.ok(FakeSocket.moves.some((move) => move.st === 'idle'), 'probe must use idle moves');
@@ -296,7 +310,7 @@ test('VendorRunner probes idle through Gateway and keeps Auto when you arrives o
     reconnectMaxRetries: 0,
     loginTimeoutMs: 500,
     loopIntervalMs: 5,
-    vitalsConfirmMs: 500,
+    vitalsConfirmMs: 4000,
     vitalsProbeIntervalMs: 5,
   });
   try {
@@ -305,7 +319,7 @@ test('VendorRunner probes idle through Gateway and keeps Auto when you arrives o
     FakeSocket.moves = [];
     FakeSocket.emitYouAfterMoveCount = 1; // server thật trả you ở mọi seq chia hết cho 10
     await runner.startAuto();
-    for (let i = 0; i < 40 && !(runner.getSnapshot().packets.incoming.you >= 1); i += 1) {
+    for (let i = 0; i < 120 && !(runner.getSnapshot().packets.incoming.you >= 1); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     const snapshot = runner.getSnapshot();
@@ -336,7 +350,7 @@ test('VendorRunner stops an idle vitals probe as soon as hurt arrives', async ()
     reconnectMaxRetries: 0,
     loginTimeoutMs: 500,
     loopIntervalMs: 5,
-    vitalsConfirmMs: 500,
+    vitalsConfirmMs: 4000,
     vitalsProbeIntervalMs: 5,
   });
   try {
@@ -345,7 +359,7 @@ test('VendorRunner stops an idle vitals probe as soon as hurt arrives', async ()
     FakeSocket.moves = [];
     FakeSocket.emitHurtAfterMoveCount = 2;
     await runner.startAuto();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    for (let i = 0; i < 120 && runner.getSnapshot().hurtCount < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     const snapshot = runner.getSnapshot();
     assert.equal(snapshot.hurtCount, 1);
     assert.ok(snapshot.vitalsProbeMoves <= 2, 'hurt must stop the probe before it reaches the ten-move limit');
@@ -371,7 +385,7 @@ test('VendorRunner does not probe while down or while the client reports manual 
     reconnectMaxRetries: 0,
     loginTimeoutMs: 500,
     loopIntervalMs: 5,
-    vitalsConfirmMs: 500,
+    vitalsConfirmMs: 4000,
     vitalsProbeIntervalMs: 5,
   });
   try {
@@ -397,7 +411,7 @@ test('VendorRunner does not probe while down or while the client reports manual 
     reconnectMaxRetries: 0,
     loginTimeoutMs: 500,
     loopIntervalMs: 5,
-    vitalsConfirmMs: 500,
+    vitalsConfirmMs: 4000,
     vitalsProbeIntervalMs: 5,
   });
   try {
@@ -491,5 +505,91 @@ test('VendorRunner walks with the official pathfinder, arrives, and lets Auto wi
     FakeSocket.spawn = { x: 240, y: 192 };
     FakeSocket.emitYou = true;
     FakeSocket.moves = [];
+  }
+});
+
+test('official vendor client changes map when setPath crosses a real tan_vien portal', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.outgoing = [];
+  FakeSocket.spawn = { x: 240, y: 896 };
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    for (let i = 0; i < 100 && runner.getSnapshot().mapId === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const P = (runner as any).P;
+    const portal = P.SceneWorld.map.portals.find((entry: { tx: number; ty: number; toMap?: string }) => entry.toMap === 'thanh_truc_lam');
+    assert.ok(portal, 'tan_vien fixture must expose a real portal to thanh_truc_lam');
+    const player = P.SceneWorld.player;
+    player.x = portal.tx * 32 + 16;
+    player.y = portal.ty * 32 - 16;
+    player.setPath([{ x: portal.tx * 32 + 16, y: portal.ty * 32 + 16 }]);
+
+    for (let i = 0; i < 200 && !FakeSocket.outgoing.some((packet) => packet.op === 'enter' && packet.mapId === 'thanh_truc_lam'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(
+      FakeSocket.outgoing.some((packet) => packet.op === 'enter' && packet.mapId === 'thanh_truc_lam'),
+      'setPath through the real portal must produce the client enter request',
+    );
+  } finally {
+    await runner.stop();
+    FakeSocket.spawn = { x: 240, y: 192 };
+    FakeSocket.outgoing = [];
+    FakeSocket.respondToEnter = false;
+    FakeSocket.enterSpawns = {};
+  }
+});
+
+test('VendorRunner completes a portal leg when the fixture server replies to enter with a delayed map packet', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.outgoing = [];
+  FakeSocket.respondToEnter = true;
+  FakeSocket.enterSpawns = { thanh_truc_lam: { x: 240, y: 192 } };
+  FakeSocket.spawn = { x: 272, y: 860 };
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    for (let i = 0; i < 100 && runner.getSnapshot().mapId === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const accepted = runner.moveTo({ targetMapId: 'thanh_truc_lam', requester: 'user' });
+    assert.deepEqual(accepted.route, ['tan_vien', 'thanh_truc_lam']);
+    for (let i = 0; i < 500 && runner.getSnapshot().moveTo?.status !== 'arrived'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(runner.getSnapshot().moveTo?.status, 'arrived');
+    assert.equal(runner.getSnapshot().mapId, 'thanh_truc_lam');
+    assert.ok(FakeSocket.outgoing.some((packet) => packet.op === 'enter' && packet.mapId === 'thanh_truc_lam'));
+  } finally {
+    await runner.stop();
+    FakeSocket.spawn = { x: 240, y: 192 };
+    FakeSocket.mapId = 'tan_vien';
+    FakeSocket.respondToEnter = false;
+    FakeSocket.enterSpawns = {};
+    FakeSocket.outgoing = [];
   }
 });

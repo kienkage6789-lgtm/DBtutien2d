@@ -1,5 +1,19 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — walkTo Bản 2a (offline implementation)
+
+Thay đổi: thêm BFS `map-route`, mở rộng `walk-navigator` qua cổng với `route`/`leg`, hurt threshold, portal-crossing guard; nối VendorRunner MapData, reachable-maps API, move-to contract và dashboard chọn map. Không sửa vendor hoặc `auto-supervisor.ts`, không mở mạng/game thật, không đọc dữ liệu bí mật.
+
+Lệnh đã chạy và kết quả thật:
+- `git diff --check`: pass.
+- `apps/server/node_modules/.bin/tsx --test src/headless/map-route.test.ts`: bị chặn trước khi nạp test, `uv_os_get_passwd returned ENOMEM`.
+- `apps/server/node_modules/.bin/tsc --noEmit -p tsconfig.json`: bị chặn khi Node đọc TypeScript dưới `.pnpm`, `EPERM`.
+- Bundle offline bằng esbuild (không dùng mạng): `map-route` 3/3, `walk-navigator` 9/9, contract API 2/2, `vendor-runner` 12/12; trong đó fixture client vendor thật xác nhận `setPath` xuyên cổng phát outbound `enter`, và fixture server phản hồi `map` sau delay để hoàn tất chặng.
+- `apps/web/node_modules/.bin/vitest.CMD run`: bị chặn khi đọc Vitest dưới `.pnpm`, `EPERM`; `pnpm build`: chưa chạy được trong sandbox.
+
+Đã chạy được các fixture server offline bằng bundle tạm trong workspace; chưa xác minh build TypeScript đầy đủ, Vitest và hành vi game thật. Không mở mạng, không đọc `data/`/`.env*`, không sửa `vendor/` hoặc `auto-supervisor.ts`.
+
+
 ## 2026-10-08 — Đo live `move-to` bản 1 (engine vendor, map `tan_vien`, không có quái)
 
 Một phiên, nhân vật ở `tan_vien` (0 quái, khoảng 7–19 người chơi), theo dõi `hurtCount` (0 suốt đợt), các đích cách ô cổng ít nhất 120 px. Lần chạy đầu của script bị hỏng vì script coi HTTP 202 là từ chối (API trả 202 cho lệnh được nhận); đã sửa script và chạy lại. Kết quả lần chạy hợp lệ:

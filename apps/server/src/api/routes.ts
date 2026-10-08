@@ -232,20 +232,46 @@ apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
   }
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
     ? req.body as Record<string, unknown> : null;
-  const validBody = !!body && Object.keys(body).length === 2
-    && Object.keys(body).every((key) => key === 'x' || key === 'y')
-    && typeof body.x === 'number' && Number.isFinite(body.x)
-    && typeof body.y === 'number' && Number.isFinite(body.y);
+  const validKeys = new Set(['x', 'y', 'mapId', 'abortOnHurt', 'maxHurt']);
+  const hasX = !!body && Object.prototype.hasOwnProperty.call(body, 'x');
+  const hasY = !!body && Object.prototype.hasOwnProperty.call(body, 'y');
+  const hasMapId = !!body && Object.prototype.hasOwnProperty.call(body, 'mapId');
+  const validBody = !!body
+    && Object.keys(body).every((key) => validKeys.has(key))
+    && hasX === hasY
+    && (!hasX || (typeof body.x === 'number' && Number.isFinite(body.x)
+      && typeof body.y === 'number' && Number.isFinite(body.y)))
+    && (!hasMapId || (typeof body.mapId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(body.mapId)))
+    && (!Object.prototype.hasOwnProperty.call(body, 'abortOnHurt') || typeof body.abortOnHurt === 'boolean')
+    && (!Object.prototype.hasOwnProperty.call(body, 'maxHurt') || (Number.isInteger(body.maxHurt) && Number(body.maxHurt) >= 1 && Number(body.maxHurt) <= 50))
+    && (hasX || hasMapId);
   if (!validBody) {
     res.status(400).json({ success: false, error: 'TARGET_INVALID', errorCode: 'TARGET_INVALID', retryable: false });
     return;
   }
   try {
     const data = workerPool.moveTo(accountId, {
-      target: { x: body?.x as number, y: body?.y as number },
+      ...(hasX ? { target: { x: body?.x as number, y: body?.y as number } } : {}),
+      ...(hasMapId ? { targetMapId: body?.mapId as string } : {}),
+      ...(Object.prototype.hasOwnProperty.call(body, 'abortOnHurt') ? { abortOnHurt: body?.abortOnHurt as boolean } : {}),
+      ...(Object.prototype.hasOwnProperty.call(body, 'maxHurt') ? { maxHurt: body?.maxHurt as number } : {}),
       requester: 'user',
     });
     res.status(202).json({ success: true, data });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.get('/accounts/:id/reachable-maps', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  try {
+    res.json({ success: true, data: workerPool.getReachableMaps(accountId) });
   } catch (error) {
     const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
     res.status(response.status).json(response.body);

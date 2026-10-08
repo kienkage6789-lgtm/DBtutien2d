@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime } from './useRealtime';
+import { mergeAccountRuntime, sanitizeMoveTo } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -67,5 +67,29 @@ describe('mergeAccountRuntime vitals freshness', () => {
 
     const stopped = mergeAccountRuntime(running!, { ...base, status: 'stopped' });
     expect(stopped?.moveTo).toBeNull();
+  });
+
+  it('keeps malformed route and leg absent instead of merging nulls', () => {
+    const sanitized = sanitizeMoveTo({
+      operationId: 'operation-test',
+      target: null,
+      resolvedTarget: null,
+      status: 'running',
+      requester: 'user',
+      startedAt: 1,
+      updatedAt: 2,
+      route: ['map-a', 7],
+      leg: { index: 0, fromMapId: 'map-a', toMapId: null, phase: 'bad' },
+    });
+    expect(sanitized).toEqual({
+      operationId: 'operation-test',
+      target: null,
+      resolvedTarget: null,
+      status: 'running',
+      requester: 'user',
+      startedAt: 1,
+      updatedAt: 2,
+    });
+    expect(sanitizeMoveTo({ operationId: 'bad' })).toBeUndefined();
   });
 });

@@ -15,6 +15,7 @@ import {
   type WalkOperation,
   type WalkRequest,
 } from './walk-navigator.js';
+import { reachableMaps, type ReachableMap } from './map-route.js';
 
 export type VendorRunnerLifecycle =
   | 'starting'
@@ -480,6 +481,18 @@ export class VendorRunner {
     return this.walkNavigator.cancel(current.operationId, reason);
   }
 
+  /** Map graph read directly from the official client's MapData instance. */
+  public getReachableMaps(): { currentMapId: string; maps: ReachableMap[] } {
+    if (!this.isMapReady()) throw new Error('VENDOR_MAP_NOT_READY');
+    const currentMapId = this.getMapId();
+    if (!currentMapId) throw new Error('VENDOR_MAP_NOT_READY');
+    const mapIds = this.getMapIdsFromClient();
+    return {
+      currentMapId,
+      maps: reachableMaps((mapId) => this.getPortalsFromClient(mapId), mapIds, currentMapId),
+    };
+  }
+
   private async createTokenManager(): Promise<VendorTokenManagerLike> {
     const { SupabaseAuth, TokenManager } = await import('@tutien2d/core-client');
     const auth = new SupabaseAuth({
@@ -643,15 +656,52 @@ export class VendorRunner {
         width: Number(this.P?.CONFIG?.PLAYER?.HITBOX_W) || 16,
         height: Number(this.P?.CONFIG?.PLAYER?.HITBOX_H) || 12,
       }),
-      getPortals: (mapId) => {
-        const map = this.P?.MapData?.get ? this.P.MapData.get(mapId) : this.P?.MapData?.[mapId];
-        return (map?.portals ?? []).map((portal: Record<string, unknown>) => ({
-          tx: Number(portal.tx),
-          ty: Number(portal.ty),
-        })).filter((portal: { tx: number; ty: number }) => Number.isInteger(portal.tx) && Number.isInteger(portal.ty));
-      },
+      getPortals: (mapId) => this.getPortalsFromClient(mapId),
+      getMapIds: () => this.getMapIdsFromClient(),
+      getHurtCount: () => this.hurtCount,
       recordLog: (event) => this.recordLog(event.code, { reasonCode: event.reasonCode, at: event.at }),
     };
+  }
+
+  private getMapIdsFromClient(): string[] {
+    const mapData = this.P?.MapData;
+    if (!mapData || typeof mapData !== 'object') return [];
+    const ids = new Set<string>();
+    for (const value of Object.values(mapData as Record<string, unknown>)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const id = (value as Record<string, unknown>).id;
+      if (typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id)) ids.add(id);
+    }
+    return [...ids].sort();
+  }
+
+  private getPortalsFromClient(mapId: string): Array<{
+    tx: number;
+    ty: number;
+    toMapId?: string;
+    byHand?: boolean;
+    cooldownSec?: number;
+    cooldownGroup?: string;
+  }> {
+    const map = this.P?.MapData?.get ? this.P.MapData.get(mapId) : this.P?.MapData?.[mapId];
+    if (!map || !Array.isArray(map.portals)) return [];
+    return map.portals.flatMap((portal: unknown) => {
+      if (!portal || typeof portal !== 'object' || Array.isArray(portal)) return [];
+      const entry = portal as Record<string, unknown>;
+      const tx = Number(entry.tx);
+      const ty = Number(entry.ty);
+      const toMapId = typeof entry.toMap === 'string' ? entry.toMap
+        : typeof entry.to === 'string' ? entry.to : undefined;
+      if (!Number.isInteger(tx) || !Number.isInteger(ty) || !toMapId) return [];
+      return [{
+        tx,
+        ty,
+        toMapId,
+        ...(typeof entry.byHand === 'boolean' ? { byHand: entry.byHand } : {}),
+        ...(typeof entry.cooldownSec === 'number' && Number.isFinite(entry.cooldownSec) ? { cooldownSec: entry.cooldownSec } : {}),
+        ...(typeof entry.cooldownGroup === 'string' ? { cooldownGroup: entry.cooldownGroup } : {}),
+      }];
+    });
   }
 
   private handleSupervisorEvent(event: AutoSupervisorEvent): void {

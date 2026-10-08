@@ -31,7 +31,9 @@ class FakeWalkClient implements WalkNavigatorClient {
   public supervisorPhase = 'idle';
   public readonly player = new FakePlayer();
   public readonly map: WalkMap = { width: 10, height: 10, pxWidth: 320, pxHeight: 320 };
-  public portals: Array<{ tx: number; ty: number }> = [];
+  public portals: Array<{ tx: number; ty: number; toMapId?: string }> = [];
+  public mapIds = ['map-a', 'map-b', 'map-c'];
+  public hurtCount = 0;
   public routeResult: unknown[] = [{ x: 112, y: 112 }];
   public routeCalls: unknown[][] = [];
   public logs: Array<{ code: string; reasonCode?: string; at: number }> = [];
@@ -54,7 +56,9 @@ class FakeWalkClient implements WalkNavigatorClient {
   public getSupervisorPhase(): string { return this.supervisorPhase; }
   public getPathfinder(): WalkPathfinder | null { return this.mapReady ? this.pathfinder : null; }
   public getHitbox(): { width: number; height: number } { return { width: 16, height: 12 }; }
-  public getPortals(): Array<{ tx: number; ty: number }> { return this.portals; }
+  public getPortals(_mapId?: string): Array<{ tx: number; ty: number; toMapId?: string }> { return this.portals; }
+  public getMapIds(): string[] { return this.mapIds; }
+  public getHurtCount(): number { return this.hurtCount; }
   public recordLog(event: { code: string; reasonCode?: string; at: number }): void { this.logs.push(event); }
 }
 
@@ -124,6 +128,16 @@ test('cancel stops the player and preserves a cancelled operation', () => {
   assert.equal(navigator.cancel(operation.operationId, 'again'), false);
 });
 
+test('same-map route crossing an automatic portal is rejected when no detour is available', () => {
+  const client = new FakeWalkClient();
+  client.portals = [{ tx: 3, ty: 3, toMapId: 'map-b' }];
+  client.routeResult = [{ x: 112, y: 112 }, { x: 208, y: 112 }];
+  expectWalkError(() => new WalkNavigator(client).walkTo({
+    target: { x: 208, y: 112 },
+    requester: 'user',
+  }), 'PATH_CROSSES_PORTAL');
+});
+
 test('stuck and timeout are distinct terminal outcomes', () => {
   const stuckClient = new FakeWalkClient();
   const stuckNavigator = new WalkNavigator(stuckClient);
@@ -171,4 +185,108 @@ test('context changes and Auto activation cancel a running walk', () => {
   mapNavigator.tick();
   assert.equal(mapNavigator.getOperation()?.status, 'cancelled');
   assert.equal(mapNavigator.getOperation()?.reason, 'map_changed');
+});
+
+test('multi-map walk advances through planned gates and finishes at the destination map', () => {
+  const client = new FakeWalkClient();
+  client.player.x = 48;
+  client.player.y = 48;
+  client.getPortals = (mapId: string) => mapId === 'map-a'
+    ? [{ tx: 3, ty: 3, toMapId: 'map-b' }]
+    : mapId === 'map-b' ? [{ tx: 2, ty: 2, toMapId: 'map-c' }] : [];
+  const navigator = new WalkNavigator(client, { createOperationId: () => 'multi-operation' });
+  const accepted = navigator.walkTo({ targetMapId: 'map-c', requester: 'user' });
+  assert.deepEqual(accepted.route, ['map-a', 'map-b', 'map-c']);
+  assert.deepEqual(accepted.leg, { index: 0, fromMapId: 'map-a', toMapId: 'map-b', phase: 'walking_to_gate' });
+
+  client.player.x = 112;
+  client.player.y = 112;
+  client.player.path = [];
+  client.now = 100;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'on_gate');
+  client.now = 200;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'waiting_map');
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 300;
+  navigator.tick();
+  client.transitioning = false;
+  client.mapId = 'map-b';
+  client.player.x = 80;
+  client.player.y = 80;
+  client.player.path = client.routeResult;
+  client.now = 400;
+  navigator.tick();
+  assert.deepEqual(navigator.getOperation()?.leg, { index: 1, fromMapId: 'map-b', toMapId: 'map-c', phase: 'walking_to_gate' });
+
+  client.player.x = 80;
+  client.player.y = 80;
+  client.player.path = [];
+  client.now = 500;
+  navigator.tick();
+  client.now = 600;
+  navigator.tick();
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 700;
+  navigator.tick();
+  client.transitioning = false;
+  client.mapId = 'map-c';
+  client.now = 800;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.status, 'arrived');
+  assert.equal(navigator.getOperation()?.leg?.phase, 'walking_to_target');
+  assert.equal(client.player.stopCount, 5);
+});
+
+test('multi-map walk fails on an unexpected destination and on portal timeout', () => {
+  const unexpectedClient = new FakeWalkClient();
+  unexpectedClient.getPortals = () => [{ tx: 3, ty: 3, toMapId: 'map-b' }];
+  const unexpected = new WalkNavigator(unexpectedClient);
+  unexpected.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  unexpectedClient.mapId = 'map-c';
+  unexpectedClient.now = 100;
+  unexpected.tick();
+  assert.deepEqual([unexpected.getOperation()?.status, unexpected.getOperation()?.reason], ['failed', 'unexpected_map']);
+
+  const timeoutClient = new FakeWalkClient();
+  timeoutClient.getPortals = () => [{ tx: 3, ty: 3, toMapId: 'map-b' }];
+  const timeout = new WalkNavigator(timeoutClient);
+  timeout.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  timeoutClient.player.x = 112;
+  timeoutClient.player.y = 112;
+  timeoutClient.player.path = [];
+  timeoutClient.now = 100;
+  timeout.tick();
+  timeoutClient.now = 200;
+  timeout.tick();
+  timeoutClient.now = 8_201;
+  timeout.tick();
+  assert.deepEqual([timeout.getOperation()?.status, timeout.getOperation()?.reason], ['failed', 'portal_no_transition']);
+});
+
+test('multi-map hurt abort uses the configured threshold and can be disabled', () => {
+  const abortClient = new FakeWalkClient();
+  abortClient.getPortals = () => [{ tx: 3, ty: 3, toMapId: 'map-b' }];
+  const abortNavigator = new WalkNavigator(abortClient);
+  abortNavigator.walkTo({ targetMapId: 'map-b', requester: 'user', maxHurt: 2 });
+  abortClient.hurtCount = 1;
+  abortClient.now = 100;
+  abortNavigator.tick();
+  assert.equal(abortNavigator.getOperation()?.status, 'running');
+  abortClient.hurtCount = 2;
+  abortClient.now = 200;
+  abortNavigator.tick();
+  assert.deepEqual([abortNavigator.getOperation()?.status, abortNavigator.getOperation()?.reason], ['cancelled', 'hurt_abort']);
+
+  const continueClient = new FakeWalkClient();
+  continueClient.getPortals = () => [{ tx: 3, ty: 3, toMapId: 'map-b' }];
+  const continueNavigator = new WalkNavigator(continueClient);
+  continueNavigator.walkTo({ targetMapId: 'map-b', requester: 'user', abortOnHurt: false });
+  continueClient.hurtCount = 4;
+  continueClient.now = 100;
+  continueNavigator.tick();
+  assert.equal(continueNavigator.getOperation()?.status, 'running');
 });

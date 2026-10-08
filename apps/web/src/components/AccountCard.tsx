@@ -3,7 +3,9 @@ import { AlertTriangle, Heart, KeyRound, MapPin, Play, Square, Trash2, Zap } fro
 import type { AccountRuntime, MoveToOperation } from '../types';
 import { resolveMapContext, resolveVitalsAge, VITALS_DISPLAY_STALE_MS } from '../lib/context';
 import { MiniMap } from './MiniMap';
+import { MapTravelControl } from './MapTravelControl';
 import type { WorldBounds } from '../lib/minimap';
+import type { MapCatalogItem } from '../lib/api';
 
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const display = (value: unknown): string => {
@@ -13,11 +15,12 @@ const display = (value: unknown): string => {
 
 interface AccountCardProps {
   account: AccountRuntime;
+  mapCatalog: MapCatalogItem[];
   onStart: (id: string) => void;
   onStop: (id: string) => void;
   onStartVendorAuto: (account: AccountRuntime) => void;
   onStopVendorAuto: (id: string) => void;
-  onMoveTo: (id: string, target: { x: number; y: number }) => Promise<MoveToOperation>;
+  onMoveTo: (id: string, target?: { x: number; y: number }, options?: { targetMapId?: string; abortOnHurt?: boolean; maxHurt?: number }) => Promise<MoveToOperation>;
   onCancelMoveTo: (id: string, operationId: string) => Promise<MoveToOperation>;
   onUpdatePassword: (account: AccountRuntime) => void;
   onDelete: (id: string) => void;
@@ -26,6 +29,7 @@ interface AccountCardProps {
 
 export const AccountCard: React.FC<AccountCardProps> = ({
   account,
+  mapCatalog,
   onStart,
   onStop,
   onStartVendorAuto,
@@ -80,6 +84,13 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       account={account}
       geometry={mapGeometry}
       onMoveTo={(target) => onMoveTo(account.id, target)}
+      onCancelMoveTo={(operationId) => onCancelMoveTo(account.id, operationId)}
+    />
+
+    <MapTravelControl
+      account={account}
+      mapCatalog={mapCatalog}
+      onMoveTo={(target, options) => onMoveTo(account.id, target, options)}
       onCancelMoveTo={(operationId) => onCancelMoveTo(account.id, operationId)}
     />
 

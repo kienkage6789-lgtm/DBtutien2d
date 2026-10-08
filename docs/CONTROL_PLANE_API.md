@@ -52,6 +52,14 @@ Runtime giữ các nhóm dữ liệu: `engine:"vendor"`, connection/lifecycle, H
 
 DB vẫn tương thích file cũ: `botConfigs` legacy được đọc an toàn và khi có ghi sẽ chỉ giữ `engine:"vendor"` cùng `pref` nếu có. Không còn cấu hình chọn engine core.
 
+## Bản 2a: đi tới map qua cổng
+
+`POST /api/accounts/:id/move-to` nhận `{x,y}` cho cùng map, hoặc `{mapId}` cho map khác. Khi `mapId` khác map hiện tại, `x,y` tùy chọn và thao tác dừng tại điểm spawn sau cổng; khi cùng map, `x,y` vẫn bắt buộc. `abortOnHurt` là boolean, mặc định `true` cho đi nhiều map; `maxHurt` là số nguyên 1–50, mặc định 1.
+
+`GET /api/accounts/:id/reachable-maps` trả `{ currentMapId, maps: [{ mapId, name?, hops, route }] }`. Đồ thị lấy từ `P.MapData` của client vendor và chỉ dùng `map.portals`. `byHand`, `cooldownSec > 0`, `cooldownGroup`, `warps` và cấu trúc không xác minh bị loại. Account không tồn tại trả 404; chưa biết map hiện tại trả 409 `NOT_IN_GAME` hoặc `VENDOR_MAP_NOT_READY`.
+
+`WalkOperation` có thêm `route` và `leg`; `target` có thể là `null` với request map-only. Các lỗi `ROUTE_UNAVAILABLE` và `PATH_CROSSES_PORTAL` trả HTTP 422, dùng cùng envelope `success/error/errorCode/retryable`.
+
 ## WebSocket `/ws`
 
 Server gửi `initial_state`, `account_updated`, `account_log` và `bot_activity`. Client merge snapshot theo timestamp/context, không gửi command ngược qua WS. Runtime không chứa token, self id hoặc dữ liệu credential.

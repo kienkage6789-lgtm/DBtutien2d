@@ -56,7 +56,10 @@ function sanitizeDerivedMax(value: unknown): AccountRuntime['derivedMax'] | unde
   };
 }
 
-function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
+const MOVE_TO_MAP_ID = /^[a-zA-Z0-9_-]{1,64}$/;
+const MOVE_TO_LEG_PHASES = new Set(['walking_to_gate', 'on_gate', 'waiting_map', 'walking_to_target']);
+
+export function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
   if (value === null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const operation = value as Record<string, unknown>;
@@ -67,13 +70,34 @@ function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
       ? { x: pointValue.x, y: pointValue.y }
       : undefined;
   };
-  const target = point(operation.target);
+  const target = operation.target === null ? null : point(operation.target);
   const resolvedTarget = operation.resolvedTarget === null ? null : point(operation.resolvedTarget);
   if (typeof operation.operationId !== 'string' || !operation.operationId
     || typeof operation.status !== 'string' || !MOVE_TO_STATUSES.has(operation.status as MoveToOperation['status'])
-    || !target || resolvedTarget === undefined
+    || target === undefined || resolvedTarget === undefined
     || typeof operation.requester !== 'string' || !operation.requester
     || !isFiniteNumber(operation.startedAt) || !isFiniteNumber(operation.updatedAt)) return undefined;
+  const route = operation.route === undefined
+    ? undefined
+    : Array.isArray(operation.route) && operation.route.every((item) => typeof item === 'string' && MOVE_TO_MAP_ID.test(item))
+      ? [...operation.route]
+      : undefined;
+  const rawLeg = operation.leg;
+  const leg = rawLeg === undefined ? undefined : (() => {
+    if (!rawLeg || typeof rawLeg !== 'object' || Array.isArray(rawLeg)) return undefined;
+    const value = rawLeg as Record<string, unknown>;
+    return Number.isInteger(value.index) && Number(value.index) >= 0
+      && typeof value.fromMapId === 'string' && MOVE_TO_MAP_ID.test(value.fromMapId)
+      && (value.toMapId === null || typeof value.toMapId === 'string' && MOVE_TO_MAP_ID.test(value.toMapId))
+      && typeof value.phase === 'string' && MOVE_TO_LEG_PHASES.has(value.phase)
+      ? {
+        index: Number(value.index),
+        fromMapId: value.fromMapId,
+        toMapId: value.toMapId as string | null,
+        phase: value.phase as NonNullable<MoveToOperation['leg']>['phase'],
+      }
+      : undefined;
+  })();
   const result: MoveToOperation = {
     operationId: operation.operationId,
     target,
@@ -82,6 +106,8 @@ function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
     requester: operation.requester,
     startedAt: operation.startedAt,
     updatedAt: operation.updatedAt,
+    ...(route ? { route } : {}),
+    ...(leg ? { leg } : {}),
   };
   if (typeof operation.reason === 'string') result.reason = operation.reason;
   return result;
@@ -122,7 +148,13 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   }
   if (hasOwn(payload, 'vendor')) {
     if (payload.vendor && typeof payload.vendor === 'object' && !Array.isArray(payload.vendor)) {
-      next.vendor = payload.vendor as AccountRuntime['vendor'];
+      const vendor = { ...(payload.vendor as Record<string, unknown>) };
+      if (hasOwn(vendor, 'moveTo')) {
+        const moveTo = sanitizeMoveTo(vendor.moveTo);
+        if (moveTo === undefined) delete vendor.moveTo;
+        else vendor.moveTo = moveTo;
+      }
+      next.vendor = vendor as unknown as AccountRuntime['vendor'];
     } else {
       delete next.vendor;
     }

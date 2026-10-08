@@ -6,6 +6,7 @@ import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
 import { VendorRunner, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
+import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
@@ -104,6 +105,10 @@ export interface MapCatalogItem {
   lastSeenAt: number | null;
   observed: boolean;
   catalogSource: 'public_client' | 'observed_packet';
+}
+
+export interface ReachableMapInfo extends ReachableMap {
+  name?: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -322,6 +327,20 @@ export class WorkerPool {
     if (!operation) throw new Error('OPERATION_NOT_FOUND');
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
+  }
+
+  public getReachableMaps(accountId: string): { currentMapId: string; maps: ReachableMapInfo[] } {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('NOT_IN_GAME');
+    const result = active.runner.getReachableMaps();
+    const names = new Map(PUBLIC_CLIENT_MAP_CATALOG.map((map) => [map.mapId, map.name] as const));
+    return {
+      currentMapId: result.currentMapId,
+      maps: result.maps.map((map) => ({
+        ...map,
+        ...(names.get(map.mapId) ? { name: names.get(map.mapId) } : {}),
+      })),
+    };
   }
 
   public getRuntimeInfo(accountId: string): AccountRuntimeInfo {

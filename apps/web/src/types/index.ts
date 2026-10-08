@@ -1,14 +1,29 @@
 export type MoveToStatus = 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';
+export type MoveToLegPhase = 'walking_to_gate' | 'on_gate' | 'waiting_map' | 'walking_to_target';
 
 export interface MoveToOperation {
   operationId: string;
-  target: { x: number; y: number };
+  target: { x: number; y: number } | null;
   resolvedTarget: { x: number; y: number } | null;
   status: MoveToStatus;
   reason?: string;
   requester: string;
   startedAt: number;
   updatedAt: number;
+  route?: string[];
+  leg?: {
+    index: number;
+    fromMapId: string;
+    toMapId: string | null;
+    phase: MoveToLegPhase;
+  };
+}
+
+export interface ReachableMap {
+  mapId: string;
+  name?: string;
+  hops: number;
+  route: string[];
 }
 
 export interface VendorRuntimeSnapshot {

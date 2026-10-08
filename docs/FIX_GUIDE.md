@@ -1391,3 +1391,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Test source fake navigator, VendorRunner integration và web round-trip/geometry đã thêm.
 5. [~] Chưa chạy được build/test trong phiên sandbox; cần chạy `pnpm build`, `pnpm --filter @tutien2d/web test`, và từng file server bằng `cd apps/server && npx tsx --test <file>`.
 6. [ ] Chưa xác minh live tốc độ/độ chính xác, snap, đi sát cổng, hurt giữa đường, reconnect và đi ngay sau khi vào game.
+## Q. walkTo Bản 2a — checklist 2026-10-08
+
+1. [x] Đồ thị BFS thuần lấy từ `MapData.portals`; loại `byHand`, cooldown, `cooldownGroup`, `warps`/cấu trúc chưa xác minh.
+2. [x] Navigator nhiều chặng, `route`/`leg`, chờ transition tối đa 8 giây, `unexpected_map`, `portal_no_transition`, hurt threshold và trần tổng 10 phút.
+3. [x] API `mapId`/`abortOnHurt`/`maxHurt`, reachable-maps, ánh xạ `ROUTE_UNAVAILABLE`/`PATH_CROSSES_PORTAL`; UI chọn map và sanitize realtime.
+4. [x] Fixture offline dùng client vendor thật và FakeSocket ghi outbound `enter`; fixture integration phản hồi `map` sau delay; bundle offline: map-route 3/3, walk-navigator 9/9, contract 2/2, vendor-runner 12/12.
+5. [~] `pnpm build`, Vitest và lệnh `tsx` trực tiếp chưa chạy được trong sandbox (`tsx` ENOMEM, TypeScript/Vitest EPERM); cần chạy trong môi trường người giao việc.
+6. [ ] Chưa xác minh trên game thật: thời gian transition, hurt giữa đường, cooldown/byHand ở map dùng thực tế, reconnect và độ chính xác tuyến nhiều map.

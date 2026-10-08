@@ -1,4 +1,4 @@
-import type { AccountRuntime, LogEntry, MoveToOperation, MoveToStatus } from '../types';
+import type { AccountRuntime, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { getToken, notifyAuthRequired } from './auth';
 
@@ -60,6 +60,24 @@ export async function fetchAccounts(): Promise<AccountRuntime[]> {
   const response = await apiFetch(`${API_BASE}/accounts`);
   const json = await response.json();
   return json.data || [];
+}
+
+export interface MapCatalogItem {
+  mapId: string;
+  name: string;
+  scope?: string | null;
+}
+
+export async function fetchMapCatalog(): Promise<MapCatalogItem[]> {
+  const response = await apiFetch(`${API_BASE}/maps`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !Array.isArray(json?.data)) return [];
+  return json.data.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const map = item as Record<string, unknown>;
+    if (typeof map.mapId !== 'string' || typeof map.name !== 'string') return [];
+    return [{ mapId: map.mapId, name: map.name, scope: typeof map.scope === 'string' ? map.scope : null }];
+  });
 }
 
 export async function createAccount(data: {
@@ -138,6 +156,21 @@ export class MoveToApiError extends Error {
 }
 
 const MOVE_TO_STATUSES = new Set<MoveToStatus>(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
+const MAP_ID = /^[a-zA-Z0-9_-]{1,64}$/;
+type MoveToLeg = NonNullable<MoveToOperation['leg']>;
+const parseRoute = (value: unknown): string[] | undefined => Array.isArray(value)
+  && value.every((item) => typeof item === 'string' && MAP_ID.test(item)) ? [...value] : undefined;
+const parseLeg = (value: unknown): MoveToLeg | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const leg = value as Record<string, unknown>;
+  const phases = new Set(['walking_to_gate', 'on_gate', 'waiting_map', 'walking_to_target']);
+  return Number.isInteger(leg.index) && Number(leg.index) >= 0
+    && typeof leg.fromMapId === 'string' && MAP_ID.test(leg.fromMapId)
+    && (leg.toMapId === null || typeof leg.toMapId === 'string' && MAP_ID.test(leg.toMapId))
+    && typeof leg.phase === 'string' && phases.has(leg.phase)
+    ? { index: Number(leg.index), fromMapId: leg.fromMapId, toMapId: leg.toMapId as string | null, phase: leg.phase as MoveToLeg['phase'] }
+    : undefined;
+};
 
 const parsePoint = (value: unknown): { x: number; y: number } | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -150,13 +183,15 @@ const parsePoint = (value: unknown): { x: number; y: number } | undefined => {
 const parseMoveToOperation = (value: unknown): MoveToOperation | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const operation = value as Record<string, unknown>;
-  const target = parsePoint(operation.target);
+  const target = operation.target === null ? null : parsePoint(operation.target);
   const resolvedTarget = operation.resolvedTarget === null ? null : parsePoint(operation.resolvedTarget);
-  if (typeof operation.operationId !== 'string' || !target || resolvedTarget === undefined
+  if (typeof operation.operationId !== 'string' || (target === undefined) || resolvedTarget === undefined
     || typeof operation.status !== 'string' || !MOVE_TO_STATUSES.has(operation.status as MoveToStatus)
     || typeof operation.requester !== 'string'
     || typeof operation.startedAt !== 'number' || !Number.isFinite(operation.startedAt)
     || typeof operation.updatedAt !== 'number' || !Number.isFinite(operation.updatedAt)) return undefined;
+  const route = parseRoute(operation.route);
+  const leg = parseLeg(operation.leg);
   return {
     operationId: operation.operationId,
     target,
@@ -166,6 +201,8 @@ const parseMoveToOperation = (value: unknown): MoveToOperation | undefined => {
     requester: operation.requester,
     startedAt: operation.startedAt,
     updatedAt: operation.updatedAt,
+    ...(route ? { route } : {}),
+    ...(leg ? { leg } : {}),
   };
 };
 
@@ -177,11 +214,39 @@ function moveToError(json: Record<string, unknown> | null, response: Response): 
   return new MoveToApiError(message, code, response.status, acceptedTarget, json?.retryable === true);
 }
 
-export async function moveTo(accountId: string, target: { x: number; y: number }): Promise<MoveToOperation> {
+export async function fetchReachableMaps(accountId: string): Promise<{ currentMapId: string; maps: ReachableMap[] }> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/reachable-maps`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !json.data || typeof json.data !== 'object' || Array.isArray(json.data)) {
+    throw moveToError(json, response);
+  }
+  const data = json.data as Record<string, unknown>;
+  const maps = Array.isArray(data.maps) ? data.maps.flatMap((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const map = item as Record<string, unknown>;
+    const route = parseRoute(map.route);
+    if (typeof map.mapId !== 'string' || !MAP_ID.test(map.mapId) || !Number.isInteger(map.hops) || Number(map.hops) < 0 || !route) return [];
+    return [{ mapId: map.mapId, ...(typeof map.name === 'string' ? { name: map.name } : {}), hops: Number(map.hops), route }];
+  }) : [];
+  if (typeof data.currentMapId !== 'string' || !MAP_ID.test(data.currentMapId)) throw new Error('Reachable maps contract is invalid.');
+  return { currentMapId: data.currentMapId, maps };
+}
+
+export async function moveTo(
+  accountId: string,
+  target?: { x: number; y: number },
+  options: { targetMapId?: string; abortOnHurt?: boolean; maxHurt?: number } = {},
+): Promise<MoveToOperation> {
+  const body = {
+    ...(target ? { x: target.x, y: target.y } : {}),
+    ...(options.targetMapId !== undefined ? { mapId: options.targetMapId } : {}),
+    ...(options.abortOnHurt !== undefined ? { abortOnHurt: options.abortOnHurt } : {}),
+    ...(options.maxHurt !== undefined ? { maxHurt: options.maxHurt } : {}),
+  };
   const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/move-to`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ x: target.x, y: target.y }),
+    body: JSON.stringify(body),
   });
   const json = await response.json().catch(() => null) as Record<string, unknown> | null;
   const operation = parseMoveToOperation(json?.data);
