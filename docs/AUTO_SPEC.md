@@ -472,3 +472,43 @@ Scripts: `scripts/lib/vendor-env.cjs` (môi trường giả dùng chung), `scrip
 3. Chi phí CPU/RAM trên Linux và với nhiều tài khoản; độ chính xác nhịp `update` so với client trình duyệt (60 Hz, `dt` thay đổi).
 4. Hành vi tiến trình dài (rò rỉ bộ nhớ, bộ đếm thời gian giả tăng mãi).
 
+### 15.7 Kết quả giai đoạn 4 (ONLINE): Auto của client chạy không hiển thị trên game thật, 2026-10-08
+
+Script: `scripts/spike-vendor-auto-online.cjs` (cần `TUTIEN_SPIKE_LIVE=1`; từ chối chạy nếu cổng 4000 có server). Phiên lấy bằng mã dự án (refresh token xoay vòng được lưu lại). Nạp client vendor trong `node:vm`, thay `WebSocket` bằng `ws` có đếm gói, vòng lặp thời gian thật 16 ms gọi `Game.scene.update(dt)` (không `draw`, tự tăng `Game.time`), `Gateway.login`, dựng cảnh, bật `Input.pressAutoToggle()`. Lớp an toàn bao ngoài, kiểm tra mỗi 250 ms: dừng Auto và ngắt phiên nếu HP dưới 50 %, nhân vật gục, mất kết nối, hoặc hết thời gian. Không giả `Origin`/`User-Agent`.
+
+**[Đã đo] Chạy không bật Auto (đứng yên ~12 s):** cảnh khớp server (cùng map `thanh_truc_lam`, cùng vị trí, 225/225 HP, 62 quái); client gửi đúng **một gói `hello`**, không `move`, không `ping`. Khớp với kết quả đọc mã (`AUTO_SPEC.md` mục 14).
+
+**[Đã đo] Ba lần bật Auto (30 s, 20 s, 15 s), cùng nhân vật ở `thanh_truc_lam`:**
+
+| Chỉ số | Lần 30 s | Lần 20 s | Lần 15 s |
+|---|---|---|---|
+| Gói `move` gửi | 150 | 94 | 79 |
+| `attack` (đòn thường) | 21 | 15 | 8 |
+| `skill` | 4 | 2 | 3 |
+| `cmd` | 4 (`loot.pick`) | 1 | 2 (`loot.pick`) |
+| Gói server trả liên quan | `hit` 19, `skill_res` 4, `you` 15 | `hit` 9, `you` 9 | |
+| Quái do nhân vật hạ (`kill` có `by` là chính mình) | chưa đếm | 6 | 3 |
+| `hurt` nhận | 0 | 0 | 0 |
+| HP cuối | 225/225 | 225/225 | 225/225 |
+| Quãng đường | 151 px | 187 px | 50 px |
+| Lỗi `update` / lỗi xử lý gói / `console.error` | 0 / 0 / 0 | 0 / 0 / 0 | 0 |
+
+- Tốc độ gửi `move` trung bình khoảng 4,8 gói/s khi Auto chạy (client chỉ gửi khi trạng thái đổi); phân bố `st`: `walk` nhiều nhất, rồi `attack`, `pose`, `idle`.
+- `ping` kèm thống kê: 1 gói trong lần chạy 30 s, nhận 1 `pong`; phù hợp chu kỳ khoảng 30 s.
+- Lệnh `cmd` duy nhất client tự gửi trong Auto là `loot.pick` (nhặt vật rơi sau khi hạ quái).
+- Kỹ năng được dùng (2 đến 4 lần mỗi phiên): server trả `skill_res`; nhân vật thật có kỹ năng đã học.
+- Mỗi lần chạy kết nối và ngắt sạch (`closeInfo` rỗng trong suốt phiên); server chấp nhận kết nối từ client chạy kiểu này.
+
+**Ý nghĩa**
+- Hướng "dùng thẳng client, bỏ phần hiển thị" khả thi trên game thật: di chuyển, chọn mục tiêu, đánh thường, kỹ năng, nhặt đồ đều do mã client chính thức quyết định.
+- Các giai đoạn tự viết P2 đến P7 không còn là đường chính cho việc đánh quái; thay bằng lớp bao ngoài (an toàn, cấu hình, quan sát) quanh client.
+- Vẫn không có bằng chứng server phân biệt hay không phân biệt client này với trình duyệt: 3 phiên ngắn không bị từ chối không chứng minh điều đó.
+
+**Chưa biết / việc tiếp theo**
+1. Chạy dài (hàng giờ): rò rỉ bộ nhớ, trôi đồng hồ giả/thật, tái kết nối khi rớt mạng, token hết hạn giữa phiên.
+2. Lớp an toàn đầy đủ: rút lui/dừng khi HP thấp (hiện chỉ dừng và ngắt phiên), hồi sinh, xử lý boss/cụm quái nguy hiểm, giới hạn khu vực.
+3. Tích hợp vào `apps/server` (module chạy ngầm thay cho `core-client` ở tài khoản này), runtime/UI hiển thị, cấu hình bật tắt Auto, kỹ năng ưu tiên (`pref.thanhChieu`).
+4. Chi phí CPU/RAM trên Linux và với nhiều tài khoản; đo thật.
+5. Bàn giao phiên sang trình duyệt (`PLAN_SESSION_HANDOFF.md`) và quy tắc phiên của server.
+6. Điều khoản dịch vụ của game về bot/tự động hóa: người dùng tự cân nhắc.
+

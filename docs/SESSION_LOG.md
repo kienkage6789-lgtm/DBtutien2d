@@ -1,5 +1,9 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Spike giai đoạn 4 (online): Auto của client chạy không hiển thị trên game thật
+
+`scripts/spike-vendor-auto-online.cjs`. Ba phiên Auto ngắn (30 s, 20 s, 15 s) ở `thanh_truc_lam` với lớp an toàn (dừng khi HP dưới 50 %, gục, mất kết nối, hết giờ): client tự đi, đánh thường, dùng kỹ năng, nhặt đồ (`loot.pick`); không có `hurt`, HP 225/225, 0 lỗi; đã hạ quái (6 trong lần 20 s, 3 trong lần 15 s). Chạy không Auto thì client chỉ gửi `hello` (khớp kết quả đọc mã). Chi tiết bảng số liệu và việc tiếp theo ở `AUTO_SPEC.md` mục 15.7. Mỗi phiên kết nối và ngắt sạch; server/bot không chạy trong lúc thử; refresh token xoay vòng đã lưu lại.
+
 ## 2026-10-08 — Spike giai đoạn 3 (offline): cảnh game và Auto của client chạy không hiển thị; kế hoạch bàn giao phiên
 
 Quyết định của người dùng: chạy ngầm mặc định trên server Linux, mở client khi muốn xem theo phương án A (nhả phiên rồi mở trang chính thức); phần này ghi thành kế hoạch làm sau (`PLAN_SESSION_HANDOFF.md`). Trước mắt làm xong di chuyển và auto đánh quái đúng chuẩn client.
