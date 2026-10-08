@@ -25,3 +25,9 @@ export const worldToMiniMap = (point: Point, bounds: WorldBounds, width = 1000, 
   x: ((point.x - bounds.minX) / (bounds.maxX - bounds.minX)) * width,
   y: ((point.y - bounds.minY) / (bounds.maxY - bounds.minY)) * height,
 });
+
+/** Convert normalized SVG coordinates back to the client's Y-down world pixels. */
+export const miniMapToWorld = (point: Point, bounds: WorldBounds, width = 1000, height = 600): Point => ({
+  x: bounds.minX + (point.x / width) * (bounds.maxX - bounds.minX),
+  y: bounds.minY + (point.y / height) * (bounds.maxY - bounds.minY),
+});

@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Heart, KeyRound, MapPin, Play, Square, Trash2, Zap } from 'lucide-react';
-import type { AccountRuntime } from '../types';
+import type { AccountRuntime, MoveToOperation } from '../types';
 import { resolveMapContext, resolveVitalsAge, VITALS_DISPLAY_STALE_MS } from '../lib/context';
 import { MiniMap } from './MiniMap';
 import type { WorldBounds } from '../lib/minimap';
@@ -17,6 +17,8 @@ interface AccountCardProps {
   onStop: (id: string) => void;
   onStartVendorAuto: (account: AccountRuntime) => void;
   onStopVendorAuto: (id: string) => void;
+  onMoveTo: (id: string, target: { x: number; y: number }) => Promise<MoveToOperation>;
+  onCancelMoveTo: (id: string, operationId: string) => Promise<MoveToOperation>;
   onUpdatePassword: (account: AccountRuntime) => void;
   onDelete: (id: string) => void;
   mapGeometry?: WorldBounds | null;
@@ -28,6 +30,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   onStop,
   onStartVendorAuto,
   onStopVendorAuto,
+  onMoveTo,
+  onCancelMoveTo,
   onUpdatePassword,
   onDelete,
   mapGeometry,
@@ -72,7 +76,12 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       <span className="text-right text-slate-400">{locationKnown ? `X ${display(account.x)} · Y ${display(account.y)}` : '—'}</span>
     </div>
 
-    <MiniMap account={account} geometry={mapGeometry} />
+    <MiniMap
+      account={account}
+      geometry={mapGeometry}
+      onMoveTo={(target) => onMoveTo(account.id, target)}
+      onCancelMoveTo={(operationId) => onCancelMoveTo(account.id, operationId)}
+    />
 
     {account.vendor && <div className="mt-3 rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2 text-[11px]">
       <div className="flex items-center justify-between gap-2"><span className="font-semibold text-cyan-200">Auto chính thức · {account.vendor.supervisor.phase}</span><span className={account.vendor.autoRequested ? 'text-emerald-300' : 'text-slate-400'}>{account.vendor.autoRequested ? 'Đang bật' : 'Đang tắt'}</span></div>

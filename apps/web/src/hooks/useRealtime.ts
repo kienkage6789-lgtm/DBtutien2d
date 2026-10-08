@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { AccountRuntime, LogEntry } from '../types';
+import { AccountRuntime, LogEntry, MoveToOperation } from '../types';
 import { fetchAccounts, fetchLogs } from '../lib/api';
 import { isContextNewer, isOlderEpoch, sanitizeEntityContext, sanitizeMapContext } from '../lib/context';
 import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
@@ -7,6 +7,7 @@ import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
 const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped', 'error']);
 const VITAL_STATUSES = new Set<NonNullable<AccountRuntime['vitals']>['status']>(['unknown', 'fresh', 'stale', 'invalid', 'conflict']);
 const VITAL_SOURCES = new Set<NonNullable<AccountRuntime['vitals']>['source']>(['client', null]);
+const MOVE_TO_STATUSES = new Set<MoveToOperation['status']>(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
 
 const hasOwn = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -55,6 +56,37 @@ function sanitizeDerivedMax(value: unknown): AccountRuntime['derivedMax'] | unde
   };
 }
 
+function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const operation = value as Record<string, unknown>;
+  const point = (candidate: unknown): { x: number; y: number } | undefined => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+    const pointValue = candidate as Record<string, unknown>;
+    return isFiniteNumber(pointValue.x) && isFiniteNumber(pointValue.y)
+      ? { x: pointValue.x, y: pointValue.y }
+      : undefined;
+  };
+  const target = point(operation.target);
+  const resolvedTarget = operation.resolvedTarget === null ? null : point(operation.resolvedTarget);
+  if (typeof operation.operationId !== 'string' || !operation.operationId
+    || typeof operation.status !== 'string' || !MOVE_TO_STATUSES.has(operation.status as MoveToOperation['status'])
+    || !target || resolvedTarget === undefined
+    || typeof operation.requester !== 'string' || !operation.requester
+    || !isFiniteNumber(operation.startedAt) || !isFiniteNumber(operation.updatedAt)) return undefined;
+  const result: MoveToOperation = {
+    operationId: operation.operationId,
+    target,
+    resolvedTarget,
+    status: operation.status as MoveToOperation['status'],
+    requester: operation.requester,
+    startedAt: operation.startedAt,
+    updatedAt: operation.updatedAt,
+  };
+  if (typeof operation.reason === 'string') result.reason = operation.reason;
+  return result;
+}
+
 const WORLD_NUMBER_FIELDS = new Set<string>(['khu', 'x', 'y', 'soKhu']);
 const WORLD_STRING_FIELDS = new Set<string>(['mapId']);
 
@@ -82,6 +114,12 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
   if (hasOwn(payload, 'downed') && (typeof payload.downed === 'boolean' || payload.downed === null)) next.downed = payload.downed;
+  if (hasOwn(payload, 'moveTo')) {
+    const moveTo = sanitizeMoveTo(payload.moveTo);
+    if (moveTo !== undefined) next.moveTo = moveTo;
+  } else if (payload.status === 'stopped' || payload.status === 'error') {
+    next.moveTo = null;
+  }
   if (hasOwn(payload, 'vendor')) {
     if (payload.vendor && typeof payload.vendor === 'object' && !Array.isArray(payload.vendor)) {
       next.vendor = payload.vendor as AccountRuntime['vendor'];

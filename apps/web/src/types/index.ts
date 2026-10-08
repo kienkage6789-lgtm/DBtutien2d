@@ -1,3 +1,16 @@
+export type MoveToStatus = 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';
+
+export interface MoveToOperation {
+  operationId: string;
+  target: { x: number; y: number };
+  resolvedTarget: { x: number; y: number } | null;
+  status: MoveToStatus;
+  reason?: string;
+  requester: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 export interface VendorRuntimeSnapshot {
   lifecycle: string;
   connection: string;
@@ -28,6 +41,7 @@ export interface VendorRuntimeSnapshot {
   maxMp: number | null;
   downed: boolean | null;
   consoleErrors: string[];
+  moveTo: MoveToOperation | null;
 }
 
 export interface AccountRuntime {
@@ -68,6 +82,7 @@ export interface AccountRuntime {
   khu: number | null;
   x: number | null;
   y: number | null;
+  moveTo: MoveToOperation | null;
   latencyMs: number;
   activity: string;
   soKhu: number | null;

@@ -6,6 +6,7 @@ import { getWalkGrid, WALK_TILE_SIZE } from '../config/walk-grid.js';
 import { VERIFIED_PORTAL_EDGES } from '../config/portal-catalog.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
+import { moveToErrorResponse } from './move-to-errors.js';
 
 export const apiRouter: Router = Router();
 
@@ -219,6 +220,57 @@ apiRouter.post('/accounts/:id/auto/stop', (req: Request, res: Response) => {
     res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
   } catch (error) {
     const response = vendorAutoErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  const validBody = !!body && Object.keys(body).length === 2
+    && Object.keys(body).every((key) => key === 'x' || key === 'y')
+    && typeof body.x === 'number' && Number.isFinite(body.x)
+    && typeof body.y === 'number' && Number.isFinite(body.y);
+  if (!validBody) {
+    res.status(400).json({ success: false, error: 'TARGET_INVALID', errorCode: 'TARGET_INVALID', retryable: false });
+    return;
+  }
+  try {
+    const data = workerPool.moveTo(accountId, {
+      target: { x: body?.x as number, y: body?.y as number },
+      requester: 'user',
+    });
+    res.status(202).json({ success: true, data });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
+    res.status(response.status).json(response.body);
+  }
+});
+
+apiRouter.post('/accounts/:id/move-to/cancel', (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  if (!db.getAccountById(accountId)) {
+    res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
+    return;
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown> : null;
+  const operationId = body?.operationId;
+  if (!body || Object.keys(body).length !== 1 || typeof operationId !== 'string'
+    || operationId.length === 0 || operationId.length > 128) {
+    res.status(400).json({ success: false, error: 'OPERATION_ID_INVALID', errorCode: 'OPERATION_ID_INVALID', retryable: false });
+    return;
+  }
+  try {
+    const data = workerPool.cancelMoveTo(accountId, operationId);
+    res.json({ success: true, data });
+  } catch (error) {
+    const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
     res.status(response.status).json(response.body);
   }
 });

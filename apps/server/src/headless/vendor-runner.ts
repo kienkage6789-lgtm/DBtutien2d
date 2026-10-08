@@ -9,6 +9,12 @@ import {
   type AutoSupervisorEvent,
   type AutoSupervisorSnapshot,
 } from './auto-supervisor.js';
+import {
+  WalkNavigator,
+  type WalkNavigatorClient,
+  type WalkOperation,
+  type WalkRequest,
+} from './walk-navigator.js';
 
 export type VendorRunnerLifecycle =
   | 'starting'
@@ -119,6 +125,7 @@ export interface VendorRunnerSnapshot {
     fresh: boolean;
     observedAt: number | null;
   };
+  moveTo: WalkOperation | null;
   logs: Array<{ code: string; phase?: string; reasonCode?: string; at: number }>;
 }
 
@@ -250,6 +257,7 @@ export class VendorRunner {
   private P: Record<string, any> | null = null;
   private tokenManager: VendorTokenManagerLike | null = null;
   private supervisor: AutoSupervisor | null = null;
+  private readonly walkNavigator: WalkNavigator;
   private supervisorUnsubscribe: (() => void) | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -296,6 +304,7 @@ export class VendorRunner {
       watchdogMaxRssGrowthBytes: input.watchdogMaxRssGrowthBytes ?? 256 * 1024 * 1024,
       watchdogRestart: input.watchdogRestart ?? false,
     };
+    this.walkNavigator = new WalkNavigator(this.createWalkClient());
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
@@ -334,6 +343,7 @@ export class VendorRunner {
   }
 
   public async stop(): Promise<void> {
+    this.cancelMoveTo('runner_stopped');
     this.finishVitalsProbe('runner_stop');
     this.autoRequested = false;
     this.stopRequested = true;
@@ -374,6 +384,10 @@ export class VendorRunner {
       if (anchor.mapId !== this.observedMapId) throw new Error('AUTO_ANCHOR_MAP_MISMATCH');
       const mapData = this.P.MapData?.get ? this.P.MapData.get(anchor.mapId) : this.P.MapData?.[anchor.mapId];
       if (!mapData) throw new Error('AUTO_ANCHOR_MAP_UNKNOWN');
+    }
+    const currentMove = this.walkNavigator.getOperation();
+    if (currentMove && (currentMove.status === 'accepted' || currentMove.status === 'running')) {
+      this.walkNavigator.cancel(currentMove.operationId, 'auto_started');
     }
     const supervisor = this.supervisor ?? this.createSupervisor();
     this.autoRequested = true;
@@ -450,8 +464,20 @@ export class VendorRunner {
       monstersContext: world.monstersContext,
       playersContext: world.playersContext,
       vitals,
+      moveTo: this.walkNavigator.getOperation(),
       logs: this.logs.map((entry) => ({ ...entry })),
     };
+  }
+
+  public moveTo(request: WalkRequest): WalkOperation {
+    return this.walkNavigator.walkTo(request);
+  }
+
+  public cancelMoveTo(reason = 'user_cancelled', operationId?: string): boolean {
+    const current = this.walkNavigator.getOperation();
+    if (!current || (current.status !== 'accepted' && current.status !== 'running')) return false;
+    if (operationId !== undefined && current.operationId !== operationId) return false;
+    return this.walkNavigator.cancel(current.operationId, reason);
   }
 
   private async createTokenManager(): Promise<VendorTokenManagerLike> {
@@ -600,6 +626,34 @@ export class VendorRunner {
     };
   }
 
+  private createWalkClient(): WalkNavigatorClient {
+    return {
+      nowMs: () => Date.now(),
+      isInGame: () => this.connectionState() === 'IN_GAME',
+      isMapReady: () => this.isMapReady(),
+      isTransitioning: () => !!this.P?.SceneWorld?.transitioning,
+      getMapId: () => this.getMapId(),
+      getMap: () => this.P?.SceneWorld?.map ?? null,
+      getPlayer: () => this.getPlayer(),
+      isDown: (player) => this.isDown(player),
+      isAutoRequested: () => this.autoRequested,
+      getSupervisorPhase: () => this.supervisor?.getPhase() ?? 'idle',
+      getPathfinder: () => this.P?.Pathfinder?.route ? this.P.Pathfinder : null,
+      getHitbox: () => ({
+        width: Number(this.P?.CONFIG?.PLAYER?.HITBOX_W) || 16,
+        height: Number(this.P?.CONFIG?.PLAYER?.HITBOX_H) || 12,
+      }),
+      getPortals: (mapId) => {
+        const map = this.P?.MapData?.get ? this.P.MapData.get(mapId) : this.P?.MapData?.[mapId];
+        return (map?.portals ?? []).map((portal: Record<string, unknown>) => ({
+          tx: Number(portal.tx),
+          ty: Number(portal.ty),
+        })).filter((portal: { tx: number; ty: number }) => Number.isInteger(portal.tx) && Number.isInteger(portal.ty));
+      },
+      recordLog: (event) => this.recordLog(event.code, { reasonCode: event.reasonCode, at: event.at }),
+    };
+  }
+
   private handleSupervisorEvent(event: AutoSupervisorEvent): void {
     const at = Date.now();
     if (event.type === 'phase_changed') {
@@ -642,6 +696,7 @@ export class VendorRunner {
     this.frameTimeMs += rawDt * 1000;
     try {
       if (this.P.Game.scene?.update) this.P.Game.scene.update(dt);
+      this.walkNavigator.tick();
       this.supervisor?.tick();
       this.probeVitals(now);
       this.checkVitalsConfirmation(now);
@@ -756,6 +811,7 @@ export class VendorRunner {
 
   private handleSocketClosed(): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
+    this.cancelMoveTo('reconnecting');
     this.finishVitalsProbe('connection_closed');
     this.lastVitalsAt = null;
     this.vitalsProbeExhausted = false;

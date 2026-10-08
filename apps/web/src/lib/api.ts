@@ -1,4 +1,4 @@
-import type { AccountRuntime, LogEntry } from '../types';
+import type { AccountRuntime, LogEntry, MoveToOperation, MoveToStatus } from '../types';
 import type { WorldBounds } from './minimap';
 import { getToken, notifyAuthRequired } from './auth';
 
@@ -122,6 +122,83 @@ export async function stopVendorAuto(id: string): Promise<AccountRuntime> {
   const json = await response.json();
   if (!response.ok || !json.success) throw new Error(json.errorCode ? `${json.error} [${json.errorCode}]` : json.error);
   return json.data;
+}
+
+export class MoveToApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly code: string,
+    public readonly httpStatus: number,
+    public readonly acceptedTarget?: { x: number; y: number },
+    public readonly retryable = false,
+  ) {
+    super(message);
+    this.name = 'MoveToApiError';
+  }
+}
+
+const MOVE_TO_STATUSES = new Set<MoveToStatus>(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
+
+const parsePoint = (value: unknown): { x: number; y: number } | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const point = value as Record<string, unknown>;
+  return typeof point.x === 'number' && Number.isFinite(point.x)
+    && typeof point.y === 'number' && Number.isFinite(point.y)
+    ? { x: point.x, y: point.y } : undefined;
+};
+
+const parseMoveToOperation = (value: unknown): MoveToOperation | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const operation = value as Record<string, unknown>;
+  const target = parsePoint(operation.target);
+  const resolvedTarget = operation.resolvedTarget === null ? null : parsePoint(operation.resolvedTarget);
+  if (typeof operation.operationId !== 'string' || !target || resolvedTarget === undefined
+    || typeof operation.status !== 'string' || !MOVE_TO_STATUSES.has(operation.status as MoveToStatus)
+    || typeof operation.requester !== 'string'
+    || typeof operation.startedAt !== 'number' || !Number.isFinite(operation.startedAt)
+    || typeof operation.updatedAt !== 'number' || !Number.isFinite(operation.updatedAt)) return undefined;
+  return {
+    operationId: operation.operationId,
+    target,
+    resolvedTarget,
+    status: operation.status as MoveToStatus,
+    ...(typeof operation.reason === 'string' ? { reason: operation.reason } : {}),
+    requester: operation.requester,
+    startedAt: operation.startedAt,
+    updatedAt: operation.updatedAt,
+  };
+};
+
+function moveToError(json: Record<string, unknown> | null, response: Response): MoveToApiError {
+  const code = typeof json?.errorCode === 'string' ? json.errorCode
+    : typeof json?.error === 'string' ? json.error : 'MOVE_TO_FAILED';
+  const message = typeof json?.error === 'string' ? json.error : `Không thể di chuyển (HTTP ${response.status}).`;
+  const acceptedTarget = parsePoint(json?.acceptedTarget ?? json?.nearestTarget ?? json?.data);
+  return new MoveToApiError(message, code, response.status, acceptedTarget, json?.retryable === true);
+}
+
+export async function moveTo(accountId: string, target: { x: number; y: number }): Promise<MoveToOperation> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/move-to`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x: target.x, y: target.y }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const operation = parseMoveToOperation(json?.data);
+  if (!response.ok || json?.success !== true || !operation) throw moveToError(json, response);
+  return operation;
+}
+
+export async function cancelMoveTo(accountId: string, operationId: string): Promise<MoveToOperation> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/move-to/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operationId }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const operation = parseMoveToOperation(json?.data);
+  if (!response.ok || json?.success !== true || !operation) throw moveToError(json, response);
+  return operation;
 }
 
 export async function startAllBots(): Promise<AccountRuntime[]> {

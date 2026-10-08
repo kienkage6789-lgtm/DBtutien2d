@@ -51,4 +51,21 @@ describe('mergeAccountRuntime vitals freshness', () => {
     const stopped = mergeAccountRuntime(running!, { ...base, status: 'stopped' });
     expect(stopped?.vendor).toBeUndefined();
   });
+
+  it('merges the top-level move-to operation and clears it after stop', () => {
+    const moveTo = {
+      operationId: 'operation-test',
+      target: { x: 100, y: 100 },
+      resolvedTarget: { x: 112, y: 112 },
+      status: 'running' as const,
+      requester: 'user',
+      startedAt: 1,
+      updatedAt: 2,
+    };
+    const running = mergeAccountRuntime(undefined, { ...base, moveTo });
+    expect(running?.moveTo).toEqual(moveTo);
+
+    const stopped = mergeAccountRuntime(running!, { ...base, status: 'stopped' });
+    expect(stopped?.moveTo).toBeNull();
+  });
 });

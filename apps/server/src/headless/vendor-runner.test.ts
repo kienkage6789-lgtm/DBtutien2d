@@ -32,6 +32,8 @@ class FakeSocket implements VendorSocketLike {
   public static mapId = 'tan_vien';
   public static mapKhu: number | undefined = 1;
   public static mapDelayMs = 0;
+  /** Điểm xuất hiện trong gói `map`; mặc định cũ nằm trong ô bị chặn của tan_vien nên không đi bộ được. */
+  public static spawn = { x: 240, y: 192 };
   public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
@@ -74,7 +76,7 @@ class FakeSocket implements VendorSocketLike {
       setTimeout(() => {
         this.emit({ op: 'state', save: { realm: 'luyen_khi_8', exp: 0, equipment: {} } });
         setTimeout(() => {
-          this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: 240, y: 192, dir: 0, p: [] });
+          this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: FakeSocket.spawn.x, y: FakeSocket.spawn.y, dir: 0, p: [] });
           this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
           if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
         }, FakeSocket.mapDelayMs);
@@ -443,5 +445,51 @@ test('VendorRunner preserves unknown khu and exports current SceneWorld markers'
     FakeSocket.mapKhu = 1;
     FakeSocket.emitYou = true;
     await runner.stop();
+  }
+});
+
+test('VendorRunner walks with the official pathfinder, arrives, and lets Auto win the control handoff', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.emitYou = true;
+  FakeSocket.spawn = { x: 272, y: 860 };
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    for (let i = 0; i < 100 && runner.getSnapshot().mapId === null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(runner.getSnapshot().mapId, 'tan_vien');
+
+    const accepted = runner.moveTo({ target: { x: 372, y: 860 }, requester: 'user' });
+    assert.equal(accepted.status, 'accepted');
+    assert.ok(accepted.resolvedTarget, 'route phải cho đích đã snap');
+    assert.ok(Math.hypot(accepted.resolvedTarget.x - 372, accepted.resolvedTarget.y - 860) <= 6 * 32, 'đích snap trong 6 ô');
+    for (let i = 0; i < 150 && runner.getSnapshot().moveTo?.status !== 'arrived'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(runner.getSnapshot().moveTo?.status, 'arrived');
+
+    const manual = runner.moveTo({ target: { x: 272, y: 860 }, requester: 'user' });
+    const auto = await runner.startAuto();
+    assert.equal(auto.autoRequested, true);
+    assert.equal(runner.getSnapshot().moveTo?.operationId, manual.operationId);
+    assert.equal(runner.getSnapshot().moveTo?.status, 'cancelled');
+    assert.equal(runner.getSnapshot().moveTo?.reason, 'auto_started');
+  } finally {
+    await runner.stop();
+    FakeSocket.spawn = { x: 240, y: 192 };
+    FakeSocket.emitYou = true;
+    FakeSocket.moves = [];
   }
 });

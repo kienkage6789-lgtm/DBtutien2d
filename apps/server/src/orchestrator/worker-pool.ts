@@ -5,6 +5,7 @@ import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
 import { VendorRunner, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
+import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
@@ -66,6 +67,7 @@ export interface AccountRuntimeInfo {
   khu: number | null;
   x: number | null;
   y: number | null;
+  moveTo: VendorRunnerSnapshot['moveTo'];
   latencyMs: number;
   activity: string;
   soKhu: number | null;
@@ -304,6 +306,24 @@ export class WorkerPool {
     return snapshot;
   }
 
+  public moveTo(accountId: string, request: WalkRequest): WalkOperation {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
+    const operation = active.runner.moveTo(request);
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return operation;
+  }
+
+  public cancelMoveTo(accountId: string, operationId: string): WalkOperation {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    if (!active.runner.cancelMoveTo('user_cancelled', operationId)) throw new Error('OPERATION_NOT_FOUND');
+    const operation = active.runner.getSnapshot().moveTo;
+    if (!operation) throw new Error('OPERATION_NOT_FOUND');
+    wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+    return operation;
+  }
+
   public getRuntimeInfo(accountId: string): AccountRuntimeInfo {
     const account = db.getAccountById(accountId);
     const active = this.activeVendors.get(accountId);
@@ -341,6 +361,7 @@ export class WorkerPool {
       khu: null,
       x: null,
       y: null,
+      moveTo: null,
       latencyMs: 0,
       activity: 'idle',
       soKhu: null,
@@ -425,6 +446,7 @@ export class WorkerPool {
       khu: snapshot.khu,
       x: snapshot.x,
       y: snapshot.y,
+      moveTo: snapshot.moveTo,
       latencyMs: 0,
       activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
       soKhu: snapshot.soKhu,

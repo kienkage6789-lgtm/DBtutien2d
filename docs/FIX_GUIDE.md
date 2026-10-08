@@ -1382,3 +1382,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Test source thêm fake map khác `tan_vien`, map delay, snapshot trước/trong/sau transition, gate map và anchor mismatch; không phát sẵn kết quả snapshot.
 5. [~] Chưa chạy được test/build trong sandbox do `tsx` lỗi `uv_os_get_passwd returned ENOMEM`; cần người giao việc chạy `npx tsx --test src/headless/vendor-runner.test.ts`, contract test và `pnpm build`.
 6. [ ] Chưa xác minh timing/reconnect/anchor trên game thật.
+
+## P. Vendor walkTo bản 1 — checklist 2026-10-08
+
+1. [x] Module `walk-navigator.ts` dùng `Pathfinder.route`/`player.setPath`, snap waypoint cuối, gate portal, quyền lái Auto và vòng đời arrived/blocked/timeout/cancelled.
+2. [x] `VendorRunnerSnapshot.moveTo`, worker/API move-to + cancel, error envelope và `startAuto` handoff đã nối.
+3. [x] MiniMap có inverse transform, gate context/khu/geometry/Auto/operation, trạng thái, marker snap và nút hủy.
+4. [x] Test source fake navigator, VendorRunner integration và web round-trip/geometry đã thêm.
+5. [~] Chưa chạy được build/test trong phiên sandbox; cần chạy `pnpm build`, `pnpm --filter @tutien2d/web test`, và từng file server bằng `cd apps/server && npx tsx --test <file>`.
+6. [ ] Chưa xác minh live tốc độ/độ chính xác, snap, đi sát cổng, hurt giữa đường, reconnect và đi ngay sau khi vào game.

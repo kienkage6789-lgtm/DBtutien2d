@@ -1,5 +1,27 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Vendor walkTo bản 1 và MiniMap move-to (offline)
+
+Thay đổi:
+- Thêm `apps/server/src/headless/walk-navigator.ts`: hợp đồng `WalkRequest`/`WalkOperation`/`WalkError`, route qua `Pathfinder.route` + `player.setPath`, snap đích theo waypoint cuối, chặn đích trên ô cổng, cancel/arrival/stuck/timeout và log redacted.
+- Nối `VendorRunnerSnapshot.moveTo`, worker pool, API `/api/accounts/:id/move-to` và `/move-to/cancel`, envelope lỗi theo spec; `startAuto` hủy thao tác đi tay đang chạy.
+- Bật MiniMap click có các gate context/khu/geometry/Auto/operation; thêm marker đích snap, trạng thái, nút hủy và transform `miniMapToWorld` có xử lý letterbox của SVG; merge realtime giữ `moveTo` cấp account.
+- Không sửa `vendor/`, không mở mạng/game thật, không đọc `data/`/`.env*`.
+
+Lệnh đã chạy và kết quả thật:
+- Rà soát source/docs/vendor protocol bằng PowerShell: **đã chạy**; xác nhận client `route` gọi `nearestWalkable(..., 6)` và waypoint cuối là tâm ô.
+- `pnpm build`: **chưa chạy** theo giới hạn sandbox của phiên.
+- `pnpm --filter @tutien2d/web test`: **chưa chạy** theo giới hạn sandbox của phiên.
+- `cd apps/server && npx tsx --test ...`: **chưa chạy** theo giới hạn sandbox của phiên.
+- `node_modules/.bin/tsc -p apps/server/tsconfig.json --noEmit` và web tương ứng: **bị chặn** bởi `EPERM` khi Node đọc TypeScript trong `.pnpm`.
+- `apps/server/node_modules/.bin/tsx --test ...`: **bị chặn** trước khi nạp test bởi `uv_os_get_passwd returned ENOMEM`.
+- `apps/web/node_modules/.bin/vitest run ...`: **bị chặn** bởi `EPERM` khi đọc Vitest trong `.pnpm`.
+- Esbuild syntax compile cho các file server/web sửa: **pass**; bundle test offline `walk-navigator`: **5/5 pass**, error contract: **2/2 pass**.
+- `git diff --check`: **pass**.
+
+Chưa xác minh:
+- TypeScript/build/test end-to-end trong môi trường người giao việc; tốc độ và độ chính xác live, snap live, đi sát cổng, hurt giữa đường, đi ngay sau khi vào game/reconnect thật.
+
 ## 2026-10-08 — Vendor map readiness and Auto anchor guard
 
 Thay doi:

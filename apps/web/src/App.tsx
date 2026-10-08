@@ -7,8 +7,8 @@ import { AddAccountModal } from './components/AddAccountModal';
 import { UpdatePasswordModal } from './components/UpdatePasswordModal';
 import { ApiTokenPanel } from './components/ApiTokenPanel';
 import { LogTerminal } from './components/LogTerminal';
-import type { AccountRuntime } from './types';
-import { fetchMapGeometry, startBot, stopBot, startVendorAuto, stopVendorAuto, startAllBots, stopAllBots, deleteAccount } from './lib/api';
+import type { AccountRuntime, MoveToOperation } from './types';
+import { cancelMoveTo, fetchMapGeometry, moveTo, startBot, stopBot, startVendorAuto, stopVendorAuto, startAllBots, stopAllBots, deleteAccount } from './lib/api';
 import type { WorldBounds } from './lib/minimap';
 import { resolveMapContext } from './lib/context';
 
@@ -56,6 +56,26 @@ export const App: React.FC = () => {
     } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
   };
   const handleStopAuto = async (id: string) => { try { await stopVendorAuto(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
+  const handleMoveTo = async (id: string, target: { x: number; y: number }): Promise<MoveToOperation> => {
+    try {
+      const operation = await moveTo(id, target);
+      await refreshAccounts();
+      return operation;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
+  const handleCancelMoveTo = async (id: string, operationId: string): Promise<MoveToOperation> => {
+    try {
+      const operation = await cancelMoveTo(id, operationId);
+      await refreshAccounts();
+      return operation;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
   const handleDelete = async (id: string) => {
     if (!window.confirm('Bạn có chắc chắn muốn xóa tài khoản này khỏi Dashboard?')) return;
     try { await deleteAccount(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
@@ -73,7 +93,7 @@ export const App: React.FC = () => {
         <h2 className="text-base font-bold uppercase tracking-wider text-slate-200 font-title mb-4">Ma trận tài khoản ({accounts.length})</h2>
         {accounts.length === 0
           ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white">+ Thêm tài khoản</button></div>
-          : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
+          : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
       </section>
       <section className="pt-2"><LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} /></section>
     </main>
