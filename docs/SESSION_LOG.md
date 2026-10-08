@@ -1,5 +1,11 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Spike giai đoạn 3 (offline): cảnh game và Auto của client chạy không hiển thị; kế hoạch bàn giao phiên
+
+Quyết định của người dùng: chạy ngầm mặc định trên server Linux, mở client khi muốn xem theo phương án A (nhả phiên rồi mở trang chính thức); phần này ghi thành kế hoạch làm sau (`PLAN_SESSION_HANDOFF.md`). Trước mắt làm xong di chuyển và auto đánh quái đúng chuẩn client.
+
+Kết quả: khởi động được cảnh game không hiển thị (`scripts/lib/vendor-env.cjs`, `spike-vendor-scene-offline.cjs`), `update(dt)` thủ công nhanh khoảng 130 lần so với thời gian thực, và Auto của client (`Input.pressAutoToggle`) chạy được: trong 45 s mô phỏng đi, đánh 41 đòn, hạ 5 quái, rồi gục ở giây 43 (client Auto không tự tránh nguy hiểm). Hai bẫy: phải tự tăng `Game.time`, và `Assets.ensureMap` phải được thay bằng hàm trả ngay. Chi tiết và việc chưa làm: `AUTO_SPEC.md` mục 15.6. Chưa chạy chế độ online, chưa bật Auto trên game thật.
+
 ## 2026-10-08 — Spike giai đoạn 2: client chính thức không hiển thị kết nối thật
 
 `scripts/spike-vendor-client-live.cjs`: lấy phiên bằng mã dự án, nạp client vendor trong `node:vm`, thay `WebSocket` bằng `ws`, `Gateway.connect()`, quan sát 25 s, không bật Auto, không gửi lệnh gameplay. Kết quả: `ready` sau 1014 ms, server chấp nhận, `selfId`/`mapId`/`mapEpoch`/`snapV`/`remotes=9` do chính mã client tính, 246 gói snap2, 0 lỗi trong trình xử lý gói. Cảnh game chưa khởi động (`SceneWorld.player` chưa có). Refresh token xoay vòng đã được lưu lại vào DB; cần kiểm tra bot đăng nhập được ở lần chạy sau. Chi tiết và việc chưa biết: `AUTO_SPEC.md` mục 15.5. Server/bot đã dừng trước khi chạy (cổng 4000 trống); script tự thoát sạch.

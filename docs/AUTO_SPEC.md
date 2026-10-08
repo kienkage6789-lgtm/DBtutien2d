@@ -441,3 +441,34 @@ Kết luận: toàn bộ lớp mạng của client chính thức (`Gateway`) ch�
 5. Server có phân biệt kiểu kết nối này với trình duyệt không; điều khoản dịch vụ.
 6. Phiên đăng nhập: refresh token đã xoay vòng và được lưu lại; cần kiểm tra bot vẫn đăng nhập được ở lần chạy kế tiếp.
 
+### 15.6 Kết quả giai đoạn 3 (OFFLINE): cảnh game và Auto của client chạy không hiển thị, 2026-10-08
+
+Scripts: `scripts/lib/vendor-env.cjs` (môi trường giả dùng chung), `scripts/spike-vendor-scene-offline.cjs`, `scripts/spike-vendor-auto-offline.cjs`. Không mạng, không đăng nhập: client ở chế độ offline tự mô phỏng quái cục bộ.
+
+**[Đã đo]**
+
+| Quan sát | Kết quả |
+|---|---|
+| Khởi động cảnh | `Game.init`, `SceneWorld.startMapData/nuongNenDau`, `Game.changeScene(SceneWorld)` chạy được; có `SceneWorld.player`, bản đồ `tan_vien` |
+| Vòng `update` thủ công (không `draw`) | 600 lần `update(1/60)`, 0 lỗi; khoảng 78 ms CPU thật cho 10 giây mô phỏng (khoảng 130 lần nhanh hơn thời gian thực, số đo trên máy dev Windows) |
+| Chuyển map | `SceneWorld.switchMap('thanh_truc_lam')` sang đúng map, 62 quái (khớp `map-spawns.generated.ts`). Phải thay `Assets.ensureMap` bằng hàm trả ngay vì ảnh giả không bao giờ báo đã tải |
+| Cảnh giới | `Player.setRealm(player, 'luyen_khi_8')` cho 225/188 HP/MP, đúng bảng cảnh giới |
+| Auto | `Input.pressAutoToggle()` bật được `autoOn`. Trong 45 s mô phỏng: đi tới quái, 41 đòn thường, hạ 5 quái, bị đánh từ 225 xuống 0 HP và gục ở giây 43 (trạng thái `down`) |
+| Lỗi | 0 lỗi `update`, 0 `console.error` |
+| Kỹ năng | 0 lần dùng: mô phỏng offline không có bí tịch nào đã học |
+
+**Hai bẫy khi tự điều khiển vòng lặp** (đã xử lý trong script):
+1. `Game.time` do vòng lặp chính của `Game` cập nhật, không phải `SceneWorld.update`. Phải tự tăng `Game.time += dt` mỗi bước, nếu không Auto đứng yên mãi (bộ đếm nghỉ `autoNghiDen` dựa vào nó).
+2. Cờ `SceneWorld.transitioning` có thể kẹt `true` vì hiệu ứng mờ dần phụ thuộc DOM giả; script tắt tay sau 5 s mô phỏng.
+
+**Ý nghĩa**
+- Logic "Tự Động" đúng chuẩn client (chọn mục tiêu, tìm đường, tiếp cận, đánh, nhịp đòn) chạy được trong Node mà không cần viết lại. Đây là cơ sở để thay các giai đoạn P2 đến P4 viết tay bằng việc chạy client thật.
+- Auto của client KHÔNG tự tránh nguy hiểm, hồi máu hay rút lui: nhân vật mô phỏng chết sau khoảng 43 s khi đánh cụm quái. Cần lớp an toàn bao ngoài (ngưỡng HP, dừng Auto, rút lui, hồi sinh). Lưu ý đây là mô phỏng offline, sát thương và hành vi quái có thể khác server thật.
+- Trong client chạy ngầm, `SceneWorld.player.hp` là mô hình HP của chính client (khởi tạo đầy, được `you`/`hurt` sửa), có thể dùng làm nguồn HP thay cho việc tự dựng.
+
+**Chưa làm**
+1. Chế độ ONLINE: cảnh game cùng `Gateway` đã kết nối (mã client dùng `h()` để chọn nhánh server), để Auto gửi `move`/`attack`/`skill` thật. Cần xác nhận thứ tự khởi động (tạo cảnh trước rồi kết nối, `enterServerMap`), và đếm gói client gửi đi so với bot cũ.
+2. Lớp an toàn bao ngoài Auto (HP thấp, `hurtCount`, gục, hồi sinh) và nút dừng khẩn.
+3. Chi phí CPU/RAM trên Linux và với nhiều tài khoản; độ chính xác nhịp `update` so với client trình duyệt (60 Hz, `dt` thay đổi).
+4. Hành vi tiến trình dài (rò rỉ bộ nhớ, bộ đếm thời gian giả tăng mãi).
+
