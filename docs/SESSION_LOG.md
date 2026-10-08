@@ -1,5 +1,30 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Soak 30 phút: engine vendor + Auto qua server thật
+
+`scripts/soak-vendor.cjs` (cần `TUTIEN_SOAK_LIVE=1`): tự khởi động server, `engine=vendor`, start bot, `auto/start`, giám sát mỗi 5 s, ghi mẫu mỗi 30 s, luôn dọn dẹp (auto/stop, bot stop, engine=core, tắt server). Dừng sớm nếu supervisor `halted`, runner lỗi, mất kết nối quá 90 s hoặc API không phản hồi quá 30 s; không điều kiện nào kích hoạt. Một phiên đăng nhập, `thanh_truc_lam`, không bật packet tap.
+
+### Kết quả (1802 s thực)
+
+| Chỉ số | Giá trị |
+|---|---|
+| Quái do nhân vật hạ | 904 (khoảng 30 mỗi phút) |
+| Gói gửi | 12602 `move` (khoảng 7 mỗi giây), 1898 `attack` (khoảng 63 mỗi phút), 424 `skill`, 248 `cmd` (nhặt đồ), 59 `ping` (khoảng 2 mỗi phút) |
+| Gục / chuyến về neo | 0 / 0 (lớp an toàn quay về neo chưa được kích hoạt thật) |
+| HP | 225/225 ở mọi mẫu; `hurt` chỉ 7 gói cả phiên |
+| Lỗi cập nhật / lỗi xử lý gói | 0 / 0 |
+| `console.error` của client | 1 (nội dung CHƯA ghi lại; lần sau ghi nội dung) |
+| FPS vòng lặp | thấp nhất 36, thường 40 |
+| CPU server | khoảng 9,9 % của một lõi (đo trên máy dev Windows) |
+| RSS server | 118 đến 279 MB, đầu 273 và cuối 243 (trung bình 10 mẫu đầu và cuối); xu hướng khoảng -1,6 MB mỗi phút: không thấy rò rỉ trong 30 phút |
+| Kết thúc | hết thời gian; dọn dẹp thành công, cổng 4000 trống, engine về `core` |
+
+Ghi chú: `ping` khoảng 2 gói mỗi phút khớp chu kỳ khoảng 30 s của client trình duyệt (bot `core` cũ gửi mỗi 8 s). RSS đo là working set trên Windows nên dao động theo việc hệ điều hành thu hồi bộ nhớ.
+
+### Chưa xác minh
+
+Chết và hồi sinh thật (không gặp trong 30 phút), kết nối lại thật, làm mới token giữa phiên (token chưa hết hạn trong 30 phút), chạy nhiều giờ, nhiều tài khoản song song, hiệu năng trên Linux, nội dung `console.error`, và việc server game có coi hành vi này khác trình duyệt hay không.
+
 ## 2026-10-08 — Chạy thử engine vendor qua server thật
 
 Quy trình: server (`node dist/index.js`), `PUT /accounts/:id/config {"engine":"vendor"}`, `POST /accounts/:id/start`, `POST /accounts/:id/auto/start {}` (neo = vị trí hiện tại), theo dõi mỗi giây với dừng khẩn (HP dưới 50 %, gục, `hurt` tăng quá dày, supervisor `halted`), `POST /auto/stop`, dừng bot, trả `engine` về `core`, dừng server. Không bật packet tap; một phiên đăng nhập.
