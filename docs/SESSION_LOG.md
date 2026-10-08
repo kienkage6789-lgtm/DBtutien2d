@@ -1,5 +1,21 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Điều tra chuyến `thanh_truc_lam` → `tan_vien` thất bại và sửa 3 việc (navigator, watchdog, chẩn đoán)
+
+Hiện tượng (live, 1 lần): đi từ (636,220) tới cổng (272,16), sau 5,4 s navigator vào `waiting_map` khi nhân vật dừng ở (272,237) cách cổng khoảng 220 px, hết 8 s thì `failed` (`portal_no_transition`); không bị đánh (hurt 0), không gục. Lần thử lại từ (275,67) thành công trong 2,8 s.
+
+Đã loại trừ (đo offline bằng client thật, map `thanh_truc_lam` tải đủ): `Pathfinder.route` KHÔNG trả đường đi một phần. Đường từ (636,220) tới cổng là `(368,240) → (272,80) → (272,16)`, điểm cuối đúng là cổng; điểm (272,237) không nằm trên đường này, nên nhân vật bị đưa về đó từ bên ngoài (suy luận: server đặt lại vị trí hoặc choáng/trói xóa đường đi). Nguyên nhân gốc CHƯA xác định (nhật ký của chuyến đó đã bị đẩy mất, xem lỗi 2).
+
+Lỗi thật tìm được và đã sửa:
+1. `walk-navigator.ts`: nhánh `isTransitioning()` coi "đang đi tới cổng và đường đi trống" là đã tới cổng (chỉ cần đường trống HOẶC gần đích). Giờ chỉ coi là chờ đổi map khi cách cổng ≤ 1,5 ô; nếu còn xa thì chờ có giới hạn (`portalWaitTimeoutMs`) rồi mới `unexpected_map`.
+2. `vendor-runner.ts`: `watchdog_warning` ghi MỖI KHUNG HÌNH khi vượt ngưỡng (hàng trăm dòng mỗi giây, mỗi dòng ghi DB và phát runtime, đẩy mất nhật ký cũ). Giờ mỗi lý do tối đa một dòng mỗi 30 s, kèm giá trị đo (`growthMB`, `delayMs`).
+3. Đường đi bị xóa khi còn xa đích: navigator lập lại đường bằng chính `Pathfinder` của client, tối đa 3 lần mỗi chặng (`maxReplans`), rồi áp dụng luật kẹt như cũ.
+4. Chẩn đoán: nhật ký `move_to_*` có thêm `detail` (toạ độ, đích, khoảng cách, độ dài đường, chặng, số lần lập lại), ví dụ `Vendor move_to_waiting_map (near_gate_transition) pos=(272,16) goal=(272,16) d=0 path=0 leg=0/on_gate replans=0`.
+
+Lệnh đã chạy: `pnpm build` (pass); test web 24; server: `walk-navigator` 13 (thêm 4), `vendor-runner` 17 (thêm 1, chạy 8 lần không lỗi), các test khác pass. Chưa chạy live sau sửa.
+
+Còn chờ xác minh: tái hiện live chuyến từ `thanh_truc_lam` (nơi có quái) với chẩn đoán mới; nguyên nhân thật của việc nhân vật bị đưa về (272,237).
+
 ## 2026-10-08 — API và dashboard đổi khu cho engine vendor (offline)
 
 Thay đổi:

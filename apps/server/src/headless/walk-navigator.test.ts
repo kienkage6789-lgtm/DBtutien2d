@@ -36,7 +36,7 @@ class FakeWalkClient implements WalkNavigatorClient {
   public hurtCount = 0;
   public routeResult: unknown[] = [{ x: 112, y: 112 }];
   public routeCalls: unknown[][] = [];
-  public logs: Array<{ code: string; reasonCode?: string; at: number }> = [];
+  public logs: Array<{ code: string; reasonCode?: string; detail?: string; at: number }> = [];
   public readonly pathfinder: WalkPathfinder = {
     route: (...args) => {
       this.routeCalls.push(args);
@@ -59,7 +59,7 @@ class FakeWalkClient implements WalkNavigatorClient {
   public getPortals(_mapId?: string): Array<{ tx: number; ty: number; toMapId?: string }> { return this.portals; }
   public getMapIds(): string[] { return this.mapIds; }
   public getHurtCount(): number { return this.hurtCount; }
-  public recordLog(event: { code: string; reasonCode?: string; at: number }): void { this.logs.push(event); }
+  public recordLog(event: { code: string; reasonCode?: string; detail?: string; at: number }): void { this.logs.push(event); }
 }
 
 const request = { target: { x: 112, y: 112 }, requester: 'user' as const };
@@ -289,4 +289,88 @@ test('multi-map hurt abort uses the configured threshold and can be disabled', (
   continueClient.now = 100;
   continueNavigator.tick();
   assert.equal(continueNavigator.getOperation()?.status, 'running');
+});
+
+const gateClient = (): FakeWalkClient => {
+  const client = new FakeWalkClient();
+  client.getPortals = (mapId: string) => mapId === 'map-a' ? [{ tx: 3, ty: 3, toMapId: 'map-b' }] : [];
+  return client;
+};
+
+test('a transient transition far from the gate is not mistaken for arriving at the gate; the path is re-planned', () => {
+  const client = gateClient();
+  const navigator = new WalkNavigator(client);
+  navigator.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  const plannedCalls = client.routeCalls.length;
+
+  // Server resync / stun clears the path while the character is ~90 px from the gate and the client flickers a transition.
+  client.player.path = [];
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 100;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'walking_to_gate', 'far from the gate must not enter waiting_map');
+  assert.ok(['accepted', 'running'].includes(String(navigator.getOperation()?.status)), 'the operation stays active');
+
+  client.transitioning = false;
+  client.mapId = 'map-a';
+  client.now = 200;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'walking_to_gate');
+  assert.equal(client.routeCalls.length, plannedCalls + 1, 'the cleared path is planned again with the same pathfinder');
+  assert.ok(client.player.path.length > 0);
+  const replan = client.logs.find((log) => log.code === 'move_to_replan');
+  assert.ok(replan, 'replan is logged');
+  assert.match(String(replan?.detail), /pos=\(48,48\) goal=\(112,112\)/);
+});
+
+test('a transition close to the gate still enters waiting_map and records why', () => {
+  const client = gateClient();
+  const navigator = new WalkNavigator(client);
+  navigator.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  client.player.x = 100;
+  client.player.y = 112;
+  client.player.path = [];
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 100;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'waiting_map');
+  const waiting = client.logs.find((log) => log.code === 'move_to_waiting_map');
+  assert.equal(waiting?.reasonCode, 'near_gate_transition');
+  assert.match(String(waiting?.detail), /pos=\(100,112\)/);
+});
+
+test('a transition that lasts too long far from the gate fails as unexpected_map', () => {
+  const client = gateClient();
+  const navigator = new WalkNavigator(client, { portalWaitTimeoutMs: 1_000 });
+  navigator.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 100;
+  navigator.tick();
+  assert.ok(['accepted', 'running'].includes(String(navigator.getOperation()?.status)));
+  client.now = 1_300;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.status, 'failed');
+  assert.equal(navigator.getOperation()?.reason, 'unexpected_map');
+});
+
+test('re-planning a cleared path is bounded, then the normal stuck rule applies', () => {
+  const client = new FakeWalkClient();
+  const navigator = new WalkNavigator(client);
+  navigator.walkTo(request);
+  const plannedCalls = client.routeCalls.length;
+  for (let i = 1; i <= 6; i += 1) {
+    client.player.path = [];
+    client.now = i * 100;
+    navigator.tick();
+  }
+  assert.equal(client.routeCalls.length, plannedCalls + 3, 'at most three re-plans');
+  client.player.path = [];
+  client.now = 7_000;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.status, 'blocked');
+  assert.equal(navigator.getOperation()?.reason, 'stuck');
+  assert.match(String(client.logs.at(-1)?.detail), /replans=3/);
 });

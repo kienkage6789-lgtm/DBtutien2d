@@ -794,3 +794,33 @@ test('VendorRunner reports KHU_TIMEOUT when the fixture does not answer', async 
     resetKhuFixture();
   }
 });
+
+test('VendorRunner rate-limits watchdog warnings instead of logging one per frame', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    // Ngưỡng 0 ms: mọi khung hình đều "trễ", trước đây ghi một cảnh báo mỗi khung hình.
+    watchdogMaxFrameDelayMs: 0,
+  });
+  try {
+    await runner.start();
+    for (let i = 0; i < 400 && runner.getSnapshot().frames < 40; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    const snapshot = runner.getSnapshot();
+    assert.ok(snapshot.frames >= 40, 'enough frames ran to exercise the watchdog');
+    const warnings = snapshot.logs.filter((log) => log.code === 'watchdog_warning' && log.reasonCode === 'frame_delay');
+    assert.ok(warnings.length >= 1, 'the first warning is still recorded');
+    assert.ok(warnings.length <= 1, 'but not one per frame');
+    assert.match(String(warnings[0]?.detail), /^delayMs=\d+$/);
+  } finally {
+    await runner.stop();
+  }
+});

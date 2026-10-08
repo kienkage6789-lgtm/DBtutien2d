@@ -65,6 +65,7 @@ export interface VendorPacketCounts {
 
 /** Thời gian tối đa (ms) Auto được chạy khi chưa có gói vitals chính thức. Di chuyển ~1 s đã kích ra gói you. */
 export const VITALS_CONFIRM_MS = 10_000;
+const WATCHDOG_LOG_INTERVAL_MS = 30_000;
 const VITALS_PROBE_MAX_MOVES = 10;
 const VITALS_PROBE_INTERVAL_MS = 300;
 const VENDOR_MONSTER_LIMIT = 200;
@@ -140,11 +141,11 @@ export interface VendorRunnerSnapshot {
     observedAt: number | null;
   };
   moveTo: WalkOperation | null;
-  logs: Array<{ code: string; phase?: string; reasonCode?: string; at: number }>;
+  logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }>;
 }
 
 export interface VendorRunnerLogger {
-  (event: { code: string; phase?: string; reasonCode?: string; at: number }): void;
+  (event: { code: string; phase?: string; reasonCode?: string; detail?: string; at: number }): void;
 }
 
 export interface VendorRunnerOptions {
@@ -322,7 +323,9 @@ export class VendorRunner {
   private autoRequested = false;
   private currentSocket: CountingWebSocket | null = null;
   private readonly packets = emptyPacketCounts();
-  private readonly logs: Array<{ code: string; phase?: string; reasonCode?: string; at: number }> = [];
+  private readonly logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }> = [];
+  /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
+  private readonly watchdogLoggedAt = new Map<string, number>();
   private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
 
   public constructor(private readonly input: VendorRunnerOptions) {
@@ -780,7 +783,7 @@ export class VendorRunner {
       getPortals: (mapId) => this.getPortalsFromClient(mapId),
       getMapIds: () => this.getMapIdsFromClient(),
       getHurtCount: () => this.hurtCount,
-      recordLog: (event) => this.recordLog(event.code, { reasonCode: event.reasonCode, at: event.at }),
+      recordLog: (event) => this.recordLog(event.code, { reasonCode: event.reasonCode, detail: event.detail, at: event.at }),
     };
   }
 
@@ -958,7 +961,17 @@ export class VendorRunner {
   }
 
   private handleWatchdog(reasonCode: string, value: number): void {
-    this.recordLog('watchdog_warning', { reasonCode });
+    // Vượt ngưỡng kéo dài làm hàm này chạy mỗi khung hình; mỗi dòng nhật ký lại ghi DB và phát runtime, nên
+    // ngập hàng trăm dòng mỗi giây và đẩy mất nhật ký cũ. Mỗi lý do chỉ ghi tối đa một dòng mỗi 30 s.
+    const nowMs = Date.now();
+    const previous = this.watchdogLoggedAt.get(reasonCode);
+    if (previous === undefined || nowMs - previous >= WATCHDOG_LOG_INTERVAL_MS) {
+      this.watchdogLoggedAt.set(reasonCode, nowMs);
+      this.recordLog('watchdog_warning', {
+        reasonCode,
+        detail: reasonCode === 'rss_growth' ? `growthMB=${Math.round(value / 1048576)}` : `delayMs=${Math.round(value)}`,
+      });
+    }
     if (!this.options.watchdogRestart || this.watchdogRestarting || this.lifecycle === 'stopped' || this.lifecycle === 'error') return;
     this.watchdogRestarting = true;
     const anchor = this.supervisor?.getSnapshot().anchor;
@@ -1345,8 +1358,9 @@ export class VendorRunner {
     return { phase: 'idle', anchor: null, reasonCode: null, phaseSince: 0, deathTimes: [], stats: { deaths: 0, revives: 0, trips: 0, resumed: 0 }, noPath: 0, autoRequested: false };
   }
 
-  private recordLog(code: string, extra: { phase?: string; reasonCode?: string; at?: number } = {}): void {
-    const entry = { code, ...(extra.phase ? { phase: extra.phase } : {}), ...(extra.reasonCode ? { reasonCode: extra.reasonCode } : {}), at: extra.at ?? Date.now() };
+  private recordLog(code: string, extra: { phase?: string; reasonCode?: string; detail?: string; at?: number } = {}): void {
+    const detail = typeof extra.detail === 'string' ? extra.detail.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+    const entry = { code, ...(extra.phase ? { phase: extra.phase } : {}), ...(extra.reasonCode ? { reasonCode: extra.reasonCode } : {}), ...(detail ? { detail } : {}), at: extra.at ?? Date.now() };
     this.logs.push(entry);
     if (this.logs.length > 50) this.logs.splice(0, this.logs.length - 50);
     this.input.onLog?.(entry);

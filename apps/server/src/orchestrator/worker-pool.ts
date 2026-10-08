@@ -197,7 +197,7 @@ export class WorkerPool {
         const level = event.code.includes('failed') || event.code.includes('error') || event.code.includes('halted')
           ? 'error'
           : event.code.includes('warning') || event.code.includes('death') ? 'warn' : 'info';
-        const message = `Vendor ${event.code}${event.reasonCode ? ` (${event.reasonCode})` : ''}`;
+        const message = `Vendor ${event.code}${event.reasonCode ? ` (${event.reasonCode})` : ''}${event.detail ? ` ${event.detail}` : ''}`;
         const saved = db.addLog(accountId, level, 'VendorRunner', message);
         wsHub.broadcastLog(saved);
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));

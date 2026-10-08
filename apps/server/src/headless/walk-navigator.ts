@@ -104,7 +104,7 @@ export interface WalkNavigatorClient {
   getPortals(mapId: string): readonly WalkPortal[];
   getMapIds?(): readonly string[];
   getHurtCount?(): number;
-  recordLog(event: { code: string; reasonCode?: string; at: number }): void;
+  recordLog(event: { code: string; reasonCode?: string; detail?: string; at: number }): void;
 }
 
 export interface WalkNavigatorOptions {
@@ -117,6 +117,8 @@ export interface WalkNavigatorOptions {
   minTimeoutMs?: number;
   portalWaitTimeoutMs?: number;
   maxTotalTimeoutMs?: number;
+  /** Số lần tối đa lập lại đường đi khi đường bị xóa từ bên ngoài (mặc định 3). */
+  maxReplans?: number;
   createOperationId?: (now: number) => string;
 }
 
@@ -250,6 +252,8 @@ export class WalkNavigator {
   private deadlineAt = 0;
   private totalDeadlineAt = 0;
   private waitStartedAt = 0;
+  private replanCount = 0;
+  private transitionFarSince: number | null = null;
   private transitionObserved = false;
   private currentArrivalRadius = DEFAULT_ARRIVAL_RADIUS;
   private plannedLegs: MapRouteLeg[] = [];
@@ -265,6 +269,7 @@ export class WalkNavigator {
       tileSize: options.tileSize ?? VENDOR_TILE_SIZE,
       stuckDistancePx: options.stuckDistancePx ?? DEFAULT_STUCK_DISTANCE_PX,
       stuckTimeoutMs: options.stuckTimeoutMs ?? DEFAULT_STUCK_TIMEOUT_MS,
+      maxReplans: Math.max(0, Math.floor(options.maxReplans ?? 3)),
       maxTimeoutMs: options.maxTimeoutMs ?? DEFAULT_MAX_TIMEOUT_MS,
       minTimeoutMs: options.minTimeoutMs ?? DEFAULT_MIN_TIMEOUT_MS,
       portalWaitTimeoutMs: options.portalWaitTimeoutMs ?? DEFAULT_PORTAL_WAIT_TIMEOUT_MS,
@@ -371,7 +376,9 @@ export class WalkNavigator {
     this.totalDeadlineAt = now + (multiMap ? this.cfg.maxTotalTimeoutMs : Math.min(this.cfg.maxTotalTimeoutMs, this.deadlineAt - now));
     this.waitStartedAt = 0;
     this.transitionObserved = false;
-    this.client.recordLog({ code: 'move_to_accepted', at: now });
+    this.replanCount = 0;
+    this.transitionFarSince = null;
+    this.client.recordLog({ code: 'move_to_accepted', detail: this.diag(player, resolvedTarget), at: now });
     return copyOperation(this.operation)!;
   }
 
@@ -415,16 +422,23 @@ export class WalkNavigator {
       }
       if (this.client.isTransitioning()) {
         const goal = operation.resolvedTarget;
-        if (leg.phase === 'walking_to_gate' && goal && (Array.isArray(player.path) && player.path.length === 0
-          || distance({ x: player.x, y: player.y }, goal) <= this.cfg.tileSize)) {
-          this.enterWaitingMap(now, player);
+        // Chỉ coi là "đã tới cổng, chờ đổi map" khi nhân vật thật sự ở gần cổng. Đường đi trống một mình
+        // KHÔNG đủ (server đặt lại vị trí hoặc choáng/trói cũng xóa đường đi): trước đây điều đó gây chờ 8 s vô ích.
+        if (leg.phase === 'walking_to_gate' && goal && distance({ x: player.x, y: player.y }, goal) <= this.cfg.tileSize * 1.5) {
+          this.enterWaitingMap(now, player, 'near_gate_transition');
           this.transitionObserved = true;
           this.tickWaitingMap(now, player);
           return;
         }
-        this.finish('failed', 'unexpected_map', 'move_to_failed', player);
+        // Cờ chuyển cảnh thoáng qua khi còn xa cổng: chờ có giới hạn. Nếu map đổi sang map khác thì các kiểm tra
+        // bên dưới báo unexpected_map; nếu vẫn cùng map thì tiếp tục đi (lập lại đường nếu đường đi bị xóa).
+        this.transitionFarSince ??= now;
+        if (now - this.transitionFarSince > this.cfg.portalWaitTimeoutMs) {
+          this.finish('failed', 'unexpected_map', 'move_to_failed', player, this.diag(player, goal));
+        }
         return;
       }
+      this.transitionFarSince = null;
       if (!this.client.isMapReady() || currentMap !== leg.fromMapId) {
         this.finish('failed', 'unexpected_map', 'move_to_failed', player);
         return;
@@ -459,11 +473,16 @@ export class WalkNavigator {
         if (this.operation.leg) this.operation.leg.phase = 'on_gate';
         this.operation.updatedAt = now;
         player.stop();
-        this.client.recordLog({ code: 'move_to_on_gate', at: now });
+        this.client.recordLog({ code: 'move_to_on_gate', detail: this.diag(player, goal), at: now });
         return;
       }
       this.finish('arrived', undefined, 'move_to_arrived', player);
       return;
+    }
+    // Đường đi bị xóa từ bên ngoài (server đặt lại vị trí, choáng/trói...) khi còn xa đích: lập lại đường đi, có giới
+    // hạn số lần (không phải retry mù lệnh game: chỉ tính lại đường bằng chính Pathfinder của client).
+    if (pathEmpty && remaining > Math.max(arrivalThreshold, walkingToGate ? 2 : this.cfg.tileSize)) {
+      if (this.replan(now, player, goal, walkingToGate)) return;
     }
     if (this.lastProgressPosition && distance(this.lastProgressPosition, currentPosition) >= this.cfg.stuckDistancePx) {
       this.lastProgressPosition = currentPosition;
@@ -473,7 +492,7 @@ export class WalkNavigator {
     if (now - this.lastProgressAt >= this.cfg.stuckTimeoutMs) this.finish('blocked', 'stuck', 'move_to_blocked', player);
   }
 
-  private enterWaitingMap(now: number, player: WalkPlayer): void {
+  private enterWaitingMap(now: number, player: WalkPlayer, how = 'on_gate'): void {
     if (!this.operation?.leg) return;
     this.operation.status = this.operation.status === 'accepted' ? 'running' : this.operation.status;
     this.operation.leg.phase = 'waiting_map';
@@ -481,7 +500,7 @@ export class WalkNavigator {
     this.waitStartedAt = now;
     this.transitionObserved = this.client.isTransitioning();
     player.stop();
-    this.client.recordLog({ code: 'move_to_waiting_map', at: now });
+    this.client.recordLog({ code: 'move_to_waiting_map', reasonCode: how, detail: this.diag(player, this.operation.resolvedTarget), at: now });
   }
 
   private tickWaitingMap(now: number, player: WalkPlayer): void {
@@ -542,6 +561,8 @@ export class WalkNavigator {
     this.operation.updatedAt = now;
     this.lastProgressAt = now;
     this.lastProgressPosition = { x: player.x, y: player.y };
+    this.replanCount = 0;
+    this.transitionFarSince = null;
     this.deadlineAt = now + this.timeoutForRoute({ x: player.x, y: player.y }, route, goal);
     this.waitStartedAt = 0;
     this.transitionObserved = false;
@@ -588,11 +609,47 @@ export class WalkNavigator {
     return Math.min(this.cfg.maxTimeoutMs, this.requestTimeoutMs ?? calculated);
   }
 
+  /** Chuỗi chẩn đoán ngắn (toạ độ game, không dữ liệu nhạy cảm) để lần sau giải thích được vì sao một chuyến đi hỏng. */
+  private diag(player: WalkPlayer | null | undefined, goal: { x: number; y: number } | null | undefined): string {
+    const pos = player && finite(player.x) && finite(player.y) ? `pos=(${Math.round(player.x)},${Math.round(player.y)})` : 'pos=?';
+    const target = goal ? `goal=(${Math.round(goal.x)},${Math.round(goal.y)})` : 'goal=?';
+    const dist = player && goal && finite(player.x) && finite(player.y)
+      ? ` d=${Math.round(distance({ x: player.x, y: player.y }, goal))}` : '';
+    const pathLen = player && Array.isArray(player.path) ? ` path=${player.path.length}` : '';
+    const leg = this.operation?.leg ? ` leg=${this.operation.leg.index}/${this.operation.leg.phase}` : '';
+    return `${pos} ${target}${dist}${pathLen}${leg} replans=${this.replanCount}`;
+  }
+
+  private replan(now: number, player: WalkPlayer, goal: { x: number; y: number }, walkingToGate: boolean): boolean {
+    if (this.replanCount >= this.cfg.maxReplans) return false;
+    const map = this.client.getMap();
+    const pathfinder = this.client.getPathfinder();
+    if (!map || !pathfinder) return false;
+    const leg = this.operation?.leg;
+    const planned = leg ? this.plannedLegs[leg.index] : undefined;
+    const portalMapId = this.client.getMapId() ?? this.mapId;
+    if (!portalMapId) return false;
+    try {
+      const route = this.safeRoute(pathfinder, map, player, goal,
+        this.client.getPortals(portalMapId), walkingToGate && planned ? planned.gate : undefined);
+      if (!Array.isArray(route) || route.length === 0) return false;
+      player.setPath(route);
+    } catch {
+      return false;
+    }
+    this.replanCount += 1;
+    this.lastProgressAt = now;
+    this.lastProgressPosition = { x: player.x, y: player.y };
+    this.client.recordLog({ code: 'move_to_replan', reasonCode: 'path_cleared', detail: this.diag(player, goal), at: now });
+    return true;
+  }
+
   private finish(
     status: Exclude<WalkStatus, 'accepted' | 'running'>,
     reason: string | undefined,
     logCode: string,
     player = this.client.getPlayer(),
+    detail?: string,
   ): void {
     if (!this.operation || !active(this.operation.status)) return;
     const now = this.client.nowMs();
@@ -601,6 +658,6 @@ export class WalkNavigator {
     if (reason) this.operation.reason = reason;
     else delete this.operation.reason;
     player?.stop();
-    this.client.recordLog({ code: logCode, ...(reason ? { reasonCode: reason } : {}), at: now });
+    this.client.recordLog({ code: logCode, ...(reason ? { reasonCode: reason } : {}), detail: detail ?? this.diag(player, this.operation.resolvedTarget), at: now });
   }
 }
