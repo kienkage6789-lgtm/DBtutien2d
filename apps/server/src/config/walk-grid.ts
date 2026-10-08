@@ -1,7 +1,7 @@
 /**
  * Backward-compatible server facade for the vendor-derived collision grids.
  * The source of truth is generated in core-client; keep this module's public
- * API stable for portal navigation and move-to callers.
+ * API stable for read-only map geometry callers.
  */
 import {
   WALK_GRIDS as GENERATED_WALK_GRIDS,

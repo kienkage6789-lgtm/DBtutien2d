@@ -9,7 +9,6 @@ export function vendorAutoErrorResponse(error: string): {
     || errorCode === 'VENDOR_NOT_RUNNING';
   const status = errorCode === 'VENDOR_CHARACTER_DOWN' ? 409
     : errorCode === 'VENDOR_NOT_RUNNING' || errorCode === 'VENDOR_NOT_IN_GAME'
-      || errorCode === 'VENDOR_VITALS_UNKNOWN' || errorCode === 'ENGINE_CORE_ACTIVE'
-      || errorCode === 'ENGINE_VENDOR_REQUIRED' ? 409 : 400;
+      || errorCode === 'VENDOR_VITALS_UNKNOWN' || errorCode === 'ENGINE_VENDOR_REQUIRED' ? 409 : 400;
   return { status, body: { success: false, error: errorCode, errorCode, retryable } };
 }

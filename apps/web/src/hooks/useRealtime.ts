@@ -6,8 +6,7 @@ import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
 
 const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped', 'error']);
 const VITAL_STATUSES = new Set<NonNullable<AccountRuntime['vitals']>['status']>(['unknown', 'fresh', 'stale', 'invalid', 'conflict']);
-const VITAL_SOURCES = new Set<NonNullable<AccountRuntime['vitals']>['source']>(['state', 'status', 'you', 'hurt', 'revived', null]);
-const STONES_STATUSES = new Set<NonNullable<AccountRuntime['stonesSnapshot']>['status']>(['unknown', 'fresh', 'stale', 'invalid']);
+const VITAL_SOURCES = new Set<NonNullable<AccountRuntime['vitals']>['source']>(['client', null]);
 
 const hasOwn = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -38,10 +37,6 @@ function sanitizeVitals(value: unknown, previous?: AccountRuntime['vitals']): Ac
   if (hasOwn(patch, 'source') && VITAL_SOURCES.has(patch.source as NonNullable<AccountRuntime['vitals']>['source'])) {
     next.source = patch.source as NonNullable<AccountRuntime['vitals']>['source'];
   }
-  if (hasOwn(patch, 'reason') && (patch.reason === undefined || typeof patch.reason === 'string')) {
-    if (patch.reason === undefined) delete next.reason;
-    else next.reason = patch.reason;
-  }
   return next;
 }
 
@@ -57,54 +52,6 @@ function sanitizeDerivedMax(value: unknown): AccountRuntime['derivedMax'] | unde
     complete: patch.complete,
     source: 'derived',
     observedAt: patch.observedAt,
-  };
-}
-
-function sanitizeSelfPresence(value: unknown): AccountRuntime['selfPresence'] | undefined {
-  if (value === null) return null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const item = value as Record<string, unknown>;
-  if ((item.hpPercent !== null && (!isFiniteNumber(item.hpPercent) || item.hpPercent < 0 || item.hpPercent > 100))
-    || !isFiniteNumber(item.observedAt) || item.observedAt < 0) return undefined;
-  return { hpPercent: item.hpPercent as number | null, observedAt: item.observedAt };
-}
-
-function sanitizeStones(value: unknown, previous?: AccountRuntime['stonesSnapshot']): AccountRuntime['stonesSnapshot'] | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const patch = value as Record<string, unknown>;
-  const next = { ...(previous ?? { value: null, status: 'unknown' as const, source: null, observedAt: null }) };
-  if (hasOwn(patch, 'value') && isNullableNumber(patch.value)) next.value = patch.value;
-  if (hasOwn(patch, 'observedAt') && isNullableNumber(patch.observedAt)) next.observedAt = patch.observedAt;
-  if (hasOwn(patch, 'status') && typeof patch.status === 'string' && STONES_STATUSES.has(patch.status as NonNullable<AccountRuntime['stonesSnapshot']>['status'])) {
-    next.status = patch.status as NonNullable<AccountRuntime['stonesSnapshot']>['status'];
-  }
-  if (hasOwn(patch, 'source') && (patch.source === null || patch.source === 'state' || patch.source === 'formation')) {
-    next.source = patch.source;
-  }
-  return next;
-}
-
-function sanitizeMoveTo(value: unknown): AccountRuntime['moveTo'] | undefined {
-  if (value === null) return null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const item = value as Record<string, unknown>;
-  const statuses = new Set(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
-  const khu = typeof item.khu === 'number' && Number.isInteger(item.khu) ? item.khu : null;
-  if (typeof item.requestId !== 'string' || typeof item.operationId !== 'string'
-    || typeof item.mapId !== 'string' || khu === null
-    || !isFiniteNumber(item.x) || !isFiniteNumber(item.y)
-    || !isFiniteNumber(item.updatedAt) || typeof item.status !== 'string'
-    || !statuses.has(item.status)) return undefined;
-  return {
-    requestId: item.requestId,
-    operationId: item.operationId,
-    status: item.status as NonNullable<AccountRuntime['moveTo']>['status'],
-    mapId: item.mapId,
-    khu,
-    x: item.x,
-    y: item.y,
-    updatedAt: item.updatedAt,
-    reason: typeof item.reason === 'string' ? item.reason : null,
   };
 }
 
@@ -124,17 +71,26 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   const worldAccepted = !incomingMapContext || !previous?.mapContext
     || (isContextNewer(previous.mapContext, incomingMapContext)
       && !isOlderEpoch(previous.mapContextEpoch, incomingEpoch));
-  const numberFields = ['hp', 'maxHp', 'mp', 'maxMp', 'stones', 'khu', 'x', 'y', 'bagCount', 'latencyMs', 'farmKhu', 'farmX', 'farmY', 'soKhu'] as const;
+  const numberFields = ['hp', 'maxHp', 'mp', 'maxMp', 'khu', 'x', 'y', 'latencyMs', 'soKhu'] as const;
   for (const field of numberFields) {
     if (!worldAccepted && WORLD_NUMBER_FIELDS.has(field)) continue;
     if (hasOwn(payload, field) && isNullableNumber(payload[field])) next[field] = payload[field] as never;
   }
-  for (const field of ['accountName', 'connection', 'authError', 'characterName', 'realm', 'mapId', 'activity', 'farmMapId'] as const) {
+  for (const field of ['accountName', 'connection', 'authError', 'characterName', 'mapId', 'activity'] as const) {
     if (!worldAccepted && WORLD_STRING_FIELDS.has(field)) continue;
     if (hasOwn(payload, field) && (typeof payload[field] === 'string' || payload[field] === null)) next[field] = payload[field] as never;
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
   if (hasOwn(payload, 'downed') && (typeof payload.downed === 'boolean' || payload.downed === null)) next.downed = payload.downed;
+  if (hasOwn(payload, 'vendor')) {
+    if (payload.vendor && typeof payload.vendor === 'object' && !Array.isArray(payload.vendor)) {
+      next.vendor = payload.vendor as AccountRuntime['vendor'];
+    } else {
+      delete next.vendor;
+    }
+  } else if (payload.status === 'stopped' || payload.status === 'error') {
+    delete next.vendor;
+  }
   let vitalsAccepted = false;
   if (hasOwn(payload, 'vitals')) {
     const vitals = sanitizeVitals(payload.vitals, previous?.vitals);
@@ -157,27 +113,12 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
       next.derivedMax = derivedMax;
     }
   }
-  if (hasOwn(payload, 'selfPresence')) {
-    const presence = sanitizeSelfPresence(payload.selfPresence);
-    const previousAt = previous?.selfPresence?.observedAt;
-    if (presence !== undefined && !(isFiniteNumber(previousAt) && presence !== null && presence.observedAt < previousAt)) {
-      next.selfPresence = presence;
-    }
-  }
-  if (hasOwn(payload, 'stonesSnapshot')) {
-    const stones = sanitizeStones(payload.stonesSnapshot, previous?.stonesSnapshot);
-    const prevAt = previous?.stonesSnapshot?.observedAt;
-    if (stones && !(isFiniteNumber(prevAt) && isFiniteNumber(stones.observedAt) && stones.observedAt < prevAt)) next.stonesSnapshot = stones;
-  }
   if (hasOwn(payload, 'dataStatus') && payload.dataStatus && typeof payload.dataStatus === 'object' && !Array.isArray(payload.dataStatus)) {
     const dataStatus = { ...(previous?.dataStatus ?? {}) } as AccountRuntime['dataStatus'];
-    for (const key of ['realm', 'hp', 'maxHp', 'mp', 'maxMp', 'stones', 'location', 'monsters', 'players'] as const) {
+    for (const key of ['hp', 'maxHp', 'mp', 'location', 'monsters', 'players'] as const) {
       if (hasOwn(payload.dataStatus as object, key) && typeof (payload.dataStatus as Record<string, unknown>)[key] === 'boolean') dataStatus[key] = (payload.dataStatus as Record<string, boolean>)[key];
     }
     next.dataStatus = dataStatus;
-  }
-  for (const field of ['bag', 'training', 'worldSync', 'navigation'] as const) {
-    if (hasOwn(payload, field) && payload[field] !== undefined) next[field] = payload[field] as never;
   }
   if (worldAccepted) {
     if (incomingMapContext) {
@@ -198,10 +139,6 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
         if (rows) next[listField] = rows as never;
       }
     }
-  }
-  if (hasOwn(payload, 'moveTo')) {
-    const moveTo = sanitizeMoveTo(payload.moveTo);
-    if (moveTo !== undefined) next.moveTo = moveTo;
   }
   return next;
 }
@@ -271,7 +208,7 @@ export function useRealtime() {
           const msg = JSON.parse(event.data);
           switch (msg.type) {
             case 'initial_state':
-              // Re-fetch full runtime data to have updated bag and stats
+              // Re-fetch full runtime data to refresh the authoritative snapshot.
               setAccounts((prev) => mergeAccountList(prev, msg.data?.accounts));
               mergeFetchedAccounts().catch(console.error);
               if (msg.data.logs) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isContextNewer, resolveMapContext, resolveVitalsAge, sanitizeMapContext } from './context';
+import { describeContextBlock, isContextNewer, resolveMapContext, resolveVitalsAge, sanitizeMapContext } from './context';
 
 const base = {
   mapContext: { mapId: 'tan_vien', khu: 1, soKhu: 20, observedAt: 1_000_000, fresh: true },
@@ -24,8 +24,18 @@ describe('resolveMapContext', () => {
     expect(resolveMapContext({ ...base, mapId: 'long_uyen' }, 1_000_100)).toMatchObject({ usable: false, reason: 'mismatch' });
   });
   it('backend cũ không có age thì fallback observedAt', () => {
-    const { mapContextAgeMs, mapContextReceivedAt, ...legacy } = base;
-    expect(resolveMapContext(legacy, 1_000_500).usable).toBe(true);
+    const { mapContextReceivedAt, ...legacy } = base;
+    expect(resolveMapContext({ ...legacy, mapContextAgeMs: null }, 1_000_500).usable).toBe(true);
+  });
+  it('cho phép hiển thị map khi khu chưa biết nhưng khóa di chuyển', () => {
+    const view = resolveMapContext({
+      ...base,
+      khu: null,
+      mapContext: { ...base.mapContext, khu: null, fresh: false },
+      mapContextIsCurrent: true,
+    }, 1_000_100);
+    expect(view).toMatchObject({ usable: true, mapId: 'tan_vien', khu: null });
+    expect(describeContextBlock(view)).toContain('Khu');
   });
 });
 
@@ -39,7 +49,7 @@ describe('isContextNewer/sanitizeMapContext', () => {
 
 describe('resolveVitalsAge', () => {
   const account = {
-    vitals: { hp: 90, maxHp: null, mp: 10, maxMp: null, status: 'fresh' as const, source: 'you' as const, observedAt: 900 },
+    vitals: { hp: 90, maxHp: null, mp: 10, maxMp: null, status: 'fresh' as const, source: 'client' as const, observedAt: 900 },
     vitalsAgeMs: 100,
     vitalsReceivedAt: 1_000,
   };

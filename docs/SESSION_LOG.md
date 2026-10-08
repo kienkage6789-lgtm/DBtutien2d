@@ -1,5 +1,46 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Xóa hẳn engine core, giữ engine vendor
+
+Thay đổi:
+- Xóa bot controller/client WebSocket tự viết, movement prediction, navigation, vitals refresh, training runtime và các test/debug chỉ phục vụ engine core.
+- Giữ nguyên `apps/server/src/headless/`, auth/token manager, vitals policy, dữ liệu generated còn được import và các API dashboard vendor cần dùng.
+- Worker pool, API và web chỉ còn đường vendor; MiniMap chỉ hiển thị; bỏ route/config/UI move-to, inventory, vitals refresh, training và chọn engine.
+- Xóa package `packages/automation-engine`; chuyển kiểu cấu hình tối giản vào `apps/server/src/db/bot-config.ts` và vẫn đọc được config DB cũ, chỉ ghi lại trường vendor hợp lệ.
+- Giữ `GET /api/maps` và geometry, CRUD tài khoản, start/stop/restart, Auto, logs, WebSocket và control-plane security.
+
+Lệnh/kết quả trong phiên này:
+- Rà import bằng `git grep`, kiểm tra danh sách file và đọc lại các module vendor; không chạy game thật, không mở mạng, không đọc `data/`/`.env*`, không sửa `vendor/` và không commit.
+- Không chạy được `pnpm install`, `pnpm build` hoặc test trong sandbox theo yêu cầu của phiên; chưa đánh dấu build/test pass.
+
+Chưa xác minh: TypeScript/build và toàn bộ test sau khi xóa; chữ ký runtime vendor thực tế; hành vi MiniMap/entity/khu trên game thật. Người giao việc cần chạy các lệnh trong `docs/HANDOFF_NEXT_SESSION.md`.
+
+## 2026-10-08 — Xác nhận HP chủ động và dữ liệu map cho engine vendor
+
+Thay đổi:
+- `vendor-runner.ts`: thêm probe tối đa 10 gói `move` idle, cách nhau mặc định 300 ms, đi qua `Gateway.reset()`/`Gateway.update()` để client chính thức tự tạo `seq`; chỉ chạy khi Auto đang yêu cầu, `IN_GAME`, nhân vật không gục và đang đứng yên; dừng ngay khi có `you`/`hurt`, không thử lại vô hạn, thêm log `vitals_probe_started`/`vitals_probe_done` và bộ đếm snapshot.
+- `vendor-runner.ts`: `khu` chỉ lấy từ trường `khu` đã quan sát trong gói `map`/`khu`. `KhuUI` mặc định số 1 khi thiếu trường nên không dùng giá trị mặc định đó làm dữ liệu đã xác nhận; khi không có trường, giữ `null` (chưa biết). Snapshot vendor xuất quái/người chơi từ `SceneWorld.enemies`/`Gateway.remotes`, giới hạn số dòng và gắn context fresh theo map hiện tại. HP của người chơi khác giữ nguyên là dữ liệu phần trăm, không dùng làm vitals của mình.
+- `worker-pool.ts` và web: map + tọa độ vẫn hiển thị khi `khu=null`, marker dùng context tương ứng; nhãn khu là “chưa biết” và thao tác di chuyển vẫn bị khóa cho tới khi khu xác định. Geometry tiếp tục tải theo `mapId`.
+- Test source: thêm fake Gateway/socket chỉ phát `you` sau move có `seq` phù hợp; kiểm tra giới hạn probe, dừng khi hurt, guard gục/đang tự di chuyển, timeout cũ và map/entity snapshot; thêm test web cho khu chưa biết.
+
+Lệnh/kết quả trong phiên này:
+- `npx --no-install tsx --test src/headless/vendor-runner.test.ts` (từ `apps/server`): **bị chặn trước khi chạy test** bởi sandbox `uv_os_get_passwd returned ENOMEM`.
+- `npx --no-install vitest run src/lib/context.test.ts src/hooks/useRealtime.test.ts` (từ `apps/web`): **bị chặn trước khi chạy test** bởi sandbox `EPERM` khi mở module Vitest trong `.pnpm`.
+- `pnpm build` chưa chạy; môi trường sandbox được giao không build được. Không mở kết nối game/mạng, không đọc `data/`/`.env*`, không sửa `vendor/`, không commit.
+
+Chưa xác minh: build và toàn bộ test trong môi trường người giao việc; hành vi thật của `you` khi bơm move idle qua Gateway; nguồn `khu` và dữ liệu entity trên phiên game thật; việc client thật giữ danh sách quái/người chơi ổn định qua chuyển map.
+
+## 2026-10-08 — Loại bỏ luồng auto cũ khỏi đường chạy (chỉ còn Auto vendor)
+
+Thay đổi:
+- `worker-pool.ts`: `startAccount` luôn khởi động engine `vendor`, bỏ qua `engine` lưu trong cấu hình cũ; `getRuntimeInfo` coi engine đã cấu hình là `vendor`. Đường khởi động core cũ giữ lại thành `startCoreAccountLegacy` (private, KHÔNG còn được gọi); chưa xóa mã core.
+- `routes.ts`: `PUT /accounts/:id/config` chỉ chấp nhận `engine: "vendor"` (`core` trả 400 `INVALID_ENGINE`). `DEFAULT_BOT_CONFIG.engine` đổi thành `vendor`.
+- Web: bỏ công tắc "Auto farm", khối Training, ô chọn engine và cả mục "Vị trí farm/training" trong `ConfigModal`; `handleStartBot` chỉ gọi `startBot` (không còn ghi cấu hình autoSell/autoFarm/...). Nút kích hoạt Auto duy nhất là "Bật Auto tại vị trí này" (vendor).
+
+Lệnh đã chạy: `pnpm build` (pass, 4 package); `pnpm --filter @tutien2d/web test` (9 pass); `tsx --test` `vendor-runner.test.ts` (3 pass), `engine-selection.test.ts` (1 pass). Server khởi động lại, dashboard `:4000` không còn "Auto farm"; chưa chạy live.
+
+Còn chờ: xóa hẳn mã core (`activeBots`, `BotController`, move-to/navigation/map request chạy trên core, `TrainingRuntimeInfo`); các API đó hiện không dùng được khi không có phiên core. Dòng "Bãi farm" ở thẻ tài khoản và mini-map vẫn còn (dữ liệu cấu hình cũ). Chưa xác minh: bấm Chạy rồi Bật Auto trên game thật sau thay đổi này.
+
 ## 2026-10-08 — Đo live tốc độ `move-to` (engine core): bản mới so với bản cũ
 
 `scripts/measure-moveto.cjs` (cần `TUTIEN_MEASURE_LIVE=1`): tự khởi động/tắt server, chọn đích khoảng 300 px đi được và cách quái trên 160 px, gọi `POST /accounts/:id/navigation/move-to` (`arrivalRadius` 20), bấm giờ từ lúc gửi tới lúc `moveTo.status = arrived` (thăm dò 200 ms), dừng nếu `hurtCount` tăng từ 5; luôn dọn dẹp. Cùng nhân vật ở `thanh_truc_lam`, engine `core`, một phiên đăng nhập.

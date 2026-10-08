@@ -3,7 +3,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { CONFIG } from '../config.js';
 import { decryptSecret, encryptSecret } from '../security/crypto.js';
-import { BotConfig, DEFAULT_BOT_CONFIG } from '@tutien2d/automation-engine';
+import { DEFAULT_BOT_CONFIG, normalizeBotConfig } from './bot-config.js';
+import type { BotConfig } from './bot-config.js';
 
 export interface DbUser {
   id: string;
@@ -51,7 +52,8 @@ export interface DbLog {
 export interface DatabaseSchema {
   users: DbUser[];
   accounts: DbGameAccount[];
-  botConfigs: Record<string, BotConfig>; // accountId -> BotConfig
+  /** Legacy account config storage; normalizeBotConfig filters old fields. */
+  botConfigs: Record<string, unknown>; // accountId -> legacy or current config
   logs: DbLog[];
 }
 
@@ -75,7 +77,19 @@ export class DatabaseService {
     if (fs.existsSync(this.dbPath)) {
       try {
         const raw = fs.readFileSync(this.dbPath, 'utf8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw) as Partial<DatabaseSchema>;
+        const legacyConfigs = parsed.botConfigs && typeof parsed.botConfigs === 'object' && !Array.isArray(parsed.botConfigs)
+          ? parsed.botConfigs : {};
+        const botConfigs: Record<string, unknown> = {};
+        for (const [accountId, config] of Object.entries(legacyConfigs)) {
+          botConfigs[accountId] = normalizeBotConfig(config);
+        }
+        return {
+          users: Array.isArray(parsed.users) ? parsed.users : [],
+          accounts: Array.isArray(parsed.accounts) ? parsed.accounts : [],
+          botConfigs,
+          logs: Array.isArray(parsed.logs) ? parsed.logs : [],
+        };
       } catch (err) {
         console.error('Failed to parse database file, initializing fresh:', err);
       }
@@ -285,42 +299,12 @@ export class DatabaseService {
       this.data.botConfigs[accountId] = { ...DEFAULT_BOT_CONFIG };
       this.saveDatabase();
     }
-    const stored = this.data.botConfigs[accountId];
-    return {
-      ...DEFAULT_BOT_CONFIG,
-      ...stored,
-      // Never migrate legacy switches into an active quest automation.
-      legacyAutomationEnabled: false,
-      autoDailyQuest: stored.autoDailyQuest ?? false,
-      autoCaveQuest: stored.autoCaveQuest ?? false,
-      autoMainQuest: stored.autoMainQuest ?? false,
-      autoDaily: false,
-      autoCave: false,
-      sellRules: {
-        ...DEFAULT_BOT_CONFIG.sellRules,
-        ...stored.sellRules,
-        minRetain: { ...DEFAULT_BOT_CONFIG.sellRules.minRetain, ...stored.sellRules?.minRetain },
-      },
-      delayRangeMs: { ...DEFAULT_BOT_CONFIG.delayRangeMs, ...stored.delayRangeMs },
-    };
+    return normalizeBotConfig(this.data.botConfigs[accountId]);
   }
 
   public updateBotConfig(accountId: string, newConfig: Partial<BotConfig>): BotConfig {
     const current = this.getBotConfig(accountId);
-    const updated = {
-      ...current,
-      ...newConfig,
-      // Legacy quest/inventory/potion automation stays disabled until explicitly redesigned.
-      legacyAutomationEnabled: false,
-      autoDaily: false,
-      autoCave: false,
-      sellRules: newConfig.sellRules ? {
-        ...current.sellRules,
-        ...newConfig.sellRules,
-        minRetain: { ...current.sellRules.minRetain, ...newConfig.sellRules.minRetain },
-      } : current.sellRules,
-      delayRangeMs: newConfig.delayRangeMs ? { ...current.delayRangeMs, ...newConfig.delayRangeMs } : current.delayRangeMs,
-    };
+    const updated = normalizeBotConfig({ ...current, ...newConfig });
     this.data.botConfigs[accountId] = updated;
     this.saveDatabase();
     return updated;

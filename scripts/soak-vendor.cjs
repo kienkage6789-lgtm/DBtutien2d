@@ -1,7 +1,7 @@
-// Soak test: chạy engine vendor + Auto qua server thật trong N phút, giám sát và LUÔN dọn dẹp.
+// Soak test: chạy vendor + Auto qua server thật trong N phút, giám sát và LUÔN dọn dẹp.
 // Chạy: TUTIEN_SOAK_LIVE=1 node scripts/soak-vendor.cjs [phút=30]
-// Quy trình: khởi động server (con của script) -> engine=vendor -> start bot -> auto/start -> giám sát mỗi 5 s,
-// ghi mẫu mỗi 30 s -> dọn dẹp (auto/stop, bot stop, engine=core, tắt server). Không in token/tên/id.
+// Quy trình: khởi động server (con của script) -> start account -> auto/start -> giám sát mỗi 5 s,
+// ghi mẫu mỗi 30 s -> dọn dẹp (auto/stop, account stop, tắt server). Không in token/tên/id.
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
@@ -62,7 +62,6 @@ async function main() {
       console.log('auto/stop ->', (await api('POST', `/api/accounts/${accountId}/auto/stop`, {})).status);
       console.log('bot stop ->', (await api('POST', `/api/accounts/${accountId}/stop`, {})).status);
       await sleep(2000);
-      console.log('engine -> core ->', (await api('PUT', `/api/accounts/${accountId}/config`, { engine: 'core' })).status);
     }
     try { server.kill(); } catch { /* bỏ qua */ }
     await sleep(1500);
@@ -75,7 +74,6 @@ async function main() {
     const list = await api('GET', '/api/accounts');
     if (list.status !== 200 || !list.json || !list.json.data || !list.json.data[0]) throw new Error('không lấy được danh sách tài khoản');
     accountId = list.json.data[0].id;
-    console.log('engine -> vendor ->', (await api('PUT', `/api/accounts/${accountId}/config`, { engine: 'vendor' })).status);
     console.log('bot start ->', (await api('POST', `/api/accounts/${accountId}/start`, {})).status);
     for (let i = 0; i < 40; i += 1) {
       await sleep(500);

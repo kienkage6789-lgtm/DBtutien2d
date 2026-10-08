@@ -2,7 +2,7 @@
   "name": "tutien2d-monorepo",
   "version": "1.0.0",
   "private": true,
-  "description": "TuTien2D Multi-Account Automation Platform & Web Dashboard",
+  "description": "TuTien2D vendor headless control-plane & web dashboard",
   "scripts": {
     "dev": "concurrently \"pnpm --filter @tutien2d/server dev\" \"pnpm --filter @tutien2d/web dev\"",
     "dev:server": "pnpm --filter @tutien2d/server dev",

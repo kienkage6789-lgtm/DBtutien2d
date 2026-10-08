@@ -50,7 +50,7 @@ export function isOlderEpoch(previous: unknown, next: unknown): boolean {
 }
 
 export type MapContextView =
-  | { usable: true; mapId: string; khu: number; ageMs: number }
+  | { usable: true; mapId: string; khu: number | null; ageMs: number }
   | { usable: false; reason: 'missing' | 'not_current' | 'expired' | 'mismatch'; ageMs: number | null };
 
 export function resolveMapContext(
@@ -58,7 +58,7 @@ export function resolveMapContext(
   now: number = Date.now(),
 ): MapContextView {
   const ctx = account.mapContext;
-  if (!ctx || ctx.mapId === null || ctx.khu === null) return { usable: false, reason: 'missing', ageMs: null };
+  if (!ctx || ctx.mapId === null) return { usable: false, reason: 'missing', ageMs: null };
 
   let ageMs: number | null = null;
   if (isFiniteNumber(account.mapContextAgeMs) && account.mapContextAgeMs >= 0 && isFiniteNumber(account.mapContextReceivedAt)) {
@@ -69,7 +69,9 @@ export function resolveMapContext(
   if (ageMs === null) return { usable: false, reason: 'missing', ageMs: null };
   if (!(account.mapContextIsCurrent ?? ctx.fresh)) return { usable: false, reason: 'not_current', ageMs };
   if (ageMs > MAP_CONTEXT_TTL_MS) return { usable: false, reason: 'expired', ageMs };
-  if (account.mapId && (account.mapId !== ctx.mapId || account.khu !== ctx.khu)) {
+  const accountKhuKnown = account.khu !== null && account.khu > 0;
+  if (account.mapId && (account.mapId !== ctx.mapId
+    || (accountKhuKnown && ctx.khu !== null && account.khu !== ctx.khu))) {
     return { usable: false, reason: 'mismatch', ageMs };
   }
   return { usable: true, mapId: ctx.mapId, khu: ctx.khu, ageMs };
@@ -103,7 +105,7 @@ export function isEntityContextValid(
 }
 
 export const describeContextBlock = (view: MapContextView, ttlMs = MAP_CONTEXT_TTL_MS): string | null => {
-  if (view.usable) return null;
+  if (view.usable) return view.khu === null ? 'Khu: chưa biết; chỉ hiển thị bản đồ/marker, thao tác di chuyển bị khóa' : null;
   const age = view.ageMs === null ? '—' : `${Math.floor(view.ageMs / 1000)}s`;
   switch (view.reason) {
     case 'missing': return 'Chưa có map context từ backend';

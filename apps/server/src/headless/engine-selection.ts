@@ -1,7 +1,7 @@
-export type RuntimeEngine = 'core' | 'vendor';
+export type RuntimeEngine = 'vendor';
 
 export function assertSingleEngine(activeEngine: RuntimeEngine | null, requestedEngine: RuntimeEngine): void {
-  if (activeEngine && activeEngine !== requestedEngine) {
-    throw new Error('ENGINE_ALREADY_RUNNING: account already has another engine session');
+  if (requestedEngine !== 'vendor' || (activeEngine !== null && activeEngine !== 'vendor')) {
+    throw new Error('ENGINE_VENDOR_ONLY');
   }
 }

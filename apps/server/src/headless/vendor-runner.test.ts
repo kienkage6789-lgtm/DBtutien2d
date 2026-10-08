@@ -27,6 +27,10 @@ class FakeTokenManager implements VendorTokenManagerLike {
 
 class FakeSocket implements VendorSocketLike {
   public static instances: FakeSocket[] = [];
+  public static emitYouAfterMoveCount: number | null = null;
+  public static emitHurtAfterMoveCount: number | null = null;
+  public static mapKhu: number | undefined = 1;
+  public static moves: Array<{ seq: number; st?: string; x?: number; y?: number }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
   public static readonly CONNECTING = 0;
@@ -49,13 +53,25 @@ class FakeSocket implements VendorSocketLike {
   }
 
   public send(data: string): void {
-    const packet = JSON.parse(data) as { op?: string };
+    const packet = JSON.parse(data) as { op?: string; seq?: number; st?: string; x?: number; y?: number };
+    if (packet.op === 'move' && typeof packet.seq === 'number') {
+      FakeSocket.moves.push({ seq: packet.seq, st: packet.st, x: packet.x, y: packet.y });
+      const moveCount = FakeSocket.moves.length;
+      if (FakeSocket.emitHurtAfterMoveCount !== null && moveCount >= FakeSocket.emitHurtAfterMoveCount) {
+        FakeSocket.emitHurtAfterMoveCount = null;
+        queueMicrotask(() => this.emit({ op: 'hurt', hp: 90, mp: 40 }));
+      }
+      if (FakeSocket.emitYouAfterMoveCount !== null && moveCount >= FakeSocket.emitYouAfterMoveCount && packet.seq % 10 === 0) {
+        FakeSocket.emitYouAfterMoveCount = null;
+        queueMicrotask(() => this.emit({ op: 'you', seq: packet.seq, x: packet.x, y: packet.y, hp: 100, mp: 50, dn: false, fix: true }));
+      }
+    }
     if (packet.op !== 'hello') return;
     queueMicrotask(() => {
       this.emit({ op: 'welcome', serverTime: Date.now(), hasChar: true, snap: 2, ep: 1 });
       setTimeout(() => {
         this.emit({ op: 'state', save: { realm: 'luyen_khi_8', exp: 0, equipment: {} } });
-        this.emit({ op: 'map', mapId: 'tan_vien', khu: 1, soKhu: 1, ep: 1, x: 240, y: 192, dir: 0, p: [] });
+        this.emit({ op: 'map', mapId: 'tan_vien', ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: 1, ep: 1, x: 240, y: 192, dir: 0, p: [] });
         this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
         if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
       }, 5);
@@ -77,6 +93,7 @@ class FakeSocket implements VendorSocketLike {
 
 test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, and stops cleanly', async () => {
   FakeSocket.instances = [];
+  FakeSocket.moves = [];
   const runner = new VendorRunner({
     accountName: 'fixture-account',
     credentials: { refreshToken: 'fixture-refresh-token' },
@@ -135,6 +152,7 @@ test('VendorRunner starts Auto without an authoritative vitals packet, then stop
   // Hồi quy: trước đây startAuto đòi gói you/hurt/revived, nhưng server thật chỉ gửi you SAU khi nhân vật
   // di chuyển nên nhân vật đứng yên không bao giờ bật được Auto.
   FakeSocket.instances = [];
+  FakeSocket.moves = [];
   FakeSocket.emitYou = false;
   const runner = new VendorRunner({
     accountName: 'fixture-account',
@@ -147,6 +165,7 @@ test('VendorRunner starts Auto without an authoritative vitals packet, then stop
     loginTimeoutMs: 500,
     loopIntervalMs: 5,
     vitalsConfirmMs: 150,
+    vitalsProbeIntervalMs: 5,
   });
   try {
     await runner.start();
@@ -157,9 +176,182 @@ test('VendorRunner starts Auto without an authoritative vitals packet, then stop
     assert.equal(started.autoRequested, true, 'phải bật được Auto khi chưa có gói vitals chính thức');
     await new Promise((resolve) => setTimeout(resolve, 450));
     const after = runner.getSnapshot();
+    assert.ok(after.vitalsProbeMoves <= 10, 'vitals probe must be bounded to ten moves');
+    assert.ok(FakeSocket.moves.some((move) => move.st === 'idle'), 'probe must use idle moves');
     assert.equal(after.autoRequested, false, 'Auto phải dừng khi quá hạn mà vẫn chưa được xác nhận');
     assert.equal(after.lifecycle, 'in_game');
   } finally {
+    FakeSocket.emitYou = true;
+    FakeSocket.emitYouAfterMoveCount = null;
+    FakeSocket.emitHurtAfterMoveCount = null;
+    FakeSocket.mapKhu = 1;
+    FakeSocket.moves = [];
+    await runner.stop();
+  }
+});
+
+test('VendorRunner probes idle through Gateway and keeps Auto when you arrives on a matching seq', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.emitYou = false;
+  FakeSocket.emitYouAfterMoveCount = null;
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    vitalsConfirmMs: 500,
+    vitalsProbeIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    FakeSocket.moves = [];
+    FakeSocket.emitYouAfterMoveCount = 1; // server thật trả you ở mọi seq chia hết cho 10
+    await runner.startAuto();
+    for (let i = 0; i < 40 && !(runner.getSnapshot().packets.incoming.you >= 1); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const snapshot = runner.getSnapshot();
+    assert.equal(snapshot.autoRequested, true, 'authoritative you must keep Auto enabled');
+    assert.ok(snapshot.vitalsProbeMoves > 0 && snapshot.vitalsProbeMoves <= 10);
+    assert.ok(FakeSocket.moves.some((move) => move.seq % 10 === 0 && move.st === 'idle'), 'probe must reach a seq accepted by the fake server');
+    assert.ok(snapshot.packets.incoming.you >= 1, 'fake server must not emit you before the matching move');
+  } finally {
+    FakeSocket.emitYou = true;
+    FakeSocket.emitYouAfterMoveCount = null;
+    FakeSocket.moves = [];
+    await runner.stop();
+  }
+});
+
+test('VendorRunner stops an idle vitals probe as soon as hurt arrives', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.emitYou = false;
+  FakeSocket.emitHurtAfterMoveCount = null;
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    vitalsConfirmMs: 500,
+    vitalsProbeIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    FakeSocket.moves = [];
+    FakeSocket.emitHurtAfterMoveCount = 2;
+    await runner.startAuto();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const snapshot = runner.getSnapshot();
+    assert.equal(snapshot.hurtCount, 1);
+    assert.ok(snapshot.vitalsProbeMoves <= 2, 'hurt must stop the probe before it reaches the ten-move limit');
+  } finally {
+    FakeSocket.emitYou = true;
+    FakeSocket.emitHurtAfterMoveCount = null;
+    FakeSocket.moves = [];
+    await runner.stop();
+  }
+});
+
+test('VendorRunner does not probe while down or while the client reports manual movement', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.emitYou = false;
+  const downRunner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    vitalsConfirmMs: 500,
+    vitalsProbeIntervalMs: 5,
+  });
+  try {
+    await downRunner.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    (downRunner as any).P.SceneWorld.player.downed = true;
+    await assert.rejects(() => downRunner.startAuto(), /VENDOR_CHARACTER_DOWN/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(downRunner.getSnapshot().vitalsProbeMoves, 0);
+  } finally {
+    await downRunner.stop();
+  }
+
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  const movingRunner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+    vitalsConfirmMs: 500,
+    vitalsProbeIntervalMs: 5,
+  });
+  try {
+    await movingRunner.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    (movingRunner as any).P.Input.hasManualMove = () => true;
+    await movingRunner.startAuto();
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.equal(movingRunner.getSnapshot().vitalsProbeMoves, 0);
+  } finally {
+    FakeSocket.emitYou = true;
+    await movingRunner.stop();
+  }
+});
+
+test('VendorRunner preserves unknown khu and exports current SceneWorld markers', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.mapKhu = undefined;
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const P = (runner as any).P;
+    P.SceneWorld.enemies = [{ id: 'monster-fixture', type: 'fixture', x: 300, y: 220, hp: 8, hpMax: 10, dead: false, def: { name: 'fixture monster' } }];
+    P.Gateway.remotes = { 'player-fixture': { id: 'player-fixture', name: 'fixture player', x: 280, y: 210, realm: 'realm', hp: 0.75, seen: true } };
+    const snapshot = runner.getSnapshot();
+    assert.equal(snapshot.mapId, 'tan_vien');
+    assert.equal(snapshot.khu, null, 'missing map.khu must remain unknown');
+    assert.deepEqual(snapshot.monsters[0], { id: 'monster-fixture', name: 'fixture monster', x: 300, y: 220, hp: 8, maxHp: 10 });
+    assert.deepEqual(snapshot.players[0], { id: 'player-fixture', name: 'fixture player', x: 280, y: 210, realm: 'realm', hp: 75 });
+    assert.equal(snapshot.monstersContext.fresh, true);
+    assert.equal(snapshot.playersContext.fresh, true);
+  } finally {
+    FakeSocket.mapKhu = 1;
     FakeSocket.emitYou = true;
     await runner.stop();
   }

@@ -2,7 +2,7 @@
   "name": "@tutien2d/core-client",
   "version": "1.0.0",
   "type": "module",
-  "description": "Headless Game Client Engine for TuTien2D",
+  "description": "Authentication and vendor-derived TuTien2D data",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

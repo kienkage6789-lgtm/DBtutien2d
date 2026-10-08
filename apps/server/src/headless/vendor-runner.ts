@@ -46,6 +46,36 @@ export interface VendorPacketCounts {
 
 /** Thời gian tối đa (ms) Auto được chạy khi chưa có gói vitals chính thức. Di chuyển ~1 s đã kích ra gói you. */
 export const VITALS_CONFIRM_MS = 10_000;
+const VITALS_PROBE_MAX_MOVES = 10;
+const VITALS_PROBE_INTERVAL_MS = 300;
+const VENDOR_MONSTER_LIMIT = 200;
+const VENDOR_PLAYER_LIMIT = 100;
+
+type VendorMonsterSnapshot = {
+  id: string;
+  name?: string;
+  x: number;
+  y: number;
+  hp?: number;
+  maxHp?: number;
+};
+
+type VendorPlayerSnapshot = {
+  id: string;
+  name?: string;
+  x: number;
+  y: number;
+  realm?: string;
+  /** Client-reported remote-player hp is a percentage; never use it as own vitals. */
+  hp?: number;
+};
+
+type VendorEntityContext = {
+  mapId: string | null;
+  khu: number | null;
+  observedAt: number | null;
+  fresh: boolean;
+};
 
 export interface VendorRunnerSnapshot {
   lifecycle: VendorRunnerLifecycle;
@@ -73,6 +103,12 @@ export interface VendorRunnerSnapshot {
   mp: number | null;
   maxMp: number | null;
   downed: boolean | null;
+  vitalsProbeMoves: number;
+  soKhu: number | null;
+  monsters: VendorMonsterSnapshot[];
+  players: VendorPlayerSnapshot[];
+  monstersContext: VendorEntityContext;
+  playersContext: VendorEntityContext;
   vitals: {
     hp: number | null;
     maxHp: number | null;
@@ -112,6 +148,7 @@ export interface VendorRunnerOptions {
   watchdogRestart?: boolean;
   /** Số ms tối đa Auto được chạy khi chưa có gói vitals chính thức (mặc định VITALS_CONFIRM_MS). */
   vitalsConfirmMs?: number;
+  vitalsProbeIntervalMs?: number;
   supervisor?: Partial<AutoSupervisorConfig>;
   onSessionUpdated?: (session: AuthSession) => void;
   onLog?: VendorRunnerLogger;
@@ -226,6 +263,12 @@ export class VendorRunner {
   private hurtCount = 0;
   private lastHurtAt: number | null = null;
   private lastVitalsAt: number | null = null;
+  private lastOutgoingMoveAt: number | null = null;
+  private vitalsProbe: { startedAt: number; movesSent: number; hurtCount: number } | null = null;
+  private vitalsProbeExhausted = false;
+  private vitalsProbeMoves = 0;
+  private observedKhu: number | null = null;
+  private observedSoKhu: number | null = null;
   /** Thời điểm bật Auto; dùng để dừng Auto nếu quá lâu chưa có gói vitals chính thức. */
   private autoStartedAt: number | null = null;
   private killsBySelf = 0;
@@ -236,7 +279,7 @@ export class VendorRunner {
   private currentSocket: CountingWebSocket | null = null;
   private readonly packets = emptyPacketCounts();
   private readonly logs: Array<{ code: string; phase?: string; reasonCode?: string; at: number }> = [];
-  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs'>>;
+  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs'>>;
 
   public constructor(private readonly input: VendorRunnerOptions) {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
@@ -247,6 +290,7 @@ export class VendorRunner {
       loginTimeoutMs: input.loginTimeoutMs ?? 10_000,
       loopIntervalMs: input.loopIntervalMs ?? 16,
       vitalsConfirmMs: input.vitalsConfirmMs ?? VITALS_CONFIRM_MS,
+      vitalsProbeIntervalMs: input.vitalsProbeIntervalMs ?? VITALS_PROBE_INTERVAL_MS,
       watchdogMaxFrameDelayMs: input.watchdogMaxFrameDelayMs ?? 250,
       watchdogMaxRssGrowthBytes: input.watchdogMaxRssGrowthBytes ?? 256 * 1024 * 1024,
       watchdogRestart: input.watchdogRestart ?? false,
@@ -269,6 +313,12 @@ export class VendorRunner {
       this.env = await this.createEnvironment();
       this.P = this.env.P;
       this.lastVitalsAt = null;
+      this.lastOutgoingMoveAt = null;
+      this.vitalsProbe = null;
+      this.vitalsProbeExhausted = false;
+      this.vitalsProbeMoves = 0;
+      this.observedKhu = null;
+      this.observedSoKhu = null;
       this.startLoop();
       await this.connectAndBuild(false);
     } catch (error) {
@@ -282,6 +332,7 @@ export class VendorRunner {
   }
 
   public async stop(): Promise<void> {
+    this.finishVitalsProbe('runner_stop');
     this.autoRequested = false;
     this.stopRequested = true;
     const supervisor = this.supervisor;
@@ -322,6 +373,9 @@ export class VendorRunner {
     }
     const supervisor = this.supervisor ?? this.createSupervisor();
     this.autoRequested = true;
+    this.vitalsProbe = null;
+    this.vitalsProbeExhausted = false;
+    this.vitalsProbeMoves = 0;
     supervisor.start(anchor);
     this.autoStartedAt = Date.now();
     this.lifecycle = supervisor.getPhase() === 'farming' ? 'farming' : 'traveling';
@@ -330,6 +384,7 @@ export class VendorRunner {
   }
 
   public stopAuto(): AutoSupervisorSnapshot {
+    this.finishVitalsProbe('auto_stopped');
     this.autoRequested = false;
     this.autoStartedAt = null;
     this.supervisor?.stop('manual_auto_stop');
@@ -346,6 +401,9 @@ export class VendorRunner {
     const elapsed = this.startedAt > 0 ? Math.max(0, now - this.startedAt) : 0;
     const fps = elapsed > 0 ? this.frames / (elapsed / 1000) : 0;
     const vitals = this.getVitals(player);
+    const mapId = this.getMapId();
+    const khu = this.getKhu();
+    const world = this.getWorldEntities(mapId, khu, now, player);
     return {
       lifecycle: this.lifecycle,
       connection: this.connectionState(),
@@ -371,8 +429,8 @@ export class VendorRunner {
       uptimeMs: elapsed,
       memory: { rssBytes: rss, rssGrowthBytes: Math.max(0, rss - this.baseRss) },
       tokenExpiresAt: this.tokenManager?.getSession?.()?.expiresAt ?? null,
-      mapId: this.getMapId(),
-      khu: this.getKhu(),
+      mapId,
+      khu,
       x: player ? safeNumber(player.x) : null,
       y: player ? safeNumber(player.y) : null,
       hp: player ? safeNumber(player.hp) : null,
@@ -380,6 +438,12 @@ export class VendorRunner {
       mp: player ? safeNumber(player.mp) : null,
       maxMp: player ? safeNumber(player.mpMax) : null,
       downed: player ? this.isDown(player) : null,
+      vitalsProbeMoves: this.vitalsProbeMoves,
+      soKhu: this.getSoKhu(),
+      monsters: world.monsters,
+      players: world.players,
+      monstersContext: world.monstersContext,
+      playersContext: world.playersContext,
       vitals,
       logs: this.logs.map((entry) => ({ ...entry })),
     };
@@ -526,6 +590,7 @@ export class VendorRunner {
     } else if (event.type === 'halted') {
       this.lifecycle = 'halted';
       this.autoRequested = false;
+      this.finishVitalsProbe('supervisor_halted');
       this.recordLog('auto_halted', { reasonCode: event.reasonCode, at });
       if (event.haltMode === 'disconnect') this.disconnectTransportOnly();
     } else if (event.type === 'death') {
@@ -558,6 +623,7 @@ export class VendorRunner {
     try {
       if (this.P.Game.scene?.update) this.P.Game.scene.update(dt);
       this.supervisor?.tick();
+      this.probeVitals(now);
       this.checkVitalsConfirmation(now);
     } catch {
       this.updateErrors += 1;
@@ -568,9 +634,78 @@ export class VendorRunner {
   }
 
   /** Auto đang bật mà quá VITALS_CONFIRM_MS vẫn chưa có you/hurt/revived thì dừng Auto (HP chưa được xác nhận). */
+  private probeVitals(now: number): void {
+    if (this.vitalsProbeExhausted) return;
+    if (!this.autoRequested || this.lastVitalsAt !== null) {
+      if (this.vitalsProbe && this.lastVitalsAt !== null) this.finishVitalsProbe('vitals_confirmed');
+      return;
+    }
+    const player = this.getPlayer();
+    if (!player || this.connectionState() !== 'IN_GAME' || this.isDown(player)) return;
+    if (this.vitalsProbe && this.hurtCount > this.vitalsProbe.hurtCount) {
+      this.finishVitalsProbe('hurt');
+      return;
+    }
+    if (!this.isStationaryPlayer(player)) return;
+    if (this.lastOutgoingMoveAt !== null && now - this.lastOutgoingMoveAt < this.options.vitalsProbeIntervalMs) return;
+
+    if (!this.vitalsProbe) {
+      this.vitalsProbe = { startedAt: now, movesSent: 0, hurtCount: this.hurtCount };
+      this.recordLog('vitals_probe_started');
+    }
+    if (this.vitalsProbe.movesSent >= VITALS_PROBE_MAX_MOVES) {
+      this.vitalsProbeExhausted = true;
+      this.finishVitalsProbe('max_moves');
+      return;
+    }
+
+    const gateway = this.P?.Gateway;
+    if (typeof gateway?.reset !== 'function' || typeof gateway?.update !== 'function') {
+      this.vitalsProbeExhausted = true;
+      this.finishVitalsProbe('gateway_unavailable');
+      return;
+    }
+    const beforeMoves = this.packets.moves;
+    try {
+      // gateway.js owns the move sequence. reset() only invalidates its last
+      // sent state; update() then emits the current player state at the same
+      // rounded position/direction, so this is an official idle move, not a
+      // hand-built packet. The 0.1s argument advances Gateway's 10Hz send
+      // budget without advancing the headless Game clock.
+      gateway.reset();
+      gateway.update(0.1, player);
+    } catch {
+      this.vitalsProbeExhausted = true;
+      this.finishVitalsProbe('gateway_error');
+      return;
+    }
+    if (this.packets.moves === beforeMoves) return;
+    this.vitalsProbe.movesSent += 1;
+    this.vitalsProbeMoves = this.vitalsProbe.movesSent;
+    if (this.vitalsProbe.movesSent >= VITALS_PROBE_MAX_MOVES) {
+      this.vitalsProbeExhausted = true;
+      this.finishVitalsProbe('max_moves');
+    }
+  }
+
+  private isStationaryPlayer(player: any): boolean {
+    if (player?.state !== 'idle') return false;
+    if (player?.moving === true || player?.isMoving === true) return false;
+    if (Array.isArray(player?.path) && player.path.length > 0) return false;
+    if (typeof this.P?.Input?.hasManualMove === 'function' && this.P.Input.hasManualMove()) return false;
+    return true;
+  }
+
+  private finishVitalsProbe(reasonCode: string): void {
+    if (!this.vitalsProbe) return;
+    this.recordLog('vitals_probe_done', { reasonCode });
+    this.vitalsProbe = null;
+  }
+
   private checkVitalsConfirmation(now: number): void {
     if (!this.autoRequested || this.autoStartedAt === null || this.lastVitalsAt !== null) return;
     if (now - this.autoStartedAt <= this.options.vitalsConfirmMs) return;
+    this.finishVitalsProbe('confirmation_timeout');
     this.autoStartedAt = null;
     this.recordLog('auto_stopped_vitals_unconfirmed');
     this.stopAuto();
@@ -601,7 +736,12 @@ export class VendorRunner {
 
   private handleSocketClosed(): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
+    this.finishVitalsProbe('connection_closed');
     this.lastVitalsAt = null;
+    this.vitalsProbeExhausted = false;
+    this.vitalsProbeMoves = 0;
+    this.observedKhu = null;
+    this.observedSoKhu = null;
     if (this.reconnectAttempts >= this.options.reconnectMaxRetries) {
       this.lifecycle = 'error';
       this.recordLog('reconnect_exhausted');
@@ -624,8 +764,18 @@ export class VendorRunner {
   private recordIncoming(packet: Record<string, unknown>): void {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
+    if (op === 'map') {
+      this.observedKhu = Number.isInteger(packet.khu) && Number(packet.khu) > 0 ? Number(packet.khu) : null;
+      this.observedSoKhu = typeof packet.soKhu === 'number' && Number.isFinite(packet.soKhu) && packet.soKhu > 0
+        ? packet.soKhu : null;
+    } else if (op === 'khu' && Number.isInteger(packet.khu) && Number(packet.khu) > 0) {
+      this.observedKhu = Number(packet.khu);
+    }
     if (op === 'hurt') { this.hurtCount += 1; this.lastHurtAt = Date.now(); this.lastVitalsAt = this.lastHurtAt; }
     if (op === 'you' || op === 'revived') this.lastVitalsAt = Date.now();
+    if ((op === 'hurt' || op === 'you' || op === 'revived') && this.vitalsProbe) {
+      this.finishVitalsProbe(op === 'hurt' ? 'hurt' : 'vitals_confirmed');
+    }
     if (op === 'kill' && packet.by !== undefined && packet.by !== null && this.P?.Gateway?.selfId
       && String(packet.by) === String(this.P.Gateway.selfId)) this.killsBySelf += 1;
   }
@@ -633,7 +783,10 @@ export class VendorRunner {
   private recordOutgoing(packet: Record<string, unknown>): void {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.outgoing[op] = (this.packets.outgoing[op] ?? 0) + 1;
-    if (op === 'move') this.packets.moves += 1;
+    if (op === 'move') {
+      this.packets.moves += 1;
+      this.lastOutgoingMoveAt = Date.now();
+    }
     if (op === 'attack') this.packets.attacks += 1;
     if (op === 'skill') this.packets.skills += 1;
     if (op === 'cmd') {
@@ -654,7 +807,91 @@ export class VendorRunner {
     const value = this.P?.SceneWorld?.map?.data?.id ?? this.P?.Gateway?.mapId;
     return typeof value === 'string' && value.trim() ? value : null;
   }
-  private getKhu(): number | null { return safeNumber(this.P?.SceneWorld?.map?.khu ?? this.P?.Gateway?.khu); }
+  /**
+   * The map packet is the authoritative source: gateway.js forwards its
+   * `t.khu` to KhuUI.setMap(), while KhuUI.khu defaults to 1 when the field is
+   * absent. Keep null when the packet did not carry khu instead of mistaking
+   * that UI default for an observed khu.
+   */
+  private getKhu(): number | null { return this.observedKhu; }
+  private getSoKhu(): number | null { return this.observedSoKhu; }
+
+  private getWorldEntities(
+    mapId: string | null,
+    khu: number | null,
+    observedAt: number,
+    player: any | null,
+  ): {
+    monsters: VendorMonsterSnapshot[];
+    players: VendorPlayerSnapshot[];
+    monstersContext: VendorEntityContext;
+    playersContext: VendorEntityContext;
+  } {
+    const world = this.P?.SceneWorld;
+    const remotes = this.P?.Gateway?.remotes;
+    const positionFresh = this.connectionState() === 'IN_GAME' && !!world && !!player && mapId !== null;
+    const monstersFresh = positionFresh && Array.isArray(world?.enemies);
+    const playersFresh = positionFresh && !!remotes && typeof remotes === 'object';
+    const monsters: VendorMonsterSnapshot[] = [];
+    if (monstersFresh) {
+      for (const enemy of world.enemies) {
+        if (monsters.length >= VENDOR_MONSTER_LIMIT || !enemy || enemy.dead === true) continue;
+        const id = typeof enemy.id === 'string' && enemy.id.trim() ? enemy.id : null;
+        const x = safeNumber(enemy.x);
+        const y = safeNumber(enemy.y);
+        if (!id || x === null || y === null) continue;
+        const name = typeof enemy.def?.name === 'string' && enemy.def.name.trim()
+          ? enemy.def.name : typeof enemy.type === 'string' && enemy.type.trim() ? enemy.type : undefined;
+        const hp = safeNumber(enemy.hp);
+        const maxHp = safeNumber(enemy.hpMax);
+        monsters.push({
+          id,
+          ...(name ? { name } : {}),
+          x,
+          y,
+          ...(hp !== null ? { hp } : {}),
+          ...(maxHp !== null ? { maxHp } : {}),
+        });
+      }
+    }
+    const players: VendorPlayerSnapshot[] = [];
+    if (playersFresh) {
+      const selfId = this.P?.Gateway?.selfId;
+      for (const [key, remote] of Object.entries(remotes as Record<string, any>)) {
+        if (players.length >= VENDOR_PLAYER_LIMIT || !remote || remote.seen === false) continue;
+        const id = typeof remote.id === 'string' && remote.id.trim() ? remote.id : key;
+        if (!id || (selfId !== null && selfId !== undefined && String(selfId) === id)) continue;
+        const x = safeNumber(remote.x);
+        const y = safeNumber(remote.y);
+        if (x === null || y === null) continue;
+        const name = typeof remote.name === 'string' && remote.name.trim() ? remote.name : undefined;
+        const realm = typeof remote.realm === 'string' && remote.realm.trim() ? remote.realm : undefined;
+        // RemotePlayer normalizes the wire percentage to 0..1; AccountRuntime
+        // keeps the dashboard-facing remote hp as a percentage, never as own vitals.
+        const hp = safeNumber(remote.hp);
+        const hpPercent = hp === null ? null : Math.max(0, Math.min(100, hp * 100));
+        players.push({ id, ...(name ? { name } : {}), x, y, ...(realm ? { realm } : {}), ...(hpPercent !== null ? { hp: hpPercent } : {}) });
+      }
+    }
+    const context: VendorEntityContext = {
+      mapId,
+      khu,
+      observedAt: monstersFresh ? observedAt : null,
+      fresh: monstersFresh,
+    };
+    const playersContext: VendorEntityContext = {
+      mapId,
+      khu,
+      observedAt: playersFresh ? observedAt : null,
+      fresh: playersFresh,
+    };
+    return {
+      monsters,
+      players,
+      monstersContext: { ...context },
+      playersContext,
+    };
+  }
   private isDown(player: any): boolean { return player?.downed === true || player?.state === 'down'; }
   /** Mô hình HP/MP của client có số hữu hạn (chưa chắc đã được server xác nhận). */
   private hasPlayerVitalsModel(player: any): boolean {

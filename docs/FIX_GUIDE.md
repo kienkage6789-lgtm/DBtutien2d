@@ -1354,6 +1354,8 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Worker/API/UI engine vendor opt-in, mot engine moi account, Auto API qua auth/error envelope, dashboard hien phase/neo/death-trip/hurt va halt.
 5. [x] Test source moi cho vm env, supervisor traps 1–6, runner fake WebSocket, engine exclusivity va Auto error envelope; nhom headless/API moi nhat 8/8 pass bang Node + tsx workaround.
 6. [~] `pnpm build`/full test chua chay duoc trong sandbox: pnpm thieu PATH, Corepack bi EACCES mang, TypeScript bi EPERM, tsx bi ENOMEM; live reconnect/token-expiry/death/revive/long-run chua xac minh.
+7. [~] Vendor vitals probe: da them probe toi da 10 move idle qua Gateway, guard dung yen/downed/auto va test fake `you`/`hurt`; build va test moi chua chay duoc do sandbox (`tsx` ENOMEM, Vitest EPERM), hanh vi game that chua xac minh.
+8. [~] Vendor map/entity: da doc nguon `map.khu`/`KhuUI` va giu `khu=null` neu goi khong co truong, them snapshot monsters/players va UI hien map/toa do khi khu chua biet; marker/entity payload va khu tren game that chua xac minh.
 
 ## M. Core movement prediction/reconciliation — checklist 2026-10-08
 
@@ -1363,3 +1365,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Listener `you` được gắn theo operation và gỡ ở `finally`; test fake ACK theo seq bội số 10 bao phủ move-to, portal, cancel, failed/stalled và cleanup.
 5. [x] Offline: PredictedMover 9/9; movement integration 4/4; generator và esbuild transpile pass; `git diff --check` pass.
 6. [~] Full `pnpm build`/TypeScript typecheck bị chặn bởi pnpm/Corepack/EPERM toolchain; live speed, `you.fix`, clip và portal thật chưa xác minh.
+
+## N. Loại bỏ engine core — checklist 2026-10-08
+
+1. [x] Xóa package `packages/automation-engine`, mã client/core controller, movement/navigation/vitals/training và test/debug chỉ phục vụ chúng.
+2. [x] Giữ headless vendor, auth/token manager, vitals policy, generated data còn dùng, map geometry, CRUD/start-stop/restart/Auto/logs/WebSocket và control-plane security.
+3. [x] Rút worker pool/API/web về vendor-only; MiniMap chỉ đọc; bỏ move-to, đổi map/khu, vitals refresh, inventory, training và engine config khỏi dashboard.
+4. [x] Chuyển cấu hình DB tối giản vào server, đọc được record cũ và bỏ trường lạ khi ghi.
+5. [~] Chưa chạy `pnpm install`, `pnpm build` hoặc test trong sandbox; cần người giao việc chạy toàn bộ lệnh được liệt kê trong handoff.

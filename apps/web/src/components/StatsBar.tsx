@@ -1,74 +1,37 @@
 import React from 'react';
-import { Users, Bot, Coins, Sparkles } from 'lucide-react';
-import { AccountRuntime } from '../types';
+import { Activity, AlertTriangle, Bot, Users } from 'lucide-react';
+import type { AccountRuntime } from '../types';
 
 interface StatsBarProps {
   accounts: AccountRuntime[];
 }
 
 export const StatsBar: React.FC<StatsBarProps> = ({ accounts }) => {
-  const totalAccounts = accounts.length;
-  const runningCount = accounts.filter((a) => a.status === 'running').length;
-  const authoritativeStones = accounts
-    .filter((account) => account.status === 'running'
-      && account.stonesSnapshot?.status === 'fresh'
-      && typeof account.stonesSnapshot.value === 'number'
-      && Number.isFinite(account.stonesSnapshot.value));
-  const totalStones = authoritativeStones.reduce((sum, account) => sum + account.stonesSnapshot!.value!, 0);
-  const highestRealm = [...accounts].reverse().find((a) => typeof a.realm === 'string' && a.realm.trim())?.realm;
+  const runningCount = accounts.filter((account) => account.status === 'running').length;
+  const autoCount = accounts.filter((account) => account.vendor?.autoRequested === true).length;
+  const hurtCount = accounts.reduce((sum, account) => sum + (account.vendor?.hurtCount ?? 0), 0);
+  const cards = [
+    { label: 'Tài khoản', value: String(accounts.length), icon: Users, color: 'indigo' },
+    { label: 'Vendor đang chạy', value: `${runningCount} / ${accounts.length}`, icon: Bot, color: 'emerald' },
+    { label: 'Auto chính thức', value: String(autoCount), icon: Activity, color: 'cyan' },
+    { label: 'Hurt đã nhận', value: String(hurtCount), icon: AlertTriangle, color: 'amber' },
+  ] as const;
+  const toneClasses = {
+    indigo: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400',
+    emerald: 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400',
+    cyan: 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400',
+    amber: 'bg-amber-500/10 border-amber-500/20 text-amber-400',
+  } as const;
 
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
-      {/* Total Accounts */}
-      <div className="glass-panel rounded-xl p-3.5 flex items-center gap-3.5 border border-slate-800">
-        <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-          <Users className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Tài Khoản</p>
-          <p className="text-lg font-bold text-slate-100">{totalAccounts}</p>
-        </div>
+  return <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
+    {cards.map(({ label, value, icon: Icon, color }) => <div key={label} className="glass-panel rounded-xl p-3.5 flex items-center gap-3.5 border border-slate-800">
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${toneClasses[color]}`}>
+        <Icon className="w-5 h-5" />
       </div>
-
-      {/* Active Bots */}
-      <div className="glass-panel rounded-xl p-3.5 flex items-center gap-3.5 border border-slate-800">
-        <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-          <Bot className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Bot Hoạt Động</p>
-          <div className="flex items-center gap-1.5">
-            <span className="text-lg font-bold text-emerald-400">{runningCount}</span>
-            <span className="text-xs text-slate-500">/ {totalAccounts}</span>
-          </div>
-        </div>
+      <div>
+        <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">{label}</p>
+        <p className="text-lg font-bold text-slate-100">{value}</p>
       </div>
-
-      {/* Total Linh Thach */}
-      <div className="glass-panel rounded-xl p-3.5 flex items-center gap-3.5 border border-slate-800">
-        <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-          <Coins className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Tổng Linh Thạch</p>
-          <p className="text-lg font-bold text-amber-300">
-            {authoritativeStones.length > 0 ? totalStones.toLocaleString() : 'Đang chờ dữ liệu'}
-          </p>
-        </div>
-      </div>
-
-      {/* Highest Realm */}
-      <div className="glass-panel rounded-xl p-3.5 flex items-center gap-3.5 border border-slate-800">
-        <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-          <Sparkles className="w-5 h-5" />
-        </div>
-        <div>
-          <p className="text-xs text-slate-400 uppercase tracking-wider font-medium">Cảnh Giới Đỉnh</p>
-          <p className="text-sm font-bold text-purple-300 capitalize truncate max-w-[130px]">
-            {highestRealm ? highestRealm.replace(/_/g, ' ') : 'Chưa có dữ liệu'}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
+    </div>)}
+  </div>;
 };

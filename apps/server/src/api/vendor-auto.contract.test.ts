@@ -13,6 +13,6 @@ test('vendor Auto errors use explicit machine codes and retry semantics', () => 
     },
   });
   assert.equal(vendorAutoErrorResponse('VENDOR_VITALS_UNKNOWN').body.retryable, true);
-  assert.equal(vendorAutoErrorResponse('ENGINE_CORE_ACTIVE: stop core first').status, 409);
+  assert.equal(vendorAutoErrorResponse('VENDOR_NOT_RUNNING').status, 409);
   assert.equal(vendorAutoErrorResponse('AUTO_ANCHOR_MAP_UNKNOWN').body.retryable, false);
 });

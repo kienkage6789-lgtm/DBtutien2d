@@ -17,9 +17,6 @@ importers:
 
   apps/server:
     dependencies:
-      '@tutien2d/automation-engine':
-        specifier: workspace:*
-        version: link:../../packages/automation-engine
       '@tutien2d/core-client':
         specifier: workspace:*
         version: link:../../packages/core-client
@@ -97,19 +94,6 @@ importers:
       vitest:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@22.20.5)(vite@6.4.3(@types/node@22.20.5)(jiti@1.21.7)(tsx@4.23.15))
-
-  packages/automation-engine:
-    dependencies:
-      '@tutien2d/core-client':
-        specifier: workspace:*
-        version: link:../core-client
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.5
-        version: 22.20.5
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
 
   packages/core-client:
     dependencies:
