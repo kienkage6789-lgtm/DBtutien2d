@@ -1,3 +1,4 @@
+import { confirmAction } from '../lib/dialogs';
 import React, { useEffect, useMemo, useState } from 'react';
 import type { AccountRuntime, DailyOperation, DailyStatus, MoveToOperation } from '../types';
 import { cancelDaily, DailyApiError, startDailyCheckin, startDailySeed } from '../lib/api';
@@ -59,11 +60,11 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
     if (task?.runsLeft !== null && task?.runsLeft !== undefined) setRuns((previous) => Math.max(1, Math.min(previous, task.runsLeft!, 3)));
   }, [task?.runsLeft]);
 
-  const confirmStart = (): boolean => typeof window === 'undefined' || typeof window.confirm !== 'function'
-    || window.confirm('Dùng lượt thật trong ngày; có thể đi qua map có quái. Tiếp tục?');
+  const confirmStart = (): Promise<boolean> => confirmAction('Dùng lượt thật trong ngày; có thể đi qua map có quái. Tiếp tục?');
 
   const beginCheckin = async (): Promise<void> => {
-    if (checkinLock || status?.checkin.done || busy || !confirmStart()) return;
+    if (checkinLock || status?.checkin.done || busy) return;
+    if (!(await confirmStart())) return;
     setBusy(true); setError(null);
     try { setLocalOperation(await startDailyCheckin(account.id)); }
     catch (reason: unknown) { setError(cleanWhy(reason instanceof DailyApiError ? reason.message : reason)); }
@@ -71,7 +72,8 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
   };
 
   const beginSeed = async (): Promise<void> => {
-    if (!task || seedLock || task.runsLeft === null || task.runsLeft < 1 || busy || !confirmStart()) return;
+    if (!task || seedLock || task.runsLeft === null || task.runsLeft < 1 || busy) return;
+    if (!(await confirmStart())) return;
     const selectedRuns = Math.max(1, Math.min(runs, task.runsLeft, 3));
     setBusy(true); setError(null);
     try { setLocalOperation(await startDailySeed(account.id, task.id, { runs: selectedRuns })); }
@@ -105,18 +107,17 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
       </button>
       {checkinLock && !status?.checkin.done && <span className="text-amber-300">{checkinLock}</span>}
     </div>
-    <div className="mt-2 overflow-x-auto rounded border border-slate-800/80">
-      <table className="w-full min-w-[360px] text-left text-[11px]">
-        <thead className="bg-slate-950/60 text-slate-500"><tr><th className="px-2 py-1.5">Việc</th><th className="px-2 py-1.5">Lượt còn</th><th className="px-2 py-1.5">Điều khiển</th></tr></thead>
-        <tbody>{status?.seedTasks.map((item) => <tr key={item.id} className={item.supported ? 'text-slate-300' : 'text-slate-600'}>
-          <td className="px-2 py-1.5">{item.name || item.id}{item.active ? ' · đang làm' : ''}</td>
-          <td className="px-2 py-1.5">{item.runsLeft ?? 'chưa biết'}</td>
-          <td className="px-2 py-1.5">{item.id === 'duoc_moc' && item.supported
-            ? <div className="flex items-center gap-1.5"><select aria-label="Số lượt Dược Công" value={runs} onChange={(event) => setRuns(Math.max(1, Math.min(3, Number(event.target.value) || 1)))} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-slate-700 bg-slate-950 px-1 py-1 disabled:opacity-50">{Array.from({ length: Math.min(3, item.runsLeft ?? 0) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} lượt</option>)}</select><button type="button" onClick={() => void beginSeed()} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-emerald-500/40 bg-emerald-600/20 px-2 py-1 text-emerald-200 disabled:opacity-40">Làm</button></div>
-            : <span>Chưa hỗ trợ</span>}</td>
-        </tr>)}</tbody>
-      </table>
-    </div>
+    <ul className="mt-2 divide-y divide-slate-800/80 rounded border border-slate-800/80 text-[11px]">
+      {status?.seedTasks.map((item) => <li key={item.id} className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 py-1.5 ${item.supported ? 'text-slate-300' : 'text-slate-600'}`}>
+        <div className="min-w-0 basis-40 flex-1">
+          <div className="break-words">{item.name || item.id}{item.active ? ' · đang làm' : ''}</div>
+          <div className="text-slate-500">Lượt còn: {item.runsLeft ?? 'chưa biết'}</div>
+        </div>
+        <div className="shrink-0">{item.id === 'duoc_moc' && item.supported
+          ? <div className="flex items-center gap-1.5"><select aria-label="Số lượt Dược Công" value={runs} onChange={(event) => setRuns(Math.max(1, Math.min(3, Number(event.target.value) || 1)))} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-slate-700 bg-slate-950 px-1 py-1 disabled:opacity-50">{Array.from({ length: Math.min(3, item.runsLeft ?? 0) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} lượt</option>)}</select><button type="button" onClick={() => void beginSeed()} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-emerald-500/40 bg-emerald-600/20 px-2 py-1 text-emerald-200 disabled:opacity-40">Làm</button></div>
+          : <span>Chưa hỗ trợ</span>}</div>
+      </li>)}
+    </ul>
     {seedLock && task && task.runsLeft !== null && task.runsLeft > 0 && <p role="status" className="mt-2 text-amber-300">{seedLock}</p>}
     {operation && <div className="mt-2 flex items-center justify-between gap-2 rounded border border-cyan-500/25 bg-cyan-950/15 px-2 py-1.5 text-cyan-200">
       <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>

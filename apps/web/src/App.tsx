@@ -4,6 +4,7 @@ import { Navbar } from './components/Navbar';
 import { StatsBar } from './components/StatsBar';
 import { AccountCard } from './components/AccountCard';
 import { AddAccountModal } from './components/AddAccountModal';
+import { DialogHost } from './components/DialogHost';
 import { UpdatePasswordModal } from './components/UpdatePasswordModal';
 import { ApiTokenPanel } from './components/ApiTokenPanel';
 import { LogTerminal } from './components/LogTerminal';
@@ -12,6 +13,7 @@ import { cancelMoveTo, fetchMapCatalog, fetchMapGeometry, moveTo, startBot, stop
 import type { MapCatalogItem } from './lib/api';
 import type { WorldBounds } from './lib/minimap';
 import { resolveMapContext } from './lib/context';
+import { confirmAction, notify } from './lib/dialogs';
 
 export const App: React.FC = () => {
   const { accounts, logs, isConnected, refreshAccounts, setLogs } = useRealtime();
@@ -50,8 +52,8 @@ export const App: React.FC = () => {
     }
   }, [accounts, mapGeometryById]);
 
-  const handleStart = async (id: string) => { try { await startBot(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
-  const handleStop = async (id: string) => { try { await stopBot(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
+  const handleStart = async (id: string) => { try { await startBot(id); await refreshAccounts(); } catch (error) { notify(error); } };
+  const handleStop = async (id: string) => { try { await stopBot(id); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleStartAuto = async (account: AccountRuntime) => {
     try {
       const view = resolveMapContext(account);
@@ -59,9 +61,9 @@ export const App: React.FC = () => {
         ? { mapId: view.mapId, khu: view.khu, x: account.x, y: account.y } : undefined;
       await startVendorAuto(account.id, anchor);
       await refreshAccounts();
-    } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { notify(error); }
   };
-  const handleStopAuto = async (id: string) => { try { await stopVendorAuto(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
+  const handleStopAuto = async (id: string) => { try { await stopVendorAuto(id); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleMoveTo = async (
     id: string,
     target?: { x: number; y: number },
@@ -72,7 +74,7 @@ export const App: React.FC = () => {
       await refreshAccounts();
       return operation;
     } catch (error) {
-      alert(error instanceof Error ? error.message : String(error));
+      notify(error);
       throw error;
     }
   };
@@ -82,16 +84,16 @@ export const App: React.FC = () => {
       await refreshAccounts();
       return operation;
     } catch (error) {
-      alert(error instanceof Error ? error.message : String(error));
+      notify(error);
       throw error;
     }
   };
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa tài khoản này khỏi Dashboard?')) return;
-    try { await deleteAccount(id); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); }
+    if (!(await confirmAction('Bạn có chắc chắn muốn xóa tài khoản này khỏi Dashboard?', { confirmLabel: 'Xóa', danger: true }))) return;
+    try { await deleteAccount(id); await refreshAccounts(); } catch (error) { notify(error); }
   };
-  const handleStartAll = async () => { try { await startAllBots(); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
-  const handleStopAll = async () => { try { await stopAllBots(); await refreshAccounts(); } catch (error) { alert(error instanceof Error ? error.message : String(error)); } };
+  const handleStartAll = async () => { try { await startAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
+  const handleStopAll = async () => { try { await stopAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleRefresh = async () => { await refreshAccounts(); };
 
   return <div className="min-h-screen flex flex-col bg-[#07090e] text-slate-100">
@@ -109,6 +111,7 @@ export const App: React.FC = () => {
     </main>
     <footer className="border-t border-slate-900 bg-black/40 py-4 px-4 text-center text-xs text-slate-600">TuTien2D Automation · client chính thức headless</footer>
     <UpdatePasswordModal account={activePasswordAccount} onClose={() => setActivePasswordAccount(null)} onUpdated={refreshAccounts} />
+    <DialogHost />
     <AddAccountModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onCreated={refreshAccounts} />
   </div>;
 };

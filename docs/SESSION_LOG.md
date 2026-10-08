@@ -1,5 +1,28 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Sửa 3 vấn đề giao diện phát hiện khi chạy thử nhiệm vụ hằng ngày
+
+1. `confirm()`/`alert()` gốc bị trình duyệt nhúng chặn (confirm tự trả `false`, alert không hiện): thêm `lib/dialogs.ts` (kho thông báo và xác nhận, có hàng đợi xác nhận, khử trùng thông báo giống nhau, tối đa 4 thông báo, tự tắt sau 8 s, làm sạch ký tự điều khiển rồi gộp khoảng trắng, đổi mã lỗi kỹ thuật như `TARGET_ON_PORTAL`, `AUTO_ACTIVE`, `PATH_CROSSES_PORTAL` thành câu tiếng Việt) và `components/DialogHost.tsx` (hiển thị thông báo, hộp xác nhận `role="dialog"`, Esc/bấm nền = hủy). `App.tsx` thay mọi `alert` bằng `notify`, xác nhận xóa tài khoản bằng `confirmAction` (nút "Xóa" kiểu nguy hiểm); `DailyControl` xác nhận trước khi dùng lượt thật bằng `confirmAction`.
+2. Bảng "Việc Dược Công" tràn ngang ở khung hẹp: đổi thành danh sách xếp dòng (tên + "Lượt còn" bên trái, điều khiển bên phải, tự xuống dòng).
+3. Lỗi mã (ví dụ `TARGET_ON_PORTAL`) hiện bằng `alert` bị chặn: giờ hiện thành thông báo trong trang, tiếng Việt dễ hiểu.
+
+Kiểm chứng: `pnpm --filter @tutien2d/web build` pass; test web 33 (thêm 6 cho `dialogs`). Trên trình duyệt tích hợp (live): hộp xác nhận xóa tài khoản hiện đúng và "Hủy" không xóa; danh sách việc không còn bảng, rộng 236 px không tràn (`scrollWidth` = `clientWidth`); bấm mini-map lên ô cổng cho thông báo "Điểm đã chọn nằm trên ô cổng. Hãy chọn điểm khác ...". Chưa kiểm chứng: bấm "Làm" sau thay đổi (bật lượt thật) bằng hộp xác nhận mới.
+
+Ghi nhận thêm (chưa sửa): ở khung 334 px chiều ngang trang vẫn tràn khoảng 25 px (hàng nút ở đầu trang, có từ trước).
+
+## 2026-10-08 — Chạy thử live nhiệm vụ hằng ngày qua dashboard (`duoc_moc`, 1 lượt)
+
+Quy trình: trình duyệt tích hợp, bấm "Chạy" rồi "Làm" ở hàng "Thu Gom Dược Mộc" (1 lượt) trong "Nhiệm vụ hằng ngày". Hurt 0 suốt chuyến, không gục.
+
+Kết quả (tổng khoảng 37 s): `seed_walk_npc` → nhận việc → `seed_walk_tree` → chặt/nhặt 5 cành (mỗi cành khoảng 1,5–2 s kể cả đi nhặt, đứng cách cây khoảng 40–45 px sau khi `walkTo` dịch khỏi ô cây bị chặn) → `seed_walk_complete` → giao việc → `done` với `rewards {stones: 20, duocCong: 3}`. Linh Thạch 1335 → 1355, Dược Công 19 → 22; `duoc_moc` hôm nay đã dùng 2/3 lượt (còn 1). Xác nhận đứng cạnh Đại Phu bằng `walkTo` tới prop + 40 px là đủ cho `seed.start` và `seed.complete`.
+
+Phát hiện:
+- Hai lần bấm "Làm" đầu không làm gì: nút gọi `window.confirm("Dùng lượt thật trong ngày; ...")` và trình duyệt tích hợp tắt hộp thoại gốc nên `confirm()` tự trả `false` (log: "Page dialog suppressed (confirm)"). Mã không lỗi; thử lại sau khi tự đồng ý hộp xác nhận trong trang thì chạy đúng. Đề xuất sửa: thay `confirm` bằng xác nhận ngay trong giao diện (các trình duyệt nhúng cũng chặn hộp thoại gốc).
+- Bảng "Việc Dược Công" tràn ngang ở khung hẹp (thanh cuộn ngang trong thẻ).
+- Console có `alert` "TARGET_ON_PORTAL" (người dùng bấm mini-map lên ô cổng) — hành vi đã biết, nhưng nên hiển thị bằng thông báo trong giao diện thay vì `alert`.
+
+Chưa xác minh: ngưỡng khoảng cách chính xác tới NPC, giới hạn 3 lượt/ngày ở server (đã dùng 2 lượt `duoc_moc` hôm nay, chưa thử lượt thứ 4), các việc còn lại.
+
 ## 2026-10-08 — Module nhiệm vụ hằng ngày bản 1 (offline)
 
 Thay đổi:
