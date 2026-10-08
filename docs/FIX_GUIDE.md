@@ -1310,5 +1310,7 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 3. [x] Test guard: `downed`, quái trong 300, move-to, navigation, thiếu vị trí; test env tắt; test one-shot và bound 20 move.
 4. [x] Evidence live redacted: `docs/evidence/packet-tap-2026-10-07T15-34-28-827Z.json`; A `seq 1..10`, `idle`, `you seq=10`, delay 106ms, HP/MP 225/188, `dn=0`, `fix=0`, vị trí không đổi.
 5. [~] H2 `walk` chưa chạy vì A đã thành công; full `pnpm build`/Vitest/server TS chưa tự chạy được do toolchain sandbox (`pnpm`/`tsx`/`ws`/`vitest`/symlink express).
+6. [~] Đã thêm mode `TUTIEN_PROBE_STATIONARY=offset`: đúng `4 + 10` move `idle`, nhãn `offset-0`/`offset-1`, ghi `youDuringPostMoveWait`, guard và one-shot; test source bằng Node type-transform pass, nhưng build/dist và `node --test` chuẩn bị chặn bởi `EPERM` của toolchain.
+7. [ ] Live evidence của mode offset và bảng phân biệt M1/M2/M3: **chưa xác minh**; không được tạo evidence giả khi chưa có build và phiên game thật.
 
 Giả định/giới hạn còn lại: `idle` đã được đối chiếu với vendor (`gateway.js` dùng `o.state`, `player.js` khởi tạo `state:"idle"`); H1 và H3 mới có một live run. `vitalsAgeMs` và `refreshVitals` chỉ là đề xuất tài liệu, chưa code; TTL đề xuất 5 giây và rate-limit refresh đề xuất 30 giây.

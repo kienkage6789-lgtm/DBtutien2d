@@ -1,5 +1,53 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Kết quả live probe offset (4 + 10 move đứng yên)
+
+Chạy bởi Claude Code sau khi Codex sửa harness (Codex không chạy được build/live trong sandbox). Build 4/4 package pass; test harness và packet tap pass. Evidence redacted: `docs/evidence/packet-tap-2026-10-07T23-14-12-695Z.json` (thư mục evidence không nằm trong git).
+
+| Quan sát | Giá trị |
+|---|---|
+| Đợt `offset-0` | 4 move `idle`, seq 1..4, tại (246,695); 0 gói `you`, 0 gói `you` trong 3 giây nghỉ |
+| Đợt `offset-1` | 10 move `idle`, seq 5..14, cùng tọa độ |
+| Gói `you` | đúng 1 gói, `seq=10`, tại 24777ms; move seq 10 gửi lúc 24686ms, trễ 91ms |
+| Thời điểm `you` | sau move thứ 6 của đợt `offset-1`, 0.63 giây kể từ move đầu của đợt đó |
+| Nội dung `you` | hp 225, mp 188, sp 78, bp 115, dn 0, fix 0; vị trí không đổi |
+
+| Mô hình | Kết luận | Lý do |
+|---|---|---|
+| M1: server dựa vào seq (bội số 10) hoặc đếm tổng số move nhận được | **Ủng hộ** | `you` mang đúng `seq=10`, sau 6 move của đợt thứ hai |
+| M2: đếm 10 move kể từ đầu luồng sau khoảng nghỉ | **Bác bỏ** | Sẽ cho `you` ở seq 14; thực tế `you` đến ở seq 10 và không có `you` nào sau seq 14 |
+| M3: theo thời gian ~1 giây kể từ đầu luồng | **Bác bỏ (có lưu ý)** | `you` đến sau 0.63 giây, không phải ~1 giây; nhưng chỉ có một mẫu |
+
+Chưa phân biệt được: "seq do client gửi % 10" và "tổng số move server đã nhận % 10" (cần gửi seq lệch, nên không thử). Một mẫu duy nhất, tiến trình mới khởi động, seq bắt đầu từ 1.
+
+Hệ quả thiết kế `refreshVitals()`: gửi tối đa 10 move `idle` liên tiếp (khoảng 1 giây) tại tọa độ hiện tại sẽ chắc chắn đi qua một bội số của 10 nếu M1 đúng. Điều kiện an toàn vẫn như harness: không gục, không có quái trong 300 đơn vị, không move-to/điều hướng, context hiện hành, giới hạn tần suất (đề xuất khoảng 30 giây).
+
+Trạng thái sau khi chạy: bot đã dừng bằng `POST /accounts/:id/stop`, server đã dừng, cổng 4000 giải phóng.
+
+## 2026-10-08 — Mở rộng stationary probe offset (live chưa xác minh)
+
+### Thay đổi
+
+- Mở rộng `apps/server/src/debug/stationary-probe.ts` với mode `TUTIEN_PROBE_STATIONARY=offset`; mode mới gửi đúng hai đợt `4 + 10` move `idle`, cùng tọa độ/dir, nhịp 100ms, giữ guard và thời gian chờ 20 giây sau `IN_GAME` như harness cũ.
+- Mode cũ `TUTIEN_PROBE_STATIONARY=1` giữ luồng A/B `10 idle + 10 walk` và short-circuit cũ; giá trị env khác `1`/`offset` tắt harness.
+- Packet tap giữ dữ liệu redacted; đợt mới dùng nhãn `offset-0`/`offset-1`, ghi seq đầu/cuối, vị trí trước/sau, `you` với `seq/hp/mp/sp/bp/dn/fix/at/delayMs`, và thêm `youDuringPostMoveWait` để nhận biết `you` trong 3 giây nghỉ sau đợt 0.
+- Test harness bao phủ 14 move, đúng hai đợt, guard hủy giữa chừng, env lạ tắt, env `1` giữ hành vi cũ; packet-tap test bao phủ trường nghỉ mới và redaction.
+
+### Lệnh và kết quả thật
+
+- `corepack pnpm build`: **bị chặn**; Corepack ban đầu không tạo được cache mặc định (`EPERM`), sau khi chuyển cache vào workspace thì script root gọi `pnpm` con không có trong PATH.
+- `corepack pnpm --filter "@tutien2d/*" build`: **fail** tại `typescript@5.9.3/bin/tsc` trong `.pnpm` với `EPERM`.
+- `corepack pnpm install --offline --frozen-lockfile` và thử store riêng: **bị chặn** với `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` / Access denied.
+- Test source harness bằng Node 24 type-transform: **pass** (`server stationary-probe tests passed`). Packet-tap source test bằng Node 24 transform-types: **pass** (`core-client packet tap tests passed`).
+- `node --test apps/server/src/debug/stationary-probe.test.mjs` và `node --test packages/core-client/test/packet-tap.test.mjs`: **chưa pass** vì `dist` chưa rebuild; lần lượt dùng artifact cũ nên mode offset không được nhận và trường `youDuringPostMoveWait` chưa có.
+- Chưa restart server, chưa đăng nhập game, chưa gửi move thật và chưa tạo evidence mới vì build không pass. Kiểm tra port 4000 không có listener trong lần kiểm tra này.
+
+### Còn chờ xác minh
+
+- Live probe `offset` với đúng một phiên game và `TUTIEN_PACKET_TAP=90` chưa chạy; `S`, `T`, `N`, seq đầu/cuối, HP/MP, `dn/fix`, vị trí trước/sau và việc có `you` trong khoảng nghỉ đều **chưa xác minh**.
+- Không có evidence mới được tạo; không suy đoán kết luận M1/M2/M3 từ các lần probe trước.
+- Thiết kế `refreshVitals()` chưa đổi trong nhiệm vụ này. Cần giữ nó phụ thuộc vào `you` authoritative, không phụ thuộc giả định server theo seq hay theo thời gian; số move tối thiểu bảo đảm `you` theo mô hình thực tế vẫn **chưa xác minh**.
+
 ## 2026-10-07 — Stationary move probe: `you` sau 10 move đứng yên
 
 ### Thay đổi

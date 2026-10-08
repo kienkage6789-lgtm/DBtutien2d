@@ -5,8 +5,11 @@ const WAIT_BEFORE_SECOND_BATCH_MS = 15_000;
 const MOVE_INTERVAL_MS = 100;
 const PROBE_DELAY_AFTER_IN_GAME_MS = 20_000;
 const MAX_MOVES_PER_BATCH = 10;
+const OFFSET_FIRST_BATCH_MOVES = 4;
 
 type Position = { x: number; y: number };
+export type StationaryProbeMode = 'legacy' | 'offset';
+export type StationaryProbeBatchLabel = 'A' | 'B' | 'offset-0' | 'offset-1';
 
 export interface StationaryProbeSnapshot {
   downed: boolean | null;
@@ -70,6 +73,7 @@ interface StationaryProbeDependencies {
   recordBatchEnd?: (input: {
     label: string;
     youCount: number;
+    youDuringPostMoveWait?: number;
     positionAfter: Position | null;
   }) => void;
   recordYou?: (label: string, packet: Record<string, unknown>) => void;
@@ -78,12 +82,13 @@ interface StationaryProbeDependencies {
 
 export interface StationaryProbeOptions {
   enabled?: boolean;
+  mode?: StationaryProbeMode;
   wait?: (ms: number) => Promise<void>;
 }
 
 export interface StationaryProbeResult {
   status: 'completed' | 'cancelled';
-  batches: Array<{ label: 'A' | 'B'; st: MoveState; movesSent: number; youCount: number }>;
+  batches: Array<{ label: StationaryProbeBatchLabel; st: MoveState; movesSent: number; youCount: number }>;
   reason?: StationaryProbeGuardReason | 'send_rejected' | 'probe_error';
 }
 
@@ -95,12 +100,19 @@ const waitFor = (ms: number): Promise<void> => new Promise((resolve) => setTimeo
  */
 export class StationaryProbe {
   private readonly enabled: boolean;
+  private readonly mode: StationaryProbeMode | null;
   private readonly wait: (ms: number) => Promise<void>;
   private claimed = false;
   private runPromise: Promise<StationaryProbeResult | undefined> | null = null;
 
   public constructor(options: StationaryProbeOptions = {}) {
-    this.enabled = options.enabled ?? process.env.TUTIEN_PROBE_STATIONARY === '1';
+    const envMode = process.env.TUTIEN_PROBE_STATIONARY === '1'
+      ? 'legacy'
+      : process.env.TUTIEN_PROBE_STATIONARY === 'offset'
+        ? 'offset'
+        : null;
+    this.mode = options.enabled === false ? null : (options.mode ?? (options.enabled === true ? 'legacy' : envMode));
+    this.enabled = this.mode !== null;
     this.wait = options.wait ?? waitFor;
   }
 
@@ -134,18 +146,31 @@ export class StationaryProbe {
     if (initialReason) return this.cancel(deps, initialReason);
     if (!deps.isConnected()) return this.cancel(deps, 'probe_error');
 
-    let activeBatch: { label: 'A' | 'B'; youCount: number } | null = null;
+    let activeBatch: {
+      label: StationaryProbeBatchLabel;
+      youCount: number;
+      postMovesComplete: boolean;
+      youDuringPostMoveWait: number;
+    } | null = null;
     const unsubscribe = deps.onYou((packet) => {
       if (!activeBatch) return;
       activeBatch.youCount += 1;
+      if (activeBatch.postMovesComplete) activeBatch.youDuringPostMoveWait += 1;
       deps.recordYou?.(activeBatch.label, packet);
     });
 
     try {
       const results: StationaryProbeResult['batches'] = [];
-      const first = await this.runBatch(deps, 'A', 'idle', (batch) => { activeBatch = batch; }, () => {
-        activeBatch = null;
-      });
+      const first = await this.runBatch(
+        deps,
+        this.mode === 'offset' ? 'offset-0' : 'A',
+        'idle',
+        this.mode === 'offset' ? OFFSET_FIRST_BATCH_MOVES : MAX_MOVES_PER_BATCH,
+        (batch) => { activeBatch = batch; },
+        () => {
+          activeBatch = null;
+        },
+      );
       results.push(first.summary);
       if (first.cancelReason) {
         if (first.cancelReason !== 'send_rejected') {
@@ -154,6 +179,25 @@ export class StationaryProbe {
         }
         return { status: 'cancelled', batches: results, reason: first.cancelReason };
       }
+
+      if (this.mode === 'offset') {
+        if (!deps.isConnected()) return this.cancel(deps, 'probe_error');
+        const second = await this.runBatch(deps, 'offset-1', 'idle', MAX_MOVES_PER_BATCH, (batch) => {
+          activeBatch = batch;
+        }, () => {
+          activeBatch = null;
+        });
+        results.push(second.summary);
+        if (second.cancelReason) {
+          if (second.cancelReason !== 'send_rejected') {
+            deps.recordCancellation?.(second.cancelReason);
+            console.warn(`[StationaryProbe] cancelled: ${second.cancelReason}`);
+          }
+          return { status: 'cancelled', batches: results, reason: second.cancelReason };
+        }
+        return { status: 'completed', batches: results };
+      }
+
       if (first.summary.youCount > 0) return { status: 'completed', batches: results };
 
       await this.wait(WAIT_BEFORE_SECOND_BATCH_MS);
@@ -165,7 +209,7 @@ export class StationaryProbe {
       }
       if (!deps.isConnected()) return this.cancel(deps, 'probe_error');
 
-      const second = await this.runBatch(deps, 'B', 'walk', (batch) => { activeBatch = batch; }, () => {
+      const second = await this.runBatch(deps, 'B', 'walk', MAX_MOVES_PER_BATCH, (batch) => { activeBatch = batch; }, () => {
         activeBatch = null;
       });
       results.push(second.summary);
@@ -185,12 +229,18 @@ export class StationaryProbe {
 
   private async runBatch(
     deps: StationaryProbeDependencies,
-    label: 'A' | 'B',
+    label: StationaryProbeBatchLabel,
     st: MoveState,
-    onStart: (batch: { label: 'A' | 'B'; youCount: number }) => void,
+    moveCount: number,
+    onStart: (batch: {
+      label: StationaryProbeBatchLabel;
+      youCount: number;
+      postMovesComplete: boolean;
+      youDuringPostMoveWait: number;
+    }) => void,
     onEnd: () => void,
   ): Promise<{
-    summary: { label: 'A' | 'B'; st: MoveState; movesSent: number; youCount: number };
+    summary: { label: StationaryProbeBatchLabel; st: MoveState; movesSent: number; youCount: number };
     cancelReason?: StationaryProbeResult['reason'];
   }> {
     const before = deps.getSnapshot();
@@ -204,12 +254,12 @@ export class StationaryProbe {
     const x = Math.round(position.x);
     const y = Math.round(position.y);
     const dir = before.dir as Direction;
-    const batch = { label, youCount: 0 };
+    const batch = { label, youCount: 0, postMovesComplete: false, youDuringPostMoveWait: 0 };
     onStart(batch);
     deps.recordBatchStart?.({ label, st, x, y, positionBefore: { x: position.x, y: position.y } });
 
     let movesSent = 0;
-    for (let index = 0; index < MAX_MOVES_PER_BATCH; index += 1) {
+    for (let index = 0; index < moveCount; index += 1) {
       const shouldSend = () => {
         const currentReason = stationaryProbeGuardReason(deps.getSnapshot());
         return deps.isConnected() && currentReason === null;
@@ -217,7 +267,12 @@ export class StationaryProbe {
       const sent = await deps.sendMove(x, y, dir, st, shouldSend);
       if (!sent) {
         onEnd();
-        deps.recordBatchEnd?.({ label, youCount: batch.youCount, positionAfter: deps.getSnapshot().position });
+        deps.recordBatchEnd?.({
+          label,
+          youCount: batch.youCount,
+          ...(this.mode === 'offset' ? { youDuringPostMoveWait: batch.youDuringPostMoveWait } : {}),
+          positionAfter: deps.getSnapshot().position,
+        });
         deps.recordCancellation?.('send_rejected');
         console.warn('[StationaryProbe] cancelled: send_rejected');
         return {
@@ -226,12 +281,18 @@ export class StationaryProbe {
         };
       }
       movesSent += 1;
-      if (index < MAX_MOVES_PER_BATCH - 1) await this.wait(MOVE_INTERVAL_MS);
+      if (index < moveCount - 1) await this.wait(MOVE_INTERVAL_MS);
     }
 
+    batch.postMovesComplete = true;
     await this.wait(WAIT_AFTER_BATCH_MS);
     onEnd();
-    deps.recordBatchEnd?.({ label, youCount: batch.youCount, positionAfter: deps.getSnapshot().position });
+    deps.recordBatchEnd?.({
+      label,
+      youCount: batch.youCount,
+      ...(this.mode === 'offset' ? { youDuringPostMoveWait: batch.youDuringPostMoveWait } : {}),
+      positionAfter: deps.getSnapshot().position,
+    });
     const afterReason = stationaryProbeGuardReason(deps.getSnapshot());
     return {
       summary: { label, st, movesSent, youCount: batch.youCount },

@@ -12,8 +12,13 @@ try {
   tap.record({ op: 'snap2', pf: [{ id: 'self-secret-id', x: 1, y: 2, hp: 80, name: 'private-name', token: 'row-token' }], ef: [{ id: 7, x: 3, y: 4, kind: 'mob' }] });
   tap.beginStationaryProbeBatch({ label: 'A', st: 'idle', x: 10.6, y: 20.2, positionBefore: { x: 10.6, y: 20.2 } });
   tap.recordOutboundMove({ seq: 41, x: 10.6, y: 20.2, st: 'idle', ep: 7, token: 'DO_NOT_WRITE', id: 'private-id' });
-  tap.recordStationaryProbeYou('A', { seq: 41, hp: 225, mp: 188, sp: 78, bp: 115, dn: false, fix: false, token: 'DO_NOT_WRITE' });
-  tap.endStationaryProbeBatch({ label: 'A', youCount: 1, positionAfter: { x: 10.6, y: 20.2 } });
+  tap.recordStationaryProbeYou('offset-0', { seq: 41, hp: 225, mp: 188, sp: 78, bp: 115, dn: false, fix: false, token: 'DO_NOT_WRITE' });
+  tap.endStationaryProbeBatch({
+    label: 'offset-0',
+    youCount: 1,
+    youDuringPostMoveWait: 1,
+    positionAfter: { x: 10.6, y: 20.2 },
+  });
   tap.flush();
   const [filename] = fs.readdirSync(dir);
   const raw = fs.readFileSync(path.join(dir, filename), 'utf8');
@@ -32,7 +37,9 @@ try {
   assert.equal(result.stationaryProbe.batches[0].seqStart, 41);
   assert.equal(result.stationaryProbe.batches[0].seqEnd, 41);
   assert.equal(result.stationaryProbe.batches[0].st, 'idle');
-  assert.equal(result.stationaryProbe.you[0].batch, 'A');
+  assert.equal(result.stationaryProbe.batches[0].label, 'offset-0');
+  assert.equal(result.stationaryProbe.batches[0].youDuringPostMoveWait, 1);
+  assert.equal(result.stationaryProbe.you[0].batch, 'offset-0');
   assert.equal(result.stationaryProbe.you[0].hp, 225);
   assert.equal(typeof result.stationaryProbe.you[0].delayMs, 'number');
   assert.equal(raw.includes('"selfId"'), false);

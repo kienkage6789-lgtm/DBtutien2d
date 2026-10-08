@@ -69,6 +69,7 @@ export class PacketTap {
     y: number | null;
     movesSent: number;
     youCount: number;
+    youDuringPostMoveWait?: number;
     positionBefore: { x: number | null; y: number | null };
     positionAfter: { x: number | null; y: number | null };
   }> = [];
@@ -217,6 +218,7 @@ export class PacketTap {
   endStationaryProbeBatch(input: {
     label: string;
     youCount: number;
+    youDuringPostMoveWait?: number;
     positionAfter: { x: unknown; y: unknown } | null;
   }): void {
     if (this.flushed || !this.activeStationaryProbeBatch) return;
@@ -236,6 +238,9 @@ export class PacketTap {
       y: active.y,
       movesSent: moves.length,
       youCount: Math.max(0, Math.floor(input.youCount)),
+      ...(typeof input.youDuringPostMoveWait === 'number' && Number.isFinite(input.youDuringPostMoveWait)
+        ? { youDuringPostMoveWait: Math.max(0, Math.floor(input.youDuringPostMoveWait)) }
+        : {}),
       positionBefore: active.positionBefore,
       positionAfter: input.positionAfter
         ? { x: rounded(input.positionAfter.x), y: rounded(input.positionAfter.y) }
