@@ -859,3 +859,42 @@ test('VendorRunner rate-limits watchdog warnings instead of logging one per fram
     await runner.stop();
   }
 });
+
+test('VendorRunner suy toạ độ prop của map khác từ ô MapData và chỉ liệt kê cây Linh Chi của map đã tải', async () => {
+  FakeSocket.instances = [];
+  FakeSocket.moves = [];
+  FakeSocket.spawn = { x: 272, y: 860 };
+  const runner = new VendorRunner({
+    accountName: 'fixture-account',
+    credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game',
+    vendorClientDir,
+    tokenManager: new FakeTokenManager(),
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0,
+    loginTimeoutMs: 500,
+    loopIntervalMs: 5,
+  });
+  try {
+    await runner.start();
+    for (let i = 0; i < 400 && runner.getSnapshot().mapId === null; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runner.getSnapshot().mapId, 'tan_vien');
+    const internals = runner as unknown as {
+      getDailyProp(mapId: string, propId: string): { id: string; x: number; y: number } | null;
+      getDailyProps(mapId: string, type: string): Array<{ id: string; x: number; y: number }>;
+    };
+    // Map khác (duoc_vien): chỉ có ô tx/ty trong MapData; đã đối chiếu: dai_phu ô (14,8) -> (464,288), cổ thụ ô (34,25) -> (1104,832).
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'dai_phu')?.x, 464);
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'dai_phu')?.y, 288);
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'co_thu_linh_moc')?.x, 1104);
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'co_thu_linh_moc')?.y, 832);
+    // Map đang tải (tan_vien): cây Linh Chi có x/y (bố cục theo ngày); map khác thì không liệt kê.
+    const loaded = internals.getDailyProps('tan_vien', 'ling_chi_prop');
+    assert.ok(loaded.length >= 1, 'map đã tải phải có cây Linh Chi');
+    assert.ok(loaded.every((prop) => Number.isFinite(prop.x) && Number.isFinite(prop.y)));
+    assert.deepEqual(internals.getDailyProps('duoc_vien', 'ling_chi_prop'), []);
+  } finally {
+    FakeSocket.spawn = { x: 240, y: 192 };
+    await runner.stop();
+  }
+});

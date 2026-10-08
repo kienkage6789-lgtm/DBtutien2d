@@ -1,5 +1,19 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — Chạy thử live `linh_chi` qua dashboard: tìm và sửa 3 lỗi mà test giả không bắt được
+
+Lần chạy đầu thất bại ngay (0,2 s, `NO_HARVESTABLE_PROP`) sau khi `seed.start` đã thành công (việc `linh_chi` đang dở trên server, lượt hôm nay `n = 1`). Nguyên nhân (fixture cũ luôn đặt nhân vật ở `tan_vien` và trả toạ độ cứng nên không lộ ra):
+
+1. `getDailyProp`/`getDailyProps` (vendor-runner) đọc prop của map KHÁC từ `MapData` tĩnh, nơi prop chỉ có ô `tx/ty` (không có `x/y`) nên mọi prop bị loại. Sửa: suy `x = tx*TILE + TILE/2`, `y = (ty+1)*TILE` (đối chiếu bằng dữ liệu client thật: `dai_phu` ô (14,8) → (464,288), `co_thu_linh_moc` ô (34,25) → (1104,832)).
+2. Vị trí và trạng thái ẩn của cây Linh Chi đổi theo ngày (client chạy `applyLinhChi`/`linhChiLayout` trên map đã tải), dữ liệu tĩnh của map khác không đúng: runner chỉ liệt kê cây Linh Chi khi đang đứng trong map đó.
+3. `walkTo` nhiều map KHÔNG đi tiếp tới `target` sau khi sang map đích (chỉ tới điểm xuất hiện, đúng quyết định 2a), nên mọi bước "đi tới NPC/cây ở map khác" của mô-đun hằng ngày dừng sai chỗ rồi bị server từ chối vì xa NPC (ảnh hưởng điểm danh từ map khác, về Đại Phu sau khi hái ở `tan_vien`, chặt cây khi đứng ngoài `duoc_vien`; riêng `duoc_moc` không lộ vì mọi bước nằm trong `duoc_vien`). Sửa trong `daily-quests.ts`: `beginWalkToMapIfNeeded` — nếu chưa ở đúng map thì đi theo map trước (không kèm toạ độ), rồi quay lại chính bước đó để đi bộ trong map đã tải; dùng cho `walkToNpc`, `walkToTree`, `walkToResource`.
+
+Test mới: `daily-quests` 18 (thêm 2: `linh_chi` đi theo map duoc_vien → tan_vien → duoc_vien và điểm danh từ map khác; fixture mô hình hóa vị trí map và chỉ liệt kê cây của map đang tải), `vendor-runner` 19 (thêm 1, dùng dữ liệu client thật cho toạ độ suy ra và danh sách cây Linh Chi).
+
+Kết quả chạy live sau sửa (tiếp tục việc dở qua dashboard, hộp xác nhận trong giao diện): khoảng 52 s, `duoc_vien` → `thanh_truc_lam` → `tan_vien` (hái 3 Nấm Linh Chi Núi qua `resource.harvest`) → `thanh_truc_lam` → `duoc_vien` → giao việc: `done`, Linh Thạch 1365 → 1375 (+10), Dược Công 23 → 24 (+1), hurt 0. Hôm nay (2026-10-09) `linh_chi` đã dùng 1/3 lượt.
+
+Chưa xác minh: ngưỡng khoảng cách chính xác tới NPC/cây, khi mọi cây đều đang hồi, giới hạn 3 lượt/ngày ở server, các việc còn lại; điểm danh từ map khác (đã có test, chưa chạy live).
+
 ## 2026-10-08 — Triển khai offline nhiệm vụ Dược Công `linh_chi`
 
 Thay đổi:

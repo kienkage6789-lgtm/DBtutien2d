@@ -438,7 +438,26 @@ export class DailyQuests {
     return this.stepDeadlineAt > 0 && now >= this.stepDeadlineAt;
   }
 
+  /**
+   * `walkTo` nhiều map chỉ đưa nhân vật tới điểm xuất hiện của map đích (không đi tiếp tới `target`), nên mọi bước "đi tới
+   * NPC/cây/cây thuốc ở một map" phải đi theo map trước rồi quay lại chính bước đó để đi bộ trong map đã tải (server ép
+   * đứng cạnh NPC/tài nguyên; vị trí cây Linh Chi cũng chỉ đúng trên map đã tải). Trả true khi đã bắt đầu đi theo map.
+   */
+  private beginWalkToMapIfNeeded(mapId: string): boolean {
+    const where = this.client.getPosition?.();
+    if (!where || where.mapId === mapId) return false;
+    this.client.recordLog({ code: 'daily_step', detail: `walk_to_map=${mapId} from=${where.mapId}`, at: this.client.nowMs() });
+    this.beginWalk({
+      targetMapId: mapId,
+      abortOnHurt: this.abortOnHurt,
+      maxHurt: this.maxHurt,
+      requester: 'daily',
+    }, (this.operation?.step ?? 'failed') as DailyStep);
+    return true;
+  }
+
   private walkToNpc(propId: string, mapId: string, nextStep: DailyStep): void {
+    if (this.beginWalkToMapIfNeeded(mapId)) return;
     const prop = this.client.getProp(mapId, propId);
     if (!prop) { this.fail('TARGET_INVALID'); return; }
     this.beginWalk({
@@ -452,6 +471,7 @@ export class DailyQuests {
   }
 
   private walkToTree(): void {
+    if (this.beginWalkToMapIfNeeded('duoc_vien')) return;
     const prop = this.client.getProp('duoc_vien', TREE_SEED);
     if (!prop) { this.fail('TARGET_INVALID'); return; }
     const state = this.client.readDailyState();
@@ -482,6 +502,9 @@ export class DailyQuests {
     }
     const now = this.client.nowMs();
     if (this.resourceWaitUntil > now) return;
+    // Cây Linh Chi chỉ đọc được từ map đã tải: chưa ở tan_vien thì đi tới đó trước (đi theo map, tới điểm xuất hiện
+    // sau cổng), rồi quay lại bước này để chọn cây từ dữ liệu đã tải của ngày hôm nay.
+    if (this.beginWalkToMapIfNeeded('tan_vien')) return;
     const props = (this.client.listProps?.('tan_vien', 'ling_chi_prop') ?? [])
       .filter((prop) => prop.type === undefined || prop.type === 'ling_chi_prop')
       .filter((prop) => prop.hidden !== true && finite(prop.x) && finite(prop.y))

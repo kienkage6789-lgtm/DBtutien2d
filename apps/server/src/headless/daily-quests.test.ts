@@ -18,6 +18,9 @@ class FakeDailyClient implements DailyClient {
   public auto = false;
   public hurt = 0;
   public walk: WalkOperation | null = null;
+  /** Map mà nhân vật đang đứng; null = không mô hình hóa vị trí (hành vi cũ của các test đầu tiên). */
+  public positionMapId: string | null = null;
+  public walkRequests: WalkRequest[] = [];
   public command = '';
   public commandCount = 0;
   public resourceProps: DailyProp[] = [
@@ -40,6 +43,8 @@ class FakeDailyClient implements DailyClient {
   public getHurtCount(): number { return this.hurt; }
   public getWalkOperation(): WalkOperation | null { return this.walk; }
   public walkTo(request: WalkRequest): WalkOperation {
+    this.walkRequests.push(request);
+    if (this.positionMapId !== null && request.targetMapId) this.positionMapId = request.targetMapId;
     this.walk = { operationId: `walk-${this.now}`, target: request.target ?? null, resolvedTarget: request.target ?? null, status: 'accepted', requester: 'daily', startedAt: this.now, updatedAt: this.now };
     return this.walk;
   }
@@ -47,8 +52,12 @@ class FakeDailyClient implements DailyClient {
   public getProp(_mapId: string, propId: string): DailyProp | null { return { id: propId, x: 100, y: 100, r: 58 }; }
   public startChopping(_prop: DailyProp): boolean { return true; }
   public invokeCheckin(): unknown { return true; }
-  public listProps(_mapId: string, type: string): DailyProp[] { return this.resourceProps.filter((prop) => prop.type === type).map((prop) => ({ ...prop })); }
-  public getPosition(): { mapId: string; x: number; y: number } { return { mapId: 'tan_vien', x: 100, y: 100 }; }
+  public listProps(mapId: string, type: string): DailyProp[] {
+    // Mô hình đúng client: cây Linh Chi chỉ đọc được từ map đang tải.
+    if (this.positionMapId !== null && mapId !== this.positionMapId) return [];
+    return this.resourceProps.filter((prop) => prop.type === type).map((prop) => ({ ...prop }));
+  }
+  public getPosition(): { mapId: string; x: number; y: number } | null { return this.positionMapId ? { mapId: this.positionMapId, x: 100, y: 100 } : null; }
   public harvestResource(_propId: string): unknown { this.commandCount += 1; return true; }
   public startSeedQuest(taskId: string): unknown { this.commandCount += 1; this.state.activeSeedTask = taskId; this.state.activeRequired = taskId === 'linh_chi' ? 3 : 5; return true; }
   public completeSeedQuest(): unknown {
@@ -443,4 +452,71 @@ test('DailyQuests linh_chi hủy giữa chừng không gửi thêm harvest', () 
   const count = client.commandCount;
   daily.tick();
   assert.equal(client.commandCount, count);
+});
+
+function drive(client: FakeDailyClient, daily: DailyQuests, until: () => boolean, max = 60): void {
+  for (let i = 0; i < max && !until(); i += 1) {
+    daily.tick();
+    if (client.walk && (client.walk.status === 'accepted' || client.walk.status === 'running')) client.walk.status = 'arrived';
+  }
+}
+
+test('DailyQuests linh_chi đi theo map trước (duoc_vien -> tan_vien -> duoc_vien) rồi mới đi bộ tới cây và Đại Phu', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [task, linhChiTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('linh_chi');
+
+  // Nhận việc ở Đại Phu (đã ở duoc_vien: chỉ đi bộ trong map).
+  drive(client, daily, () => client.command === 'seed.start');
+  assert.equal(client.command, 'seed.start');
+  client.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+
+  // Chưa ở tan_vien: phải đi theo map (không kèm đích) TRƯỚC khi chọn cây.
+  const before = client.walkRequests.length;
+  drive(client, daily, () => client.walkRequests.length > before);
+  const toMap = client.walkRequests[before];
+  assert.equal(toMap.targetMapId, 'tan_vien');
+  assert.equal(toMap.target, undefined, 'đi theo map, không kèm toạ độ');
+
+  // Tới tan_vien rồi mới liệt kê cây (map đã tải) và đi bộ tới cây.
+  drive(client, daily, () => client.walkRequests.length > before + 1);
+  const toProp = client.walkRequests[before + 1];
+  assert.ok(toProp.target, 'sau khi ở tan_vien phải đi bộ tới một cây Linh Chi');
+  assert.equal(client.getPosition()?.mapId, 'tan_vien');
+
+  // Hái đủ 3 cây.
+  for (const id of ['linh_chi_1', 'linh_chi_2', 'linh_chi_3']) {
+    drive(client, daily, () => client.command === 'resource.harvest');
+    assert.equal(client.command, 'resource.harvest');
+    client.state.namLinhChi = (client.state.namLinhChi ?? 0) + 1;
+    client.command = '';
+    client.ack({ cmd: 'resource.harvest', ok: true, du: id === 'linh_chi_3', regrowAfter: 12 });
+    await flush();
+  }
+
+  // Về Đại Phu: đi theo map về duoc_vien trước, rồi đi bộ tới NPC trong map đã tải, rồi mới giao việc.
+  const beforeReturn = client.walkRequests.length;
+  drive(client, daily, () => client.walkRequests.length > beforeReturn);
+  assert.equal(client.walkRequests[beforeReturn].targetMapId, 'duoc_vien');
+  assert.equal(client.walkRequests[beforeReturn].target, undefined);
+  drive(client, daily, () => client.walkRequests.length > beforeReturn + 1);
+  assert.ok(client.walkRequests[beforeReturn + 1].target, 'trong duoc_vien phải đi bộ tới sát Đại Phu');
+  drive(client, daily, () => client.command === 'seed.complete');
+  assert.equal(client.command, 'seed.complete');
+});
+
+test('DailyQuests điểm danh từ map khác đi theo map tới tan_vien trước rồi đi bộ tới NPC', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  const daily = new DailyQuests(client);
+  daily.startCheckin();
+  drive(client, daily, () => client.walkRequests.length >= 2);
+  assert.equal(client.walkRequests[0].targetMapId, 'tan_vien');
+  assert.equal(client.walkRequests[0].target, undefined);
+  assert.ok(client.walkRequests[1].target);
+  drive(client, daily, () => client.command === 'diemdanh');
+  assert.equal(client.command, 'diemdanh');
 });

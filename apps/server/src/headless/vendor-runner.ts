@@ -958,11 +958,23 @@ export class VendorRunner {
     const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
     const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
     const found = candidates.find((candidate: unknown) => candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).id === propId) as Record<string, unknown> | undefined;
-    if (!found || typeof found.id !== 'string' || !Number.isFinite(Number(found.x)) || !Number.isFinite(Number(found.y))) return null;
+    if (!found || typeof found.id !== 'string') return null;
+    // Prop của map đang tải có sẵn x/y. Dữ liệu MapData tĩnh (map khác) chỉ có ô tx/ty: suy ra x = ô*TILE + TILE/2,
+    // y = (ô+1)*TILE (đáy ô), đã đối chiếu với prop đã tải (dai_phu (14,8) -> (464,288), co_thu_linh_moc (34,25) -> (1104,832)).
+    let x = Number(found.x);
+    let y = Number(found.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      const tx = Number(found.tx);
+      const ty = Number(found.ty);
+      if (!Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+      const tile = Number(P?.CONFIG?.TILE) || 32;
+      x = tx * tile + tile / 2;
+      y = (ty + 1) * tile;
+    }
     return {
       id: found.id,
-      x: Number(found.x),
-      y: Number(found.y),
+      x,
+      y,
       ...(Number.isFinite(Number(found.r)) ? { r: Number(found.r) } : {}),
       ...(typeof found.chopTask === 'string' ? { chopTask: found.chopTask } : {}),
       ...(typeof found.type === 'string' ? { type: found.type } : {}),
@@ -972,6 +984,9 @@ export class VendorRunner {
 
   private getDailyProps(mapId: string, type: string): DailyProp[] {
     const P = this.P;
+    // Vị trí và trạng thái ẩn của cây Linh Chi đổi theo ngày (client chạy applyLinhChi trên map đã tải); dữ liệu tĩnh
+    // của map khác không đúng, nên chỉ liệt kê khi nhân vật đang đứng trong map đó.
+    if (type === 'ling_chi_prop' && mapId !== this.getMapId()) return [];
     const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
     const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
     const seen = new Set<string>();
