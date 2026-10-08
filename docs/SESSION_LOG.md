@@ -1,5 +1,9 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-08 — Spike giai đoạn 2: client chính thức không hiển thị kết nối thật
+
+`scripts/spike-vendor-client-live.cjs`: lấy phiên bằng mã dự án, nạp client vendor trong `node:vm`, thay `WebSocket` bằng `ws`, `Gateway.connect()`, quan sát 25 s, không bật Auto, không gửi lệnh gameplay. Kết quả: `ready` sau 1014 ms, server chấp nhận, `selfId`/`mapId`/`mapEpoch`/`snapV`/`remotes=9` do chính mã client tính, 246 gói snap2, 0 lỗi trong trình xử lý gói. Cảnh game chưa khởi động (`SceneWorld.player` chưa có). Refresh token xoay vòng đã được lưu lại vào DB; cần kiểm tra bot đăng nhập được ở lần chạy sau. Chi tiết và việc chưa biết: `AUTO_SPEC.md` mục 15.5. Server/bot đã dừng trước khi chạy (cổng 4000 trống); script tự thoát sạch.
+
 ## 2026-10-08 — Spike: chạy client chính thức không hiển thị (hướng B)
 
 Người dùng đề xuất dùng thẳng client (bỏ phần vẽ) vì server giao việc auto/di chuyển cho client. Đã thử offline: `scripts/spike-vendor-client-boot.cjs` nạp 241 script trong `node:vm` với đối tượng giả; 239 nạp được (2 lỗi vô hại), `window.PNTT` có 223 module gồm `Game`, `Gateway`, `SceneWorld`, `Skills`, `Targeting`, `Pathfinder`, `Input`; `SceneWorld.update` và `draw` tách biệt. Chưa khởi động được vòng đời (chưa có socket, `Game.scene` null). Chi tiết và các điều chưa biết ở `AUTO_SPEC.md` mục 15. Giai đoạn 2 (kết nối thật bằng phiên tài khoản) cần người dùng đồng ý; chưa chạy.

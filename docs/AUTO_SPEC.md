@@ -416,3 +416,28 @@ Nạp lần lượt 241 script theo thứ tự `index.html` trong `node:vm` vớ
 
 Thử nghiệm giai đoạn 2 (cần người dùng đồng ý vì sẽ kết nối thật bằng phiên tài khoản của người dùng): khởi động `Game`/`Gateway` trong vm, thay `FakeWebSocket` bằng `ws`, đưa phiên đăng nhập của bot vào, vào game một lần, kiểm tra `Gateway.ready`, `SceneWorld.player` có vị trí và HP; tuyệt đối chưa bật Auto ở lượt này. Một phiên đăng nhập mỗi tài khoản.
 
+### 15.5 Kết quả giai đoạn 2 (kết nối thật, chỉ quan sát), 2026-10-08
+
+Script: `scripts/spike-vendor-client-live.cjs` (cần `TUTIEN_SPIKE_LIVE=1`; từ chối chạy nếu cổng 4000 đang có server). Lấy phiên bằng mã của dự án (`TokenManager` + DB; refresh token xoay vòng được lưu lại như worker), nạp 241 script của client vào `node:vm` (240 nạp được), thay `WebSocket` giả bằng `ws` thật, cấp phiên cho `Net.client.auth.getSession`, gọi `Gateway.connect()`. Không gọi `Game.start`, không bật Auto, không gửi lệnh gameplay, không giả `Origin`/`User-Agent`. Quan sát 25 s.
+
+**[Đã đo]**
+
+| Quan sát | Kết quả |
+|---|---|
+| Kết nối | `Gateway.connect()` thành công; `ready` sau 1014 ms; không đóng, không lỗi |
+| Server chấp nhận | Có, dù không gửi `Origin` kiểu trình duyệt |
+| Trạng thái do chính mã client tính | `selfId` có, `mapId` đúng, `mapEpoch` 1, `snapV` 2, `remotes` 9 (danh sách người chơi do `Gateway` tự dựng từ snap2) |
+| Gói nhận | `welcome`, `map`, `state`, `status`... và `snap2` 246 gói (~10 Hz), `act` 149, `kill` 86, `loot` 22, `hon` 98... |
+| Lỗi trong trình xử lý gói của client | 0 |
+| `SceneWorld.player` | chưa có: cảnh game chưa khởi động |
+
+Kết luận: toàn bộ lớp mạng của client chính thức (`Gateway`) chạy được trong Node không hiển thị với server thật, xử lý trọn gói `welcome`, `state`, `map`, `snap2` mà không lỗi.
+
+**Chưa làm / chưa biết**
+1. Khởi động cảnh: `Game.init`/`Game.start`, `SceneWorld.enter`, tạo `Player` và nạp bản đồ khi không có ảnh/canvas thật (`Assets.ensureMap`).
+2. Gọi `SceneWorld.update(dt)` thủ công và để mặc `draw`: chi phí CPU và lỗi ngầm.
+3. Bật Auto (`Input.pressAutoToggle`) rồi quan sát `move`/`attack`/`skill` client tự gửi; so với client trình duyệt thật.
+4. Lượng gói client này gửi đi (chưa đếm `move`, `ping` ở lượt này).
+5. Server có phân biệt kiểu kết nối này với trình duyệt không; điều khoản dịch vụ.
+6. Phiên đăng nhập: refresh token đã xoay vòng và được lưu lại; cần kiểm tra bot vẫn đăng nhập được ở lần chạy kế tiếp.
+
