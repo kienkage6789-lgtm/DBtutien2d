@@ -7,6 +7,7 @@ import { AddAccountModal } from './components/AddAccountModal';
 import { DialogHost } from './components/DialogHost';
 import { UpdatePasswordModal } from './components/UpdatePasswordModal';
 import { UserPasswordModal } from './components/UserPasswordModal';
+import { AdminPanel } from './components/AdminPanel';
 import { LoginPanel } from './components/LoginPanel';
 import { LogTerminal } from './components/LogTerminal';
 import type { AccountRuntime, MoveToOperation } from './types';
@@ -30,6 +31,8 @@ export const App: React.FC = () => {
   const [activePasswordAccount, setActivePasswordAccount] = useState<AccountRuntime | null>(null);
   const [isUserPasswordOpen, setIsUserPasswordOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [activeView, setActiveView] = useState<'dashboard' | 'admin'>('dashboard');
+  const [logAccountId, setLogAccountId] = useState<string | null>(null);
   const [clock, setClock] = useState(Date.now());
   const runningCount = accounts.filter((account) => account.status === 'running').length;
   const entitlementLock = user ? entitlementLockReason(user, clock) : null;
@@ -39,6 +42,19 @@ export const App: React.FC = () => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') { setActiveView('dashboard'); return; }
+    try {
+      const saved = window.sessionStorage.getItem('tutien2d.activeView');
+      if (saved === 'admin' || saved === 'dashboard') setActiveView(saved);
+    } catch { /* sessionStorage có thể bị chặn trong trình duyệt nhúng. */ }
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    try { window.sessionStorage.setItem('tutien2d.activeView', activeView); } catch { /* không làm hỏng dashboard nếu storage lỗi. */ }
+  }, [activeView, user?.role]);
 
   useEffect(() => {
     let mounted = true;
@@ -128,6 +144,7 @@ export const App: React.FC = () => {
   const handleStartAll = async () => { try { await startAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleStopAll = async () => { try { await stopAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleRefresh = async () => { await refreshAccounts(); };
+  const handleOpenAccountLog = (accountId: string) => { setLogAccountId(accountId); setActiveView('dashboard'); };
 
   const handleLogout = async () => {
     try { await logout(); } catch { /* local token is cleared even when the server session is already gone */ }
@@ -139,18 +156,20 @@ export const App: React.FC = () => {
   if (!user) return <LoginPanel onLoggedIn={setUser} />;
 
   return <div className="min-h-screen flex flex-col bg-[#07090e] text-slate-100">
-    <Navbar user={user} onLogout={handleLogout} onOpenAccount={() => setIsUserPasswordOpen(true)} isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} />
+    <Navbar user={user} onLogout={handleLogout} onOpenAccount={() => setIsUserPasswordOpen(true)} isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} activeView={activeView} onViewChange={setActiveView} />
     {user.mustChangePassword && <div className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">Bạn đang dùng mật khẩu mặc định. Hãy đổi mật khẩu (nút Quản lý tài khoản) trước khi mở ra internet.</div>}
     {user.role !== 'admin' && entitlementLock && <div role="alert" className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">{entitlementLock}. Các điều khiển bot đã khóa; bạn vẫn có thể dừng, xóa tài khoản và đổi mật khẩu.</div>}
-    <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-6 space-y-6">
-      <StatsBar accounts={accounts} />
-      <section>
-        <h2 className="text-base font-bold uppercase tracking-wider text-slate-200 font-title mb-4">Ma trận tài khoản ({accounts.length})</h2>
-        {accounts.length === 0
-          ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} disabled={quotaFull} title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : undefined} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white disabled:cursor-not-allowed disabled:opacity-40">+ Thêm tài khoản</button></div>
-          : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} controlsDisabled={!!entitlementLock} controlLockReason={entitlementLock} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
-      </section>
-      <section className="pt-2"><LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} /></section>
+    <main className="min-w-0 flex-1 w-full max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
+      {activeView === 'admin' && user.role === 'admin'
+        ? <AdminPanel currentUserId={user.id} accounts={accounts} onRefreshAccounts={refreshAccounts} onOpenAccountLog={handleOpenAccountLog} />
+        : <><StatsBar accounts={accounts} />
+          <section>
+            <h2 className="text-base font-bold uppercase tracking-wider text-slate-200 font-title mb-4">Ma trận tài khoản ({accounts.length})</h2>
+            {accounts.length === 0
+              ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} disabled={quotaFull} title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : undefined} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white disabled:cursor-not-allowed disabled:opacity-40">+ Thêm tài khoản</button></div>
+              : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} ownerLabel={user.role === 'admin' && account.ownerId !== user.id ? account.ownerUsername ?? account.ownerId ?? 'chưa biết' : null} controlsDisabled={!!entitlementLock} controlLockReason={entitlementLock} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
+          </section>
+          <section className="pt-2"><LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} initialAccountId={logAccountId} /></section></>}
     </main>
     <footer className="border-t border-slate-900 bg-black/40 py-4 px-4 text-center text-xs text-slate-600">TuTien2D Automation · client chính thức headless</footer>
     <UpdatePasswordModal account={activePasswordAccount} onClose={() => setActivePasswordAccount(null)} onUpdated={refreshAccounts} />

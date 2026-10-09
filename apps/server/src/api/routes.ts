@@ -4,7 +4,7 @@ import { db } from '../db/database.js';
 import { CONFIG } from '../config.js';
 import { workerPool } from '../orchestrator/worker-pool.js';
 import { authenticate, authenticatePassword, loginRateLimiter, publicUser, requestIp, SESSION_TTL_MS } from '../security/auth.js';
-import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../security/password.js';
+import { hashPassword, normalizeUsername, validatePassword, validateUsername, verifyPassword } from '../security/password.js';
 import { sendError } from '../security/errors.js';
 import { wsHub } from '../ws/hub.js';
 import { getWalkGrid, WALK_TILE_SIZE } from '../config/walk-grid.js';
@@ -122,8 +122,44 @@ function requireAccountQuota(req: Request, res: Response, next: NextFunction): v
   next();
 }
 
+function publicAdminUser(user: NonNullable<ReturnType<typeof db.getUserById>>) {
+  return {
+    ...publicUser(user),
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+    createdBy: user.createdBy ? db.getUserById(user.createdBy)?.username ?? null : null,
+    usage: db.getUserUsage(user.id),
+    activeSessions: db.getActiveSessionCount(user.id),
+  };
+}
+
 function publicUserList() {
-  return db.getUsers().map(publicUser);
+  return db.getUsers().map(publicAdminUser);
+}
+
+const recentAdminLoginFailures = new Map<string, number>();
+
+function auditAdminLoginFailure(username: string, ip: string): void {
+  const normalized = normalizeUsername(username).slice(0, 64);
+  const candidate = db.getUserByUsername(normalized);
+  if (candidate?.role !== 'admin') return;
+  const key = `${normalized}\n${ip}`;
+  const now = Date.now();
+  const previous = recentAdminLoginFailures.get(key);
+  if (previous !== undefined && now - previous < 60_000) return;
+  recentAdminLoginFailures.set(key, now);
+  if (recentAdminLoginFailures.size > 1024) {
+    for (const [entry, at] of recentAdminLoginFailures) {
+      if (now - at >= 60_000) recentAdminLoginFailures.delete(entry);
+    }
+  }
+  db.addAuditLog({
+    actorId: null,
+    action: 'admin_login_failed',
+    targetType: 'auth',
+    targetId: null,
+    detail: `username=${normalized}; ip=${ip}`,
+  });
 }
 
 // Login is the only unauthenticated /api route. The auth middleware is deliberately
@@ -135,6 +171,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
   const ip = requestIp(req);
   const retryAfter = loginRateLimiter.retryAfter(ip, username);
   if (retryAfter > 0) {
+    auditAdminLoginFailure(username, ip);
     res.setHeader('Retry-After', String(retryAfter));
     sendError(res, 429, 'TOO_MANY_ATTEMPTS', 'Quá nhiều lần đăng nhập sai.');
     return;
@@ -146,6 +183,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       userAgent: req.get('user-agent') ?? '',
     });
     if (!result.user || !result.token || !result.session) {
+      auditAdminLoginFailure(username, ip);
       loginRateLimiter.recordFailure(ip, normalized);
       const blockedFor = loginRateLimiter.retryAfter(ip, normalized);
       if (blockedFor > 0) {
@@ -157,6 +195,15 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       return;
     }
     loginRateLimiter.clear(ip, normalized);
+    if (result.user.role === 'admin') {
+      db.addAuditLog({
+        actorId: result.user.id,
+        action: 'admin_login_success',
+        targetType: 'user',
+        targetId: result.user.id,
+        detail: `ip=${ip}`,
+      });
+    }
     res.json({
       success: true,
       token: result.token,
@@ -165,6 +212,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       serverNow: Date.now(),
     });
   } catch (error) {
+    auditAdminLoginFailure(username, ip);
     const code = error instanceof Error ? error.message : String(error);
     const message = code === 'PASSWORD_TOO_SHORT' ? 'Mật khẩu phải có ít nhất 6 ký tự.' : 'Tên đăng nhập không hợp lệ.';
     sendError(res, 400, code === 'PASSWORD_TOO_SHORT' ? 'PASSWORD_TOO_SHORT' : 'USERNAME_INVALID', message);
@@ -246,7 +294,7 @@ apiRouter.post('/admin/users', requireAdmin, (req: Request, res: Response) => {
       createdBy: req.principal?.userId ?? null,
     });
     db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'user_created', targetType: 'user', targetId: user.id });
-    res.status(201).json({ success: true, data: publicUser(user) });
+    res.status(201).json({ success: true, data: publicAdminUser(user) });
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
     if (raw.includes('UNIQUE') || raw.includes('constraint')) {
@@ -293,11 +341,29 @@ apiRouter.patch('/admin/users/:id', requireAdmin, async (req: Request, res: Resp
     db.revokeUserSessions(userId);
     wsHub.closeUserSessions(userId);
   }
+  const previousStatus = target.status;
+  const previousMaxBots = target.maxBots;
   const user = db.updateUser(userId, {
     ...(nextStatus === undefined ? {} : { status: nextStatus }),
     ...(maxBots === undefined ? {} : { maxBots: Number(maxBots) }),
   })!;
-  db.addAuditLog({ actorId: req.principal?.userId ?? null, action: nextStatus === 'disabled' ? 'user_disabled' : 'user_updated', targetType: 'user', targetId: userId });
+  if (nextStatus !== undefined && nextStatus !== previousStatus) {
+    db.addAuditLog({
+      actorId: req.principal?.userId ?? null,
+      action: nextStatus === 'disabled' ? 'user_disabled' : 'user_enabled',
+      targetType: 'user',
+      targetId: userId,
+    });
+  }
+  if (maxBots !== undefined && Number(maxBots) !== previousMaxBots) {
+    db.addAuditLog({
+      actorId: req.principal?.userId ?? null,
+      action: 'user_max_bots_updated',
+      targetType: 'user',
+      targetId: userId,
+      detail: `maxBots=${Number(maxBots)}`,
+    });
+  }
   await entitlementWatcher.sweepNow();
   res.json({ success: true, data: publicUser(user) });
 });
@@ -339,6 +405,67 @@ apiRouter.post('/admin/users/:id/expiry', requireAdmin, async (req: Request, res
   db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'user_expiry_set', targetType: 'user', targetId: userId, detail: `expiresAt=${expiresAt === null ? 'null' : expiresAt}` });
   await entitlementWatcher.sweepNow();
   res.json({ success: true, data: publicUser(user!) });
+});
+
+apiRouter.post('/admin/users/:id/stop-bots', requireAdmin, async (req: Request, res: Response) => {
+  const userId = String(req.params.id);
+  if (!db.getUserById(userId)) { sendError(res, 404, 'USER_NOT_FOUND', 'Không tìm thấy người dùng.'); return; }
+  const before = new Set(workerPool.getRunningAccountIdsForOwner(userId));
+  if (!(await workerPool.stopAccountsForOwner(userId))) {
+    sendError(res, 409, 'RUNNER_NOT_STOPPED', 'Không thể dừng hết runner của người dùng.');
+    return;
+  }
+  const stopped = Array.from(before).filter((accountId) => !workerPool.getRunningAccountIdsForOwner(userId).includes(accountId)).length;
+  db.addAuditLog({
+    actorId: req.principal?.userId ?? null,
+    action: 'admin_stop_bots',
+    targetType: 'user',
+    targetId: userId,
+    detail: `stopped=${stopped}`,
+  });
+  res.json({ success: true, data: { stopped } });
+});
+
+apiRouter.post('/admin/users/:id/revoke-sessions', requireAdmin, (req: Request, res: Response) => {
+  const userId = String(req.params.id);
+  if (!db.getUserById(userId)) { sendError(res, 404, 'USER_NOT_FOUND', 'Không tìm thấy người dùng.'); return; }
+  // Khi admin tự chọn mình, giữ đúng session đang dùng để không làm request hiện tại
+  // mất hiệu lực; mọi session dashboard khác vẫn bị thu hồi.
+  const preservedSessionId = req.principal?.userId === userId ? req.session?.id : undefined;
+  const before = db.getSessionCount(userId);
+  db.revokeUserSessions(userId, preservedSessionId);
+  const after = db.getSessionCount(userId);
+  const revoked = Math.max(0, before - after);
+  wsHub.closeUserSessions(userId, preservedSessionId);
+  db.addAuditLog({
+    actorId: req.principal?.userId ?? null,
+    action: 'admin_revoke_sessions',
+    targetType: 'user',
+    targetId: userId,
+    detail: `revoked=${revoked}; preservedCurrent=${preservedSessionId ? 'true' : 'false'}`,
+  });
+  res.json({ success: true, data: { revoked, preservedCurrent: !!preservedSessionId } });
+});
+
+apiRouter.get('/admin/audit', requireAdmin, (req: Request, res: Response) => {
+  const rawLimit = req.query.limit;
+  const limit = rawLimit === undefined ? 50 : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    sendError(res, 400, 'AUDIT_LIMIT_INVALID', 'limit phải là số nguyên trong khoảng 1..200.');
+    return;
+  }
+  const rawBefore = req.query.before;
+  const before = rawBefore === undefined ? undefined : Number(rawBefore);
+  if (before !== undefined && (!Number.isInteger(before) || before < 0)) {
+    sendError(res, 400, 'AUDIT_CURSOR_INVALID', 'before phải là timestamp mili-giây không âm.');
+    return;
+  }
+  const data = db.getAuditLogs(limit, before);
+  res.json({
+    success: true,
+    data,
+    nextBefore: data.length === limit ? data[data.length - 1]?.at ?? null : null,
+  });
 });
 
 apiRouter.post('/admin/users/:id/password', requireAdmin, (req: Request, res: Response) => {

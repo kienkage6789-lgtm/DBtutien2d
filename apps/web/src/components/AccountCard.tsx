@@ -17,6 +17,7 @@ const display = (value: unknown): string => {
 
 interface AccountCardProps {
   account: AccountRuntime;
+  ownerLabel?: string | null;
   controlsDisabled?: boolean;
   controlLockReason?: string | null;
   mapCatalog: MapCatalogItem[];
@@ -33,6 +34,7 @@ interface AccountCardProps {
 
 export const AccountCard: React.FC<AccountCardProps> = ({
   account,
+  ownerLabel = null,
   controlsDisabled = false,
   controlLockReason = null,
   mapCatalog,
@@ -66,6 +68,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       <div className="min-w-0">
         <h3 className="text-base font-bold text-slate-100 truncate">{account.characterName || account.accountName}</h3>
         <p className="text-[11px] text-slate-500 truncate">@{account.accountName} · engine vendor</p>
+        {ownerLabel && <p className="text-[11px] text-indigo-300 truncate">Chủ sở hữu: {ownerLabel}</p>}
       </div>
       {running ? <button onClick={() => onStop(account.id)} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40"><Square className="w-3.5 h-3.5 fill-rose-400" /> Dừng</button>
         : <button onClick={() => onStart(account.id)} disabled={controlsDisabled} title={controlLockReason ?? 'Chạy bot'} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-40"><Play className="w-3.5 h-3.5 fill-emerald-400" /> Chạy</button>}

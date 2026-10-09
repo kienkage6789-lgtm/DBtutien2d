@@ -90,6 +90,17 @@ export interface AuditLogInput {
   at?: number;
 }
 
+export interface DbAuditLog {
+  id: string;
+  at: number;
+  action: string;
+  actor: { id: string; username: string } | null;
+  targetType: string;
+  targetId: string | null;
+  targetName?: string;
+  detail: string;
+}
+
 export interface DbGrant {
   id: string;
   userId: string;
@@ -514,6 +525,17 @@ export class DatabaseService {
     else this.run('DELETE FROM sessions WHERE user_id = ?', userId);
   }
 
+  public getActiveSessionCount(userId: string, now = Date.now()): number {
+    return Number(this.queryOne<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM sessions WHERE user_id = ? AND expires_at > ?',
+      userId, now,
+    )?.count ?? 0);
+  }
+
+  public getSessionCount(userId: string): number {
+    return Number(this.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?', userId)?.count ?? 0);
+  }
+
   public getOwnerId(accountId: string): string | undefined {
     return this.queryOne<{ owner_id: string }>('SELECT owner_id FROM game_accounts WHERE id = ?', accountId)?.owner_id;
   }
@@ -529,6 +551,49 @@ export class DatabaseService {
       input.detail ? cleanText(input.detail, 500) : null,
       input.at ?? Date.now(),
     );
+  }
+
+  public getAuditLogs(limit = 50, before?: number): DbAuditLog[] {
+    const safeLimit = Number.isInteger(limit) && limit >= 1 ? Math.min(limit, 200) : 50;
+    const rows = before === undefined
+      ? this.queryAll<Record<string, unknown>>(`
+          SELECT a.id, a.at, a.action, a.actor_id, actor.username AS actor_username,
+                 a.target_type, a.target_id, target_user.username AS target_user_name,
+                 target_account.account_name AS target_account_name, a.detail
+          FROM audit_log a
+          LEFT JOIN users actor ON actor.id = a.actor_id
+          LEFT JOIN users target_user ON a.target_type = 'user' AND target_user.id = a.target_id
+          LEFT JOIN game_accounts target_account ON a.target_type = 'account' AND target_account.id = a.target_id
+          ORDER BY a.at DESC, a.rowid DESC
+          LIMIT ?`, safeLimit)
+      : this.queryAll<Record<string, unknown>>(`
+          SELECT a.id, a.at, a.action, a.actor_id, actor.username AS actor_username,
+                 a.target_type, a.target_id, target_user.username AS target_user_name,
+                 target_account.account_name AS target_account_name, a.detail
+          FROM audit_log a
+          LEFT JOIN users actor ON actor.id = a.actor_id
+          LEFT JOIN users target_user ON a.target_type = 'user' AND target_user.id = a.target_id
+          LEFT JOIN game_accounts target_account ON a.target_type = 'account' AND target_account.id = a.target_id
+          WHERE a.at < ?
+          ORDER BY a.at DESC, a.rowid DESC
+          LIMIT ?`, before, safeLimit);
+
+    return rows.map((row) => {
+      const actorId = row.actor_id === null || row.actor_id === undefined ? null : String(row.actor_id);
+      const actorUsername = row.actor_username === null || row.actor_username === undefined ? null : cleanText(row.actor_username, 64);
+      const userTargetName = row.target_user_name === null || row.target_user_name === undefined ? undefined : cleanText(row.target_user_name, 64);
+      const accountTargetName = row.target_account_name === null || row.target_account_name === undefined ? undefined : cleanText(row.target_account_name, 128);
+      return {
+        id: cleanText(row.id, 128),
+        at: Number(row.at),
+        action: cleanText(row.action, 80),
+        actor: actorId && actorUsername ? { id: actorId, username: actorUsername } : null,
+        targetType: cleanText(row.target_type, 80),
+        targetId: row.target_id === null || row.target_id === undefined ? null : cleanText(row.target_id, 128),
+        ...(userTargetName ? { targetName: userTargetName } : accountTargetName ? { targetName: accountTargetName } : {}),
+        detail: row.detail === null || row.detail === undefined ? '' : cleanText(row.detail, 500),
+      } satisfies DbAuditLog;
+    });
   }
 
   public grantUser(userId: string, grantedBy: string, duration: GrantDuration, now: number): { user: DbUser; grant: DbGrant } {

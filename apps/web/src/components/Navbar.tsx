@@ -14,6 +14,8 @@ interface NavbarProps {
   user: AuthUser;
   onLogout: () => void;
   onOpenAccount: () => void;
+  activeView: 'dashboard' | 'admin';
+  onViewChange: (view: 'dashboard' | 'admin') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -27,6 +29,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   user,
   onLogout,
   onOpenAccount,
+  activeView,
+  onViewChange,
 }) => {
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
@@ -59,6 +63,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
+        {user.role === 'admin' && <nav aria-label="Điều hướng admin" className="flex max-w-full flex-wrap items-center justify-center gap-1 rounded-xl border border-slate-800 bg-slate-950/40 p-1">
+          <button type="button" onClick={() => onViewChange('dashboard')} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${activeView === 'dashboard' ? 'bg-emerald-600/20 text-emerald-300' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>Bảng điều khiển</button>
+          <button type="button" onClick={() => onViewChange('admin')} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${activeView === 'admin' ? 'bg-emerald-600/20 text-emerald-300' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>Quản trị</button>
+        </nav>}
+
         {/* Status indicator */}
           <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
           <div className="flex max-w-full items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-300">
@@ -88,11 +97,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Action buttons */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
-              hidden
               onClick={onStartAll}
               disabled={!!lockReason}
               title="Bắt đầu toàn bộ bot"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-colors shadow-sm"
+              className="hidden items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-colors shadow-sm"
             >
               <Play className="w-3.5 h-3.5 fill-emerald-400" />
               <span>Bật Hết</span>

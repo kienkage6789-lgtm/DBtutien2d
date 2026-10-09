@@ -27,16 +27,21 @@ Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard,
 | `DELETE` | `/api/admin/users/:id` | Dừng runner rồi xóa user cùng game account/config/log/session; không xóa chính mình hoặc admin cuối. |
 | `POST` | `/api/admin/users/:id/grant` | Admin cấp thêm `{duration:"1d"|"7d"|"30d"}`; cộng dồn từ hạn còn lại, ghi `grants` và audit `user_granted`. Admin/ user bị khóa trả lỗi riêng. |
 | `POST` | `/api/admin/users/:id/expiry` | Admin đặt hạn tuyệt đối `{expiresAt:number|null}`; `null`/hạn đã qua là chưa có quyền chạy và kích watcher ngay, audit `user_expiry_set`. |
+| `POST` | `/api/admin/users/:id/stop-bots` | Dừng mọi runner của user, kể cả user hết hạn/khóa; trả `{stopped}` và audit `admin_stop_bots`. |
+| `POST` | `/api/admin/users/:id/revoke-sessions` | Thu hồi phiên dashboard; khi admin tự chọn mình giữ phiên hiện tại và trả `{revoked,preservedCurrent}`. |
+| `GET` | `/api/admin/audit?limit=50&before=<at-ms>` | Nhật ký kiểm toán đã làm sạch, phân trang tối đa 200 dòng; trả `data` và `nextBefore`, không có hash/token/mật khẩu. |
 
 User thường chỉ thấy và điều khiển game account có `owner_id` của mình. Account của user khác trả `404 ACCOUNT_NOT_FOUND`, kể cả các route con dưới `/api/accounts/:id/**`; gọi `/api/admin/**` trả `403 FORBIDDEN`. `GET /api/orchestrator/start-all|stop-all`, `/api/logs` và `/api/system/status` cũng được giới hạn theo owner; admin vẫn thấy toàn hệ thống.
 
-`GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, `none` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.
+`GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, `none` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `GET /api/admin/users` bổ sung `createdAt`, `lastLoginAt`, `createdBy` (username hoặc `null`), `usage` và `activeSessions`; không trả bất kỳ hash nào. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.
 
 Khi hết hạn, các route điều khiển sau bị chặn với HTTP 403: `POST /api/accounts/:id/start`, `restart`, `auto/start`, `khu`, `move-to` (kể cả cancel), `daily/checkin`, `daily/seed`, `daily/cancel` và các route điều khiển tương tự; `POST /api/orchestrator/start-all` cũng bị chặn. Các route `GET` chỉ đọc, `POST /stop`, `POST /auto/stop`, `DELETE /api/accounts/:id`, `PUT /api/accounts/:id/password`, log và trạng thái vẫn được qua để người dùng tự dừng/dọn tài khoản. `POST /api/accounts` không yêu cầu còn hạn: user hết hạn vẫn được thêm tài khoản nếu còn chỗ; user bị khóa không được thêm. Hạ `maxBots` dưới số tài khoản hoặc runner hiện có không tự xóa/dừng gì, chỉ chặn thêm tài khoản/chạy thêm.
 
-Các mã lỗi quyền/hạn mức ổn định: `ENTITLEMENT_EXPIRED`, `ENTITLEMENT_NONE`, `USER_DISABLED`, `QUOTA_BOTS` (HTTP 403), `BOT_LIMIT_REACHED` (HTTP 409) và `SERVER_CAPACITY` (HTTP 503, `retryable:true`). Lỗi dùng envelope `{success:false,error,errorCode,requestId,retryable}`.
+Các mã lỗi quyền/hạn mức ổn định: `ENTITLEMENT_EXPIRED`, `ENTITLEMENT_NONE`, `USER_DISABLED`, `QUOTA_BOTS` (HTTP 403), `BOT_LIMIT_REACHED` (HTTP 409) và `SERVER_CAPACITY` (HTTP 503, `retryable:true`). Admin có thêm `FORBIDDEN`, `USER_NOT_FOUND`, `MAX_BOTS_INVALID`, `LAST_ADMIN_FORBIDDEN`, `SELF_MODIFICATION_FORBIDDEN`, `ADMIN_NOT_EXPIRING`, `RUNNER_NOT_STOPPED`, `AUDIT_LIMIT_INVALID` và `AUDIT_CURSOR_INVALID`. Lỗi dùng envelope `{success:false,error,errorCode,requestId,retryable}`.
 
-Ví dụ admin cấp hạn (thay `<user-id>` bằng id nhận từ danh sách user; không đặt token vào URL và không ghi token vào log):
+Khuyến nghị: đăng nhập giao diện, mở `Quản trị` → `Người dùng`, chọn menu của user rồi dùng `+1 ngày/+1 tuần/+1 tháng` hoặc form đặt hạn tuyệt đối. Giao diện có xác nhận, khóa nút khi đang xử lý và hiển thị kết quả; mật khẩu reset chỉ nằm trong modal.
+
+Phương án phụ cho script nội bộ (thay `<user-id>`; không đặt token vào URL và không ghi token vào log):
 
 ```sh
 curl -X POST http://127.0.0.1:4000/api/admin/users/<user-id>/grant \
@@ -82,7 +87,7 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 
 `POST /auto/start` nhận `{}` hoặc `{ "anchor": { "mapId", "khu?", "x", "y" } }`. Runner vẫn kiểm tra in-game, vitals, downed và map anchor; lỗi trả envelope `{success:false,error,errorCode,retryable}`.
 
-Runtime giữ các nhóm dữ liệu: `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters và packet/error/memory telemetry. Dữ liệu chưa biết là `null`, không thay bằng 0.
+Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters và packet/error/memory telemetry. `ownerId`/`ownerUsername` chỉ xuất hiện trong phạm vi account mà principal được phép xem; user thường chỉ nhận account của mình. Dữ liệu chưa biết là `null`, không thay bằng 0.
 
 ## Danh sách và đổi khu
 

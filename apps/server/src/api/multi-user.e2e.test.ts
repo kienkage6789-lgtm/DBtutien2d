@@ -61,6 +61,12 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const bob = r.b.data && (r.b.data.user || r.b.data);
     r = await j('/api/admin/users', 'POST', { username: ' ALICE ', password: 'zzzzzz' }, tokA);
     check(r.s >= 400, 'dup username rejected ' + r.s);
+    const adminUsers = await j('/api/admin/users', 'GET', null, tokA);
+    const adminList = Array.isArray(adminUsers.b?.data) ? adminUsers.b.data : [];
+    const adminAlice = adminList.find((item: any) => item.id === alice.id);
+    check(adminUsers.s === 200 && adminAlice?.usage?.accounts === 0 && adminAlice?.usage?.running === 0, 'admin users usage');
+    check(adminAlice?.activeSessions === 0 && adminAlice?.createdAt && adminAlice?.lastLoginAt === null, 'admin users metadata');
+    check(JSON.stringify(adminUsers.b).toLowerCase().indexOf('password_hash') < 0 && JSON.stringify(adminUsers.b).toLowerCase().indexOf('token_hash') < 0, 'admin users no hashes');
     const tokAl = (await j('/api/auth/login', 'POST', { username: 'alice', password: 'alice1' })).b.token;
     const tokBo = (await j('/api/auth/login', 'POST', { username: 'bob', password: 'bob123' })).b.token;
     check(alice && alice.maxBots === 3 && bob.maxBots === 5, 'maxBots default/override ' + (alice && alice.maxBots));
@@ -85,6 +91,8 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(r.s === 200 && r.b.data?.entitlement?.state === 'active', 'grant alice ' + r.s);
     const autoBeforeExpiry = await j(`/api/accounts/${idA}/auto/start`, 'POST', {}, tokAl);
     check(autoBeforeExpiry.s === 409 && autoBeforeExpiry.b.errorCode === 'ENGINE_VENDOR_REQUIRED', 'active user passed entitlement gate ' + autoBeforeExpiry.s);
+    const stopAlice = await j(`/api/admin/users/${alice.id}/stop-bots`, 'POST', {}, tokA);
+    check(stopAlice.s === 200 && stopAlice.b.data?.stopped === 0, 'admin stop-bots ' + stopAlice.s);
     r = await j(`/api/admin/users/${alice.id}/expiry`, 'POST', { expiresAt: 0 }, tokA);
     check(r.s === 200 && r.b.data?.entitlement?.state === 'expired', 'expiry alice ' + r.s);
     const autoAfterExpiry = await j(`/api/accounts/${idA}/auto/start`, 'POST', {}, tokAl);
@@ -120,6 +128,10 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(lA.length === 1 && lA[0] === idA, 'alice lists own only ' + lA);
     check(lB.length === 1 && lB[0] === idB, 'bob lists own only');
     check(lAd.includes(idA) && lAd.includes(idB), 'admin sees all');
+    const adminRuntime = (await j('/api/accounts', 'GET', null, tokA)).b.data;
+    const aliceRuntime = adminRuntime.find((item: any) => item.id === idA);
+    const aliceOwnRuntime = (await j('/api/accounts', 'GET', null, tokAl)).b.data[0];
+    check(aliceRuntime?.ownerUsername === 'alice' && aliceOwnRuntime?.ownerUsername === 'alice', 'runtime owner username scope');
     const routes: Array<[string, string, unknown?]> = [['GET', ''], ['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['POST', '/auto/start', {}], ['POST', '/auto/stop'], ['GET', '/khu'], ['POST', '/khu', { khu: 1 }], ['POST', '/move-to', { x: 1, y: 1 }], ['POST', '/move-to/cancel', { operationId: 'x' }], ['GET', '/reachable-maps'], ['GET', '/daily'], ['POST', '/daily/checkin', {}], ['POST', '/daily/seed', { taskId: 'duoc_moc' }], ['POST', '/daily/cancel', { operationId: 'x' }], ['GET', '/logs'], ['PUT', '/password', { password: 'abcdef' }], ['DELETE', ''], ['POST', '/quest-probe', { act: 'status' }], ['GET', '/khu-probe'], ['POST', '/khu-probe', { action: 'xem' }]];
     let leaks = 0;
     for (const [mth, suf, body] of routes) {
@@ -155,16 +167,26 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     r = await j(`/api/admin/users/${bob.id}`, 'PATCH', { status: 'disabled' }, tokA);
     check(r.s === 200, 'disable bob ' + r.s);
     check((await j('/api/auth/me', 'GET', null, tokBo)).s === 401, 'disabled bob session rejected');
+    const audit = await j('/api/admin/audit?limit=1', 'GET', null, tokA);
+    check(audit.s === 200 && Array.isArray(audit.b.data) && Object.prototype.hasOwnProperty.call(audit.b, 'nextBefore'), 'admin audit page');
+    check((await j('/api/admin/audit?limit=0', 'GET', null, tokA)).s === 400, 'audit limit lower bound');
+    check((await j('/api/admin/audit', 'GET', null, tokAl)).s === 403, 'user audit 403');
+    check((await j('/api/admin/audit', 'GET')).s === 401, 'no token audit 401');
     // 11. rate limit
     let last = 0; for (let i = 0; i < 7; i++) { last = (await j('/api/auth/login', 'POST', { username: 'carol', password: 'badpass' + i })).s; }
     check(last === 429, 'rate limit 429 got ' + last);
     // 12. xoá user cuối admin / chính mình
     const me = (await j('/api/auth/me', 'GET', null, tokA)).b; const adminId = (me.user || me).id;
+    const revokeSelf = await j(`/api/admin/users/${adminId}/revoke-sessions`, 'POST', {}, tokA);
+    check(revokeSelf.s === 200 && revokeSelf.b.data?.preservedCurrent === true && (await j('/api/auth/me', 'GET', null, tokA)).s === 200, 'self revoke keeps current session');
     check((await j(`/api/admin/users/${adminId}`, 'DELETE', null, tokA)).s === 409, 'cannot delete self');
     // 13. xoá alice -> tài khoản biến mất
     r = await j(`/api/admin/users/${alice.id}`, 'DELETE', null, tokA);
     check(r.s === 200 || r.s === 204, 'delete alice ' + r.s);
     check(!(await list(tokA)).includes(idA), 'alice account removed');
+    const deletedAudit = await j('/api/admin/audit?limit=200', 'GET', null, tokA);
+    const deletedRow = deletedAudit.b?.data?.find((item: any) => item.action === 'user_deleted' && item.targetId === alice.id);
+    check(deletedRow && deletedRow.targetName === undefined, 'deleted user audit has id only');
     check(!log.includes('admin123') && !log.includes('alice1'), 'no passwords in server log');
     assert.deepEqual(failures, []);
   } finally {

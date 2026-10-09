@@ -6,9 +6,10 @@ interface LogTerminalProps {
   logs: LogEntry[];
   accounts: AccountRuntime[];
   onClearLogs: () => void;
+  initialAccountId?: string | null;
 }
 
-export const LogTerminal: React.FC<LogTerminalProps> = ({ logs, accounts, onClearLogs }) => {
+export const LogTerminal: React.FC<LogTerminalProps> = ({ logs, accounts, onClearLogs, initialAccountId = null }) => {
   const [selectedAccount, setSelectedAccount] = useState<string>('all');
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -21,6 +22,12 @@ export const LogTerminal: React.FC<LogTerminalProps> = ({ logs, accounts, onClea
       terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs, autoScroll, isOpen]);
+
+  useEffect(() => {
+    if (!initialAccountId) return;
+    setSelectedAccount(initialAccountId);
+    setIsOpen(true);
+  }, [initialAccountId]);
 
   const filteredLogs = logs.filter((log) => {
     if (selectedAccount !== 'all' && log.accountId !== selectedAccount) return false;

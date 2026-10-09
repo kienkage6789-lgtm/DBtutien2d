@@ -100,3 +100,7 @@ Bước 1 đã triển khai offline trong repo: SQLite/WAL và migration JSON m�
 ## Trạng thái bước 2 (2026-10-09)
 
 Bước 2 đã triển khai offline trong repo: tính/cộng dồn grant, bảng `grants`, trạng thái entitlement và usage, quota tài khoản, gate quyền chạy, `MAX_TOTAL_RUNNERS`, `EntitlementWatcher` dừng runner/audit/system alert, endpoint admin cấp/đặt hạn và dashboard hiển thị hạn mức/khóa điều khiển. Người hết hạn vẫn được thêm tài khoản nếu còn quota; hạ `maxBots` không tự dừng runner đang chạy. Chưa xác minh live: lệch đồng hồ server/trình duyệt, tải watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và giới hạn runner theo RAM VPS.
+
+## Trạng thái bước 4 (2026-10-09)
+
+Bước 4 đã triển khai offline trong repo: giao diện admin gồm Người dùng, Tài khoản toàn hệ thống và Nhật ký kiểm toán; API admin có usage/phiên, dừng bot, thu hồi phiên và audit phân trang; runtime có owner để admin xem đúng phạm vi. Proxy vẫn còn ở bước 3 và chưa có tab/route proxy. Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit với nhiều dòng.

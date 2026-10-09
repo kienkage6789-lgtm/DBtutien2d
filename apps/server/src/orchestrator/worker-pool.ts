@@ -48,6 +48,8 @@ export interface MapEntityContext {
 
 export interface AccountRuntimeInfo {
   id: string;
+  ownerId: string | null;
+  ownerUsername: string | null;
   accountName: string;
   engine: 'vendor';
   status: 'running' | 'stopped' | 'error';
@@ -487,8 +489,11 @@ export class WorkerPool {
     accountId: string,
     account: ReturnType<typeof db.getAccountById>,
   ): AccountRuntimeInfo {
+    const owner = account?.ownerId ? db.getUserById(account.ownerId) : undefined;
     return {
       id: accountId,
+      ownerId: account?.ownerId ?? null,
+      ownerUsername: owner?.username ?? null,
       accountName: account?.accountName || 'Unknown',
       engine: 'vendor',
       // Không có runner thì không thể đang chạy; DB có thể kẹt 'running' sau khi server tắt đột ngột.
@@ -543,6 +548,7 @@ export class WorkerPool {
     account: ReturnType<typeof db.getAccountById>,
     runner: VendorRunner,
   ): AccountRuntimeInfo {
+    const owner = account?.ownerId ? db.getUserById(account.ownerId) : undefined;
     const snapshot = runner.getSnapshot();
     const positionKnown = snapshot.mapId !== null && snapshot.x !== null && snapshot.y !== null;
     const positionCurrent = snapshot.connection === 'IN_GAME' && positionKnown;
@@ -577,6 +583,8 @@ export class WorkerPool {
 
     return {
       id: accountId,
+      ownerId: account?.ownerId ?? null,
+      ownerUsername: owner?.username ?? null,
       accountName: account?.accountName || 'Unknown',
       engine: 'vendor',
       status: snapshot.lifecycle === 'error' ? 'error' : 'running',

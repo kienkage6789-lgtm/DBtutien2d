@@ -142,7 +142,7 @@ export class WebSocketHub {
   }
 
   public broadcastSystemAlertToOwner(ownerId: string, alert: { reason: string; message: string }): void {
-    const message: WsMessage = { type: 'system_alert', data: { reason: alert.reason, message: alert.message } };
+    const message: WsMessage = { type: 'system_alert', data: { ownerId, reason: alert.reason, message: alert.message } };
     const raw = JSON.stringify(message);
     for (const [client, context] of this.clients) {
       if (client.readyState === WebSocket.OPEN && context.principal.userId === ownerId) {

@@ -1,4 +1,4 @@
-import type { AccountRuntime, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired, setToken } from './auth';
@@ -73,6 +73,56 @@ function parseApiUser(value: unknown): AuthUser | undefined {
   };
 }
 
+export function sanitizeAdminUser(value: unknown): AdminUser | undefined {
+  const base = parseApiUser(value);
+  if (!base || !value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const usage = item.usage;
+  if (typeof item.createdAt !== 'string' || (item.lastLoginAt !== null && typeof item.lastLoginAt !== 'string')
+    || (item.createdBy !== null && typeof item.createdBy !== 'string')
+    || !usage || typeof usage !== 'object' || Array.isArray(usage)
+    || !Number.isInteger(item.activeSessions) || Number(item.activeSessions) < 0) return undefined;
+  const usageItem = usage as Record<string, unknown>;
+  if (![usageItem.accounts, usageItem.running, usageItem.maxBots].every((field) => Number.isInteger(field) && Number(field) >= 0)) return undefined;
+  return {
+    ...base,
+    createdAt: item.createdAt,
+    lastLoginAt: item.lastLoginAt as string | null,
+    createdBy: item.createdBy as string | null,
+    usage: {
+      accounts: Number(usageItem.accounts),
+      running: Number(usageItem.running),
+      maxBots: Number(usageItem.maxBots),
+    },
+    activeSessions: Number(item.activeSessions),
+  };
+}
+
+export function sanitizeAuditLog(value: unknown): AuditLogEntry | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const actor = item.actor;
+  const parsedActor = actor === null ? null : actor && typeof actor === 'object' && !Array.isArray(actor)
+    && typeof (actor as Record<string, unknown>).id === 'string'
+    && typeof (actor as Record<string, unknown>).username === 'string'
+    ? { id: (actor as Record<string, string>).id, username: (actor as Record<string, string>).username } : undefined;
+  if (typeof item.id !== 'string' || !item.id || !isFiniteNumber(item.at) || typeof item.action !== 'string'
+    || parsedActor === undefined || typeof item.targetType !== 'string'
+    || (item.targetId !== null && typeof item.targetId !== 'string')
+    || (item.targetName !== undefined && typeof item.targetName !== 'string')
+    || typeof item.detail !== 'string') return undefined;
+  return {
+    id: item.id,
+    at: item.at,
+    action: item.action,
+    actor: parsedActor,
+    targetType: item.targetType,
+    targetId: item.targetId as string | null,
+    ...(typeof item.targetName === 'string' ? { targetName: item.targetName } : {}),
+    detail: item.detail,
+  };
+}
+
 function attachServerClock(user: AuthUser, json: Record<string, unknown> | null): AuthUser {
   const serverNow = typeof json?.serverNow === 'number' && Number.isFinite(json.serverNow) ? json.serverNow : null;
   return serverNow === null ? user : { ...user, serverClockOffsetMs: serverNow - Date.now() };
@@ -144,6 +194,83 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
     throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Không thể đổi mật khẩu.', response.status, typeof json?.errorCode === 'string' ? json.errorCode : undefined);
   }
   return user;
+}
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const response = await apiFetch(`${API_BASE}/admin/users`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !Array.isArray(json?.data)) throw apiError(json, response, 'Không thể tải danh sách người dùng.');
+  const users = json.data.map(sanitizeAdminUser);
+  if (users.some((user) => !user)) throw new ApiRequestError('Dữ liệu người dùng không hợp lệ.', response.status);
+  return users.filter((user): user is AdminUser => user !== undefined);
+}
+
+async function adminMutation(path: string, method: string, body?: unknown): Promise<Record<string, unknown>> {
+  const response = await apiFetch(`${API_BASE}${path}`, {
+    method,
+    ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true) throw apiError(json, response, 'Không thể thực hiện thao tác quản trị.');
+  return json ?? {};
+}
+
+export async function createAdminUser(input: { username: string; password: string; maxBots: number }): Promise<AdminUser> {
+  const json = await adminMutation('/admin/users', 'POST', input);
+  const user = sanitizeAdminUser(json.data);
+  if (!user) throw new ApiRequestError('Dữ liệu người dùng mới không hợp lệ.', 200);
+  return user;
+}
+
+export async function updateAdminUser(id: string, input: { status?: 'active' | 'disabled'; maxBots?: number }): Promise<void> {
+  await adminMutation(`/admin/users/${encodeURIComponent(id)}`, 'PATCH', input);
+}
+
+export async function grantAdminUser(id: string, duration: '1d' | '7d' | '30d'): Promise<void> {
+  await adminMutation(`/admin/users/${encodeURIComponent(id)}/grant`, 'POST', { duration });
+}
+
+export async function setAdminUserExpiry(id: string, expiresAt: number | null): Promise<void> {
+  await adminMutation(`/admin/users/${encodeURIComponent(id)}/expiry`, 'POST', { expiresAt });
+}
+
+export async function resetAdminUserPassword(id: string, newPassword: string): Promise<void> {
+  await adminMutation(`/admin/users/${encodeURIComponent(id)}/password`, 'POST', { newPassword });
+}
+
+export async function stopAdminUserBots(id: string): Promise<number> {
+  const json = await adminMutation(`/admin/users/${encodeURIComponent(id)}/stop-bots`, 'POST');
+  const data = json.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Number.isInteger((data as Record<string, unknown>).stopped)) {
+    throw new ApiRequestError('Dữ liệu dừng bot không hợp lệ.', 200);
+  }
+  return Number((data as Record<string, unknown>).stopped);
+}
+
+export async function revokeAdminUserSessions(id: string): Promise<{ revoked: number; preservedCurrent: boolean }> {
+  const json = await adminMutation(`/admin/users/${encodeURIComponent(id)}/revoke-sessions`, 'POST');
+  const data = json.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new ApiRequestError('Dữ liệu thu hồi phiên không hợp lệ.', 200);
+  const item = data as Record<string, unknown>;
+  if (!Number.isInteger(item.revoked) || typeof item.preservedCurrent !== 'boolean') throw new ApiRequestError('Dữ liệu thu hồi phiên không hợp lệ.', 200);
+  return { revoked: Number(item.revoked), preservedCurrent: item.preservedCurrent };
+}
+
+export async function deleteAdminUser(id: string): Promise<void> {
+  await adminMutation(`/admin/users/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+export async function fetchAdminAudit(limit = 50, before?: number): Promise<{ data: AuditLogEntry[]; nextBefore: number | null }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (before !== undefined) params.set('before', String(before));
+  const response = await apiFetch(`${API_BASE}/admin/audit?${params.toString()}`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !Array.isArray(json?.data)) throw apiError(json, response, 'Không thể tải nhật ký kiểm toán.');
+  const data = json.data.map(sanitizeAuditLog);
+  if (data.some((entry) => !entry)) throw new ApiRequestError('Dữ liệu nhật ký kiểm toán không hợp lệ.', response.status);
+  const nextBefore = json.nextBefore === null ? null : isFiniteNumber(json.nextBefore) ? json.nextBefore : undefined;
+  if (nextBefore === undefined) throw new ApiRequestError('Con trỏ nhật ký kiểm toán không hợp lệ.', response.status);
+  return { data: data.filter((entry): entry is AuditLogEntry => entry !== undefined), nextBefore };
 }
 
 const parseMapPortals = (value: unknown): NonNullable<WorldBounds['portals']> | undefined => {

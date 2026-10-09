@@ -17,6 +17,21 @@ const hasOwn = (value: object, key: string): boolean => Object.prototype.hasOwnP
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const isNullableNumber = (value: unknown): value is number | null => value === null || isFiniteNumber(value);
 
+export function sanitizeAccountOwner(value: unknown): { ownerId?: string | null; ownerUsername?: string | null } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const result: { ownerId?: string | null; ownerUsername?: string | null } = {};
+  if (hasOwn(item, 'ownerId')) {
+    if (item.ownerId !== null && (typeof item.ownerId !== 'string' || item.ownerId.length === 0)) return undefined;
+    result.ownerId = item.ownerId as string | null;
+  }
+  if (hasOwn(item, 'ownerUsername')) {
+    if (item.ownerUsername !== null && (typeof item.ownerUsername !== 'string' || item.ownerUsername.length === 0)) return undefined;
+    result.ownerUsername = item.ownerUsername as string | null;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 type EntityRow = { id: string; x: number; y: number; [key: string]: unknown };
 function sanitizeEntities(value: unknown): EntityRow[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -216,6 +231,11 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   if (!previous && (typeof payload.status !== 'string' || !ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status']))) return null;
 
   const next = { ...(previous ?? {} as AccountRuntime), id: payload.id } as AccountRuntime;
+  const owner = sanitizeAccountOwner(payload);
+  if (owner) {
+    if (Object.prototype.hasOwnProperty.call(owner, 'ownerId')) next.ownerId = owner.ownerId ?? null;
+    if (Object.prototype.hasOwnProperty.call(owner, 'ownerUsername')) next.ownerUsername = owner.ownerUsername ?? null;
+  }
   const incomingMapContext = hasOwn(payload, 'mapContext') ? sanitizeMapContext(payload.mapContext) : undefined;
   const incomingEpoch = hasOwn(payload, 'mapContextEpoch') ? payload.mapContextEpoch : undefined;
   const worldAccepted = !incomingMapContext || !previous?.mapContext

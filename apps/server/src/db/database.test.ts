@@ -26,6 +26,12 @@ test('JSON migration is one-time, owner-assigned, and public accounts redact sec
   assert.equal('encryptedPassword' in publicAccount, false);
   assert.deepEqual(db.getBotConfig('acc_fixture'), { engine: 'vendor' });
   assert.equal(db.getLogs('acc_fixture', 10).length, 1);
+  db.addAuditLog({ actorId: admin.id, action: 'fixture_action', targetType: 'user', targetId: admin.id, detail: 'x\n\t  y' });
+  const audit = db.getAuditLogs(10).find((entry) => entry.action === 'fixture_action');
+  assert.ok(audit);
+  assert.equal(audit.detail, 'x y');
+  assert.deepEqual(audit.actor, { id: admin.id, username: admin.username });
+  assert.equal(audit.targetName, admin.username);
   db.close();
   await fs.rm(dataDir, { recursive: true, force: true });
 });

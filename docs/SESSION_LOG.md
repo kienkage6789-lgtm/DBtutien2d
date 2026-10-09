@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — BƯỚC 4 multi-user: giao diện quản trị (offline)
+
+Thay đổi: bổ sung API `GET /api/admin/users` với `createdAt`/`lastLoginAt`/`createdBy`/`usage`/`activeSessions`; thêm `stop-bots`, `revoke-sessions` (admin tự thu hồi giữ phiên hiện tại) và `GET /api/admin/audit` phân trang/làm sạch. Ghi audit cho hành động admin còn thiếu và đăng nhập admin thành công/thất bại có giới hạn tần suất; không ghi mật khẩu/hash/token. Runtime REST/WS thêm `ownerId`/`ownerUsername` trong phạm vi được phép.
+
+Dashboard thêm điều hướng admin và ba tab Người dùng, Tài khoản toàn hệ thống, Nhật ký kiểm toán; có form tạo/reset/xóa hai bước, random password bằng `crypto.getRandomValues`, xác nhận qua `lib/dialogs.ts`, lọc và layout thẻ/bảng responsive. Đã xóa `ApiTokenPanel.tsx` vì không còn import.
+
+Test source thêm `apps/web/src/lib/admin.test.ts`, sanitizer ownership, database audit và mở rộng `apps/server/src/api/multi-user.e2e.test.ts` cho usage/owner/stop-bots/revoke-sessions/audit/quyền. Không chạm game thật, vendor/headless, proxy hay mạng game.
+
+Lệnh đã chạy: `pnpm build` và `pnpm --filter @tutien2d/web test` bị chặn vì `pnpm` không có PATH; TypeScript trực tiếp bị `EPERM` khi đọc package dưới `node_modules/.pnpm`. TypeScript API kiểm tra web pass; transform cú pháp esbuild cho các file thay đổi pass; `git diff --check` pass.
+
+Chưa xác minh: build/Vitest/test server chính thức trong môi trường đầy đủ; hiển thị thật ở viewport 334 px và màn hình rộng, hiệu năng danh sách lớn, phân trang audit nhiều dòng. Cần chạy `pnpm build`, `pnpm --filter @tutien2d/web test`, và từng test server bằng `cd apps/server && npx tsx --test <file>`.
+
 ## 2026-10-09 — BƯỚC 2 multi-user: entitlement, hạn mức bot và watcher tự ngắt (offline)
 
 Thay đổi: thêm `computeGrant`/`entitlement` dùng đồng hồ truyền vào, bảng SQLite `grants` idempotent và cấp hạn cộng dồn; public user/auth me có entitlement, usage và `serverNow`. Thêm endpoint admin cấp hạn `1d|7d|30d`/đặt hạn tuyệt đối, audit `user_granted`/`user_expiry_set`, kiểm tra `maxBots` trong khoảng 0..1000 và kích watcher sau thay đổi. Route điều khiển bot của user không còn quyền trả mã 403 ổn định; tạo account cho user hết hạn vẫn được nếu còn quota, còn quota được kiểm tra lại sau `verifyLogin` và trong transaction INSERT.

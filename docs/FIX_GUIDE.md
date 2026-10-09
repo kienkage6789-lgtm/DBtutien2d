@@ -1469,3 +1469,13 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 5. [x] Test source cho grant/entitlement/watcher và mở rộng e2e cấp hạn → qua gate vendor không mở game → thu hồi → 403; chưa chạy chính thức trong sandbox.
 6. [~] `pnpm build`, Vitest và từng file `npx tsx --test` cần chạy ở môi trường người giao việc; TypeScript toolchain sandbox hiện trả `EPERM` khi đọc package dưới `.pnpm`.
 7. [ ] Chưa xác minh live lệch giờ server/trình duyệt, watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và `MAX_TOTAL_RUNNERS` theo RAM/soak Linux.
+
+## Z. Bước 4 multi-user — giao diện quản trị (offline 2026-10-09)
+
+1. [x] API admin bổ sung danh sách user có metadata/usage/phiên, `stop-bots`, `revoke-sessions`, audit phân trang/làm sạch và audit cho các hành động quản trị/đăng nhập admin.
+2. [x] Runtime REST/WS có `ownerId`/`ownerUsername` trong phạm vi account được phép; user thường không nhận account của người khác.
+3. [x] Dashboard admin có điều hướng hai mục, tab Người dùng/Tài khoản toàn hệ thống/Nhật ký kiểm toán; form/mật khẩu/xác nhận dùng UI nội bộ, không dùng `alert`/`confirm`/`prompt` gốc.
+4. [x] Màn hình hẹp dùng thẻ hoặc vùng bảng cuộn ngang; sửa điều khiển dùng thuộc tính `hidden` cùng `flex`.
+5. [x] Thêm helper/test source cho hạn dùng, policy hành động, lọc audit/user, nhãn action, mật khẩu ngẫu nhiên và sanitizer admin/runtime.
+6. [~] `git diff --check` và transform cú pháp esbuild cho file thay đổi pass; `pnpm build`/Vitest bị chặn vì `pnpm` không có PATH, TypeScript trực tiếp bị `EPERM` khi đọc package `.pnpm`.
+7. [ ] Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit nhiều dòng; không chạm game thật/mạng.

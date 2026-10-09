@@ -15,6 +15,31 @@ export interface AuthUser {
   serverClockOffsetMs?: number;
 }
 
+export interface AdminUsage {
+  accounts: number;
+  running: number;
+  maxBots: number;
+}
+
+export interface AdminUser extends AuthUser {
+  createdAt: string;
+  lastLoginAt: string | null;
+  createdBy: string | null;
+  usage: AdminUsage;
+  activeSessions: number;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  at: number;
+  action: string;
+  actor: { id: string; username: string } | null;
+  targetType: string;
+  targetId: string | null;
+  targetName?: string;
+  detail: string;
+}
+
 export type MoveToStatus = 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';
 export type MoveToLegPhase = 'walking_to_gate' | 'on_gate' | 'waiting_map' | 'walking_to_target';
 
@@ -141,6 +166,8 @@ export interface KhuInfo {
 
 export interface AccountRuntime {
   id: string;
+  ownerId: string | null;
+  ownerUsername: string | null;
   accountName: string;
   engine: 'vendor';
   vendor?: VendorRuntimeSnapshot;

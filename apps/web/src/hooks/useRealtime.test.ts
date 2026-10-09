@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
+import { mergeAccountRuntime, sanitizeAccountOwner, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -135,5 +135,13 @@ describe('mergeAccountRuntime vitals freshness', () => {
   it('sanitizes owner-only system alerts', () => {
     expect(sanitizeSystemAlert({ reason: 'expired', message: 'Hạn đã hết.' })).toEqual({ reason: 'expired', message: 'Hạn đã hết.' });
     expect(sanitizeSystemAlert({ reason: 'expired', message: 7 })).toBeUndefined();
+  });
+});
+
+describe('account ownership sanitizer', () => {
+  it('keeps valid owner fields and returns undefined for malformed types', () => {
+    expect(sanitizeAccountOwner({ ownerId: 'user-1', ownerUsername: 'alice' })).toEqual({ ownerId: 'user-1', ownerUsername: 'alice' });
+    expect(sanitizeAccountOwner({ ownerId: 42 })).toBeUndefined();
+    expect(sanitizeAccountOwner({ ownerUsername: '' })).toBeUndefined();
   });
 });
