@@ -169,6 +169,12 @@ export interface VendorRunnerOptions {
   supabaseAnonKey?: string;
   tokenManager?: VendorTokenManagerLike;
   WebSocketImpl?: VendorWebSocketConstructor;
+  /** When supplied, every auth request and every vendor socket uses this transport. */
+  transport?: {
+    fetch: typeof fetch;
+    WebSocketImpl: VendorWebSocketConstructor;
+    close(): Promise<void> | void;
+  };
   envFactory?: typeof createVendorEnv;
   envOptions?: { nowStart?: number; randomSeed?: number; maxConsoleErrors?: number };
   reconnectMaxRetries?: number;
@@ -341,6 +347,7 @@ export class VendorRunner {
   /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
   private readonly watchdogLoggedAt = new Map<string, number>();
   private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
+  private transportClosed = false;
 
   public constructor(private readonly input: VendorRunnerOptions) {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
@@ -367,6 +374,7 @@ export class VendorRunner {
   public async start(): Promise<void> {
     if (this.lifecycle !== 'stopped' && this.lifecycle !== 'error') return;
     this.stopRequested = false;
+    this.transportClosed = false;
     this.lifecycle = 'starting';
     this.startedAt = Date.now();
     this.baseRss = process.memoryUsage().rss;
@@ -396,6 +404,7 @@ export class VendorRunner {
       this.cleanupTransport();
       this.tokenManager?.stop();
       this.tokenManager = null;
+      await this.closeTransport();
       throw error;
     }
   }
@@ -422,6 +431,7 @@ export class VendorRunner {
     this.cleanupTransport();
     this.tokenManager?.stop();
     this.tokenManager = null;
+    await this.closeTransport();
     this.lifecycle = 'stopped';
   }
 
@@ -641,10 +651,12 @@ export class VendorRunner {
 
   private async createTokenManager(): Promise<VendorTokenManagerLike> {
     const { SupabaseAuth, TokenManager } = await import('@tutien2d/core-client');
+    if (this.input.transport && typeof this.input.transport.fetch !== 'function') throw new Error('PROXY_TRANSPORT_INVALID');
     const auth = new SupabaseAuth({
       url: this.input.supabaseUrl,
       anonKey: this.input.supabaseAnonKey,
       gameApiBase: this.input.gameServerUrl.replace(/^ws/i, 'http'),
+      ...(this.input.transport ? { fetchImpl: this.input.transport.fetch } : {}),
     });
     return new TokenManager({
       auth,
@@ -657,8 +669,10 @@ export class VendorRunner {
 
   private async createEnvironment(): Promise<VendorEnv> {
     const EnvFactory = this.input.envFactory ?? createVendorEnv;
-    const implementation = this.input.WebSocketImpl
-      ?? ((await import('ws')).default as unknown as VendorWebSocketConstructor);
+    const implementation = this.input.transport
+      ? this.input.transport.WebSocketImpl
+      : this.input.WebSocketImpl ?? ((await import('ws')).default as unknown as VendorWebSocketConstructor);
+    if (typeof implementation !== 'function') throw new Error('PROXY_TRANSPORT_INVALID');
     const runner = this;
     class CountedWebSocket extends CountingWebSocket {
       public constructor(url: string) {
@@ -1862,6 +1876,12 @@ export class VendorRunner {
     this.observedKhu = null;
     this.observedSoKhu = null;
     this.khuList = null;
+  }
+
+  private async closeTransport(): Promise<void> {
+    if (!this.input.transport || this.transportClosed) return;
+    this.transportClosed = true;
+    try { await this.input.transport.close(); } catch { /* transport shutdown is best effort */ }
   }
 
   private disconnectTransportOnly(): void {

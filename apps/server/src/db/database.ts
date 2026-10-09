@@ -8,6 +8,7 @@ import { hashPassword, normalizeUsername } from '../security/password.js';
 import { DEFAULT_BOT_CONFIG, normalizeBotConfig } from './bot-config.js';
 import type { BotConfig } from './bot-config.js';
 import { computeGrant, type GrantDuration } from '../security/entitlement.js';
+import { redactProxyUrl, type ProxyScheme } from '../network/proxy-url.js';
 
 export type UserRole = 'admin' | 'user';
 export type UserStatus = 'active' | 'disabled';
@@ -54,8 +55,7 @@ export interface DbGameAccount {
   encryptedRefreshToken?: string | null;
   /** Legacy: pasted JWT. Only used when no password is stored. */
   encryptedToken?: string | null;
-  /** AES-256-GCM encrypted proxy URL. Never returned by `toPublic`. */
-  proxyUrl?: string | null;
+  proxyId: string | null;
   status: 'stopped' | 'running' | 'error';
   /** Last authentication error shown on the dashboard (null when fine). */
   authError?: string | null;
@@ -69,8 +69,40 @@ export interface DbGameAccount {
 /** Account shape that is safe to send to the browser — never contains secrets. */
 export type PublicGameAccount = Omit<
   DbGameAccount,
-  'encryptedPassword' | 'encryptedRefreshToken' | 'encryptedToken' | 'proxyUrl'
+  'encryptedPassword' | 'encryptedRefreshToken' | 'encryptedToken' | 'proxyId'
 > & { hasPassword: boolean; hasLegacyToken: boolean };
+
+export type ProxyStatus = 'unknown' | 'ok' | 'down';
+
+export interface DbProxy {
+  id: string;
+  label: string;
+  scheme: ProxyScheme;
+  urlEncrypted: string;
+  maxAccounts: number;
+  enabled: boolean;
+  status: ProxyStatus;
+  lastCheckAt: number | null;
+  lastLatencyMs: number | null;
+  lastError: string | null;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface DbProxyAccount {
+  id: string;
+  accountName: string;
+  ownerUsername: string;
+  running: boolean;
+}
+
+export interface PublicProxy extends Omit<DbProxy, 'urlEncrypted' | 'createdBy'> {
+  endpoint: string;
+  hasAuth: boolean;
+  assigned: number;
+  accounts: DbProxyAccount[];
+  createdBy?: string | null;
+}
 
 export interface DbLog {
   id: string;
@@ -203,6 +235,7 @@ export class DatabaseService {
         encrypted_refresh_token TEXT,
         encrypted_token TEXT,
         proxy_url_encrypted TEXT,
+        proxy_id TEXT REFERENCES proxies(id) ON DELETE RESTRICT,
         status TEXT NOT NULL DEFAULT 'stopped' CHECK (status IN ('stopped', 'running', 'error')),
         auth_error TEXT,
         character_name TEXT,
@@ -212,6 +245,21 @@ export class DatabaseService {
         updated_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS game_accounts_owner_idx ON game_accounts(owner_id);
+      CREATE TABLE IF NOT EXISTS proxies (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        scheme TEXT NOT NULL CHECK (scheme IN ('http', 'socks5')),
+        url_encrypted TEXT NOT NULL,
+        max_accounts INTEGER NOT NULL DEFAULT 1 CHECK (max_accounts BETWEEN 1 AND 1000),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('unknown', 'ok', 'down')),
+        last_check_at INTEGER,
+        last_latency_ms INTEGER,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS proxies_enabled_idx ON proxies(enabled, status);
       CREATE TABLE IF NOT EXISTS bot_configs (
         account_id TEXT PRIMARY KEY REFERENCES game_accounts(id) ON DELETE CASCADE,
         config_json TEXT NOT NULL
@@ -247,6 +295,17 @@ export class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS grants_user_created_idx ON grants(user_id, created_at);
     `);
+    const accountColumns = this.queryAll<{ name: string }>('PRAGMA table_info(game_accounts)');
+    if (!accountColumns.some((column) => column.name === 'proxy_id')) {
+      this.sqlite.exec('ALTER TABLE game_accounts ADD COLUMN proxy_id TEXT REFERENCES proxies(id) ON DELETE RESTRICT');
+    }
+    this.sqlite.exec('CREATE INDEX IF NOT EXISTS game_accounts_proxy_idx ON game_accounts(proxy_id)');
+    const legacyProxyCount = this.queryOne<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM game_accounts WHERE proxy_url_encrypted IS NOT NULL AND TRIM(proxy_url_encrypted) <> ''",
+    )?.count ?? 0;
+    if (Number(legacyProxyCount) > 0) {
+      console.warn(`[TuTien2D DB] Bỏ qua ${legacyProxyCount} giá trị proxy legacy; không tự động tạo proxy.`);
+    }
   }
 
   private queryOne<T>(sql: string, ...params: Array<string | number | null>): T | undefined {
@@ -299,7 +358,7 @@ export class DatabaseService {
       encryptedPassword: row.encrypted_password === null ? null : String(row.encrypted_password ?? ''),
       encryptedRefreshToken: row.encrypted_refresh_token === null ? null : String(row.encrypted_refresh_token ?? ''),
       encryptedToken: row.encrypted_token === null ? null : String(row.encrypted_token ?? ''),
-      proxyUrl: row.proxy_url_encrypted === null ? null : String(row.proxy_url_encrypted ?? ''),
+      proxyId: row.proxy_id === null || row.proxy_id === undefined ? null : String(row.proxy_id),
       status: row.status === 'running' || row.status === 'error' ? row.status : 'stopped',
       authError: row.auth_error === null ? null : String(row.auth_error ?? ''),
       characterName: row.character_name === null ? null : String(row.character_name ?? ''),
@@ -351,6 +410,13 @@ export class DatabaseService {
     const botConfigs = parsed.botConfigs && typeof parsed.botConfigs === 'object' && !Array.isArray(parsed.botConfigs)
       ? parsed.botConfigs as Record<string, unknown> : {};
     const logs = Array.isArray(parsed.logs) ? parsed.logs : [];
+    const legacyProxyFields = accounts.filter((item) => item && typeof item === 'object' && !Array.isArray(item)
+      && typeof (item as Record<string, unknown>).proxyUrl === 'string'
+      && String((item as Record<string, unknown>).proxyUrl).trim().length > 0).length;
+    if (legacyProxyFields > 0) {
+      console.warn(`[TuTien2D DB] Bỏ qua ${legacyProxyFields} trường proxy legacy trong JSON; không tự động tạo proxy.`);
+    }
+
 
     try {
       this.transaction(() => {
@@ -360,20 +426,19 @@ export class DatabaseService {
           const accountName = cleanText(source.accountName, 128);
           if (!accountName) continue;
           const id = typeof source.id === 'string' && source.id ? source.id : `acc_${crypto.randomUUID().slice(0, 8)}`;
-          const proxy = typeof source.proxyUrl === 'string' && source.proxyUrl ? encryptSecret(source.proxyUrl) : null;
+
           this.run(
             `INSERT OR IGNORE INTO game_accounts
              (id, owner_id, account_name, encrypted_password, encrypted_refresh_token, encrypted_token,
-              proxy_url_encrypted, status, auth_error, character_name, realm, stones, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              status, auth_error, character_name, realm, stones, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             id,
             admin.id,
             accountName,
             typeof source.encryptedPassword === 'string' ? source.encryptedPassword : null,
             typeof source.encryptedRefreshToken === 'string' ? source.encryptedRefreshToken : null,
             typeof source.encryptedToken === 'string' ? source.encryptedToken : null,
-            proxy,
-            source.status === 'running' || source.status === 'error' ? source.status : 'stopped',
+             source.status === 'running' || source.status === 'error' ? source.status : 'stopped',
             typeof source.authError === 'string' ? cleanText(source.authError, 240) : null,
             typeof source.characterName === 'string' ? cleanText(source.characterName, 128) : null,
             typeof source.realm === 'string' ? cleanText(source.realm, 128) : null,
@@ -675,7 +740,7 @@ export class DatabaseService {
 
   // --- ACCOUNTS ---
   public toPublic(acc: DbGameAccount): PublicGameAccount {
-    const { encryptedPassword, encryptedRefreshToken, encryptedToken, proxyUrl, ...rest } = acc;
+    const { encryptedPassword, encryptedRefreshToken, encryptedToken, proxyId, ...rest } = acc;
     return { ...rest, hasPassword: !!encryptedPassword, hasLegacyToken: !!encryptedToken };
   }
 
@@ -704,19 +769,20 @@ export class DatabaseService {
   public createAccount(
     accountName: string,
     credentials: { password?: string; refreshToken?: string; legacyToken?: string },
-    proxyUrl?: string | null,
+    legacyIgnoredProxyUrlOrOwnerId?: string | null,
     ownerId?: string,
-    options: { enforceQuota?: boolean } = {},
+    options: { enforceQuota?: boolean; proxyId?: string | null; requireProxy?: boolean } = {},
   ): DbGameAccount {
     const normalizedName = cleanText(accountName, 128);
     if (!normalizedName) throw new Error('ACCOUNT_NAME_REQUIRED');
     if (this.findByName(normalizedName)) throw new Error(`Tài khoản "${normalizedName}" đã tồn tại trong hệ thống.`);
-    const owner = ownerId || this.queryOne<{ id: string }>("SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1")?.id;
+    const owner = ownerId || (legacyIgnoredProxyUrlOrOwnerId && !legacyIgnoredProxyUrlOrOwnerId.startsWith('http') && !legacyIgnoredProxyUrlOrOwnerId.startsWith('socks')
+      ? legacyIgnoredProxyUrlOrOwnerId : undefined)
+      || this.queryOne<{ id: string }>("SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1")?.id;
     if (!owner) throw new Error('OWNER_NOT_FOUND');
-    const normalizedProxy = proxyUrl ? cleanText(proxyUrl, 2048) : null;
     const id = `acc_${crypto.randomUUID().slice(0, 8)}`;
     const now = Date.now();
-    this.transaction(() => {
+    const assignedProxyId = this.transaction(() => {
       if (options.enforceQuota) {
         const quota = this.queryOne<{ max_bots: number; accounts: number }>(
           'SELECT u.max_bots, COUNT(a.id) AS accounts FROM users u LEFT JOIN game_accounts a ON a.owner_id = u.id WHERE u.id = ? GROUP BY u.id',
@@ -725,10 +791,29 @@ export class DatabaseService {
         if (!quota) throw new Error('OWNER_NOT_FOUND');
         if (Number(quota.accounts) >= Number(quota.max_bots)) throw new Error('QUOTA_BOTS');
       }
+      let selectedProxyId = options.proxyId ?? null;
+      if (selectedProxyId === null && options.proxyId === undefined && CONFIG.AUTO_ASSIGN_PROXY) {
+        const candidate = this.queryOne<{ id: string }>(
+          `SELECT p.id FROM proxies p
+           WHERE p.enabled = 1 AND p.status <> 'down'
+             AND (SELECT COUNT(*) FROM game_accounts a WHERE a.proxy_id = p.id) < p.max_accounts
+           ORDER BY (SELECT COUNT(*) FROM game_accounts a WHERE a.proxy_id = p.id), p.id LIMIT 1`,
+        );
+        selectedProxyId = candidate?.id ?? null;
+      }
+      if (options.requireProxy && !selectedProxyId) throw new Error('NO_PROXY_AVAILABLE');
+      if (selectedProxyId) {
+        const proxy = this.queryOne<{ id: string; enabled: number; status: string; max_accounts: number }>('SELECT id, enabled, status, max_accounts FROM proxies WHERE id = ?', selectedProxyId);
+        if (!proxy) throw new Error('PROXY_NOT_FOUND');
+        if (Number(proxy.enabled) !== 1) throw new Error('PROXY_DISABLED');
+        if (proxy.status === 'down') throw new Error('NO_PROXY_AVAILABLE');
+        const used = Number(this.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM game_accounts WHERE proxy_id = ?', selectedProxyId)?.count ?? 0);
+        if (used >= Number(proxy.max_accounts)) throw new Error('NO_PROXY_AVAILABLE');
+      }
       this.run(
         `INSERT INTO game_accounts
-         (id, owner_id, account_name, encrypted_password, encrypted_refresh_token, encrypted_token, proxy_url_encrypted,
-          status, auth_error, character_name, realm, stones, created_at, updated_at)
+         (id, owner_id, account_name, encrypted_password, encrypted_refresh_token, encrypted_token,
+          proxy_id, status, auth_error, character_name, realm, stones, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'stopped', NULL, ?, ?, 0, ?, ?)`,
         id,
         owner,
@@ -736,13 +821,14 @@ export class DatabaseService {
         credentials.password ? encryptSecret(credentials.password) : null,
         credentials.refreshToken ? encryptSecret(credentials.refreshToken) : null,
         credentials.legacyToken ? encryptSecret(credentials.legacyToken) : null,
-        normalizedProxy ? encryptSecret(normalizedProxy) : null,
+        selectedProxyId,
         normalizedName,
         'Phàm Nhân',
         now,
         now,
       );
       this.run('INSERT INTO bot_configs (account_id, config_json) VALUES (?, ?)', id, JSON.stringify(DEFAULT_BOT_CONFIG));
+      return selectedProxyId;
     });
     return this.getAccountById(id)!;
   }
@@ -753,17 +839,17 @@ export class DatabaseService {
     const columns: Array<[string, string, unknown]> = [
       ['status', 'status', updates.status], ['authError', 'auth_error', updates.authError],
       ['characterName', 'character_name', updates.characterName], ['realm', 'realm', updates.realm],
-      ['stones', 'stones', updates.stones], ['proxyUrl', 'proxy_url_encrypted', updates.proxyUrl],
+      ['stones', 'stones', updates.stones], ['proxyId', 'proxy_id', updates.proxyId],
     ];
     const sets: string[] = [];
     const params: Array<string | number | null> = [];
     for (const [key, column, value] of columns) {
-      if (value === undefined || key === 'proxyUrl' && value === existing.proxyUrl) continue;
+      if (value === undefined || key === 'proxyId' && value === existing.proxyId) continue;
       sets.push(`${column} = ?`);
       const safeValue = typeof value === 'string'
         ? cleanText(value, key === 'authError' ? 240 : 128)
         : value as string | number | null;
-      params.push(key === 'proxyUrl' && safeValue ? encryptSecret(String(safeValue)) : safeValue);
+      params.push(safeValue);
     }
     if (sets.length > 0) {
       params.push(Date.now(), id);
@@ -815,6 +901,143 @@ export class DatabaseService {
     const before = this.getAccountById(id);
     if (!before) return false;
     this.run('DELETE FROM game_accounts WHERE id = ?', id);
+    return true;
+  }
+
+  // --- PROXIES ---
+  private mapProxy(row: Record<string, unknown>): DbProxy {
+    return {
+      id: String(row.id),
+      label: cleanText(row.label, 64),
+      scheme: row.scheme === 'socks5' ? 'socks5' : 'http',
+      urlEncrypted: String(row.url_encrypted ?? ''),
+      maxAccounts: Number(row.max_accounts),
+      enabled: Number(row.enabled) === 1,
+      status: row.status === 'ok' || row.status === 'down' ? row.status : 'unknown',
+      lastCheckAt: row.last_check_at === null || row.last_check_at === undefined ? null : Number(row.last_check_at),
+      lastLatencyMs: row.last_latency_ms === null || row.last_latency_ms === undefined ? null : Number(row.last_latency_ms),
+      lastError: row.last_error === null || row.last_error === undefined ? null : cleanText(row.last_error, 240),
+      createdAt: iso(row.created_at),
+      createdBy: row.created_by === null || row.created_by === undefined ? null : String(row.created_by),
+    };
+  }
+
+  public getProxies(): DbProxy[] {
+    return this.queryAll<Record<string, unknown>>('SELECT * FROM proxies ORDER BY id').map((row) => this.mapProxy(row));
+  }
+
+  public getProxyById(id: string): DbProxy | undefined {
+    const row = this.queryOne<Record<string, unknown>>('SELECT * FROM proxies WHERE id = ?', id);
+    return row ? this.mapProxy(row) : undefined;
+  }
+
+  /** Decrypts a proxy URL only for the server network layer. */
+  public getProxySecret(id: string): string | undefined {
+    const proxy = this.getProxyById(id);
+    if (!proxy?.urlEncrypted) return undefined;
+    try { return decryptSecret(proxy.urlEncrypted); } catch { return undefined; }
+  }
+
+  public getAccountProxy(accountId: string): (DbProxy & { url: string }) | undefined {
+    const row = this.queryOne<Record<string, unknown>>(
+      'SELECT p.* FROM proxies p JOIN game_accounts a ON a.proxy_id = p.id WHERE a.id = ?', accountId,
+    );
+    if (!row) return undefined;
+    const proxy = this.mapProxy(row);
+    const url = this.getProxySecret(proxy.id);
+    return url ? { ...proxy, url } : undefined;
+  }
+
+  public getProxyAccounts(proxyId: string): DbProxyAccount[] {
+    return this.queryAll<Record<string, unknown>>(
+      `SELECT a.id, a.account_name, u.username AS owner_username, a.status
+       FROM game_accounts a JOIN users u ON u.id = a.owner_id
+       WHERE a.proxy_id = ? ORDER BY a.account_name COLLATE NOCASE, a.id`, proxyId,
+    ).map((row) => ({
+      id: String(row.id), accountName: cleanText(row.account_name, 128), ownerUsername: cleanText(row.owner_username, 64), running: row.status === 'running',
+    }));
+  }
+
+  public getProxyAssignedCount(proxyId: string): number {
+    return Number(this.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM game_accounts WHERE proxy_id = ?', proxyId)?.count ?? 0);
+  }
+
+  public getAvailableProxy(): DbProxy | undefined {
+    const row = this.queryOne<Record<string, unknown>>(
+      `SELECT p.* FROM proxies p
+       WHERE p.enabled = 1 AND p.status <> 'down'
+         AND (SELECT COUNT(*) FROM game_accounts a WHERE a.proxy_id = p.id) < p.max_accounts
+       ORDER BY (SELECT COUNT(*) FROM game_accounts a WHERE a.proxy_id = p.id), p.id LIMIT 1`,
+    );
+    return row ? this.mapProxy(row) : undefined;
+  }
+
+  public createProxy(input: { label: string; scheme: ProxyScheme; url: string; maxAccounts: number; createdBy: string | null }): DbProxy {
+    const id = `prx_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const label = cleanText(input.label, 64);
+    if (!label) throw new Error('PROXY_LABEL_INVALID');
+    if (!Number.isInteger(input.maxAccounts) || input.maxAccounts < 1 || input.maxAccounts > 1000) throw new Error('PROXY_CAPACITY_INVALID');
+    const duplicate = this.getProxies().some((proxy) => {
+      const url = this.getProxySecret(proxy.id);
+      return url && proxy.scheme === input.scheme && url.toLowerCase() === input.url.toLowerCase();
+    });
+    if (duplicate) throw new Error('PROXY_DUPLICATE');
+    this.run(
+      `INSERT INTO proxies (id, label, scheme, url_encrypted, max_accounts, enabled, status, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, 1, 'unknown', ?, ?)`,
+      id, label, input.scheme, encryptSecret(input.url), input.maxAccounts, Date.now(), input.createdBy,
+    );
+    return this.getProxyById(id)!;
+  }
+
+  public updateProxy(id: string, updates: { label?: string; maxAccounts?: number; enabled?: boolean; url?: string; scheme?: ProxyScheme }): DbProxy | undefined {
+    const existing = this.getProxyById(id);
+    if (!existing) return undefined;
+    if (updates.label !== undefined && !cleanText(updates.label, 64)) throw new Error('PROXY_LABEL_INVALID');
+    if (updates.maxAccounts !== undefined && (!Number.isInteger(updates.maxAccounts) || updates.maxAccounts < 1 || updates.maxAccounts > 1000)) throw new Error('PROXY_CAPACITY_INVALID');
+    const assigned = this.getProxyAssignedCount(id);
+    if (updates.maxAccounts !== undefined && updates.maxAccounts < assigned) throw new Error('PROXY_FULL');
+    const sets: string[] = [];
+    const params: Array<string | number | null> = [];
+    if (updates.label !== undefined) { sets.push('label = ?'); params.push(cleanText(updates.label, 64)); }
+    if (updates.maxAccounts !== undefined) { sets.push('max_accounts = ?'); params.push(updates.maxAccounts); }
+    if (updates.enabled !== undefined) { sets.push('enabled = ?'); params.push(updates.enabled ? 1 : 0); }
+    if (updates.url !== undefined) { sets.push('url_encrypted = ?', "status = 'unknown'", 'last_check_at = NULL', 'last_latency_ms = NULL', 'last_error = NULL'); params.push(encryptSecret(updates.url)); }
+    if (updates.scheme !== undefined) { sets.push('scheme = ?'); params.push(updates.scheme); }
+    if (sets.length) { params.push(id); this.run(`UPDATE proxies SET ${sets.join(', ')} WHERE id = ?`, ...params); }
+    return this.getProxyById(id);
+  }
+
+  public updateProxyCheck(id: string, result: { status: ProxyStatus; latencyMs: number | null; error: string | null; checkedAt: number }): { proxy: DbProxy; previousStatus: ProxyStatus } | undefined {
+    const current = this.getProxyById(id);
+    if (!current) return undefined;
+    this.run(
+      'UPDATE proxies SET status = ?, last_check_at = ?, last_latency_ms = ?, last_error = ? WHERE id = ?',
+      result.status, result.checkedAt, result.latencyMs, result.error ? redactProxyUrl(result.error) : null, id,
+    );
+    return { proxy: this.getProxyById(id)!, previousStatus: current.status };
+  }
+
+  public setAccountProxy(accountId: string, proxyId: string | null): DbGameAccount {
+    return this.transaction(() => {
+      const account = this.getAccountById(accountId);
+      if (!account) throw new Error('ACCOUNT_NOT_FOUND');
+      if (proxyId === account.proxyId) return account;
+      if (proxyId !== null) {
+        const proxy = this.getProxyById(proxyId);
+        if (!proxy) throw new Error('PROXY_NOT_FOUND');
+        if (!proxy.enabled) throw new Error('PROXY_DISABLED');
+        if (this.getProxyAssignedCount(proxyId) >= proxy.maxAccounts) throw new Error('PROXY_FULL');
+      }
+      this.run('UPDATE game_accounts SET proxy_id = ?, updated_at = ? WHERE id = ?', proxyId, Date.now(), accountId);
+      return this.getAccountById(accountId)!;
+    });
+  }
+
+  public deleteProxy(id: string): boolean {
+    if (!this.getProxyById(id)) return false;
+    if (this.getProxyAssignedCount(id) > 0) throw new Error('PROXY_IN_USE');
+    this.run('DELETE FROM proxies WHERE id = ?', id);
     return true;
   }
 

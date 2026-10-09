@@ -1,4 +1,4 @@
-import type { AccountRuntime, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired, setToken } from './auth';
@@ -205,6 +205,73 @@ export async function fetchAdminUsers(): Promise<AdminUser[]> {
   return users.filter((user): user is AdminUser => user !== undefined);
 }
 
+export function sanitizeAdminProxy(value: unknown): AdminProxy | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== 'string' || typeof item.label !== 'string' || (item.scheme !== 'http' && item.scheme !== 'socks5')
+    || typeof item.endpoint !== 'string' || typeof item.hasAuth !== 'boolean' || !Number.isInteger(item.maxAccounts)
+    || typeof item.enabled !== 'boolean' || !['unknown', 'ok', 'down'].includes(String(item.status))
+    || (item.lastCheckAt !== null && !isFiniteNumber(item.lastCheckAt)) || (item.lastLatencyMs !== null && !isFiniteNumber(item.lastLatencyMs))
+    || (item.lastError !== null && typeof item.lastError !== 'string') || !Number.isInteger(item.assigned) || !Array.isArray(item.accounts)
+    || typeof item.createdAt !== 'string') return undefined;
+  const accounts = item.accounts.flatMap((account) => {
+    if (!account || typeof account !== 'object' || Array.isArray(account)) return [];
+    const row = account as Record<string, unknown>;
+    return typeof row.id === 'string' && typeof row.accountName === 'string' && typeof row.ownerUsername === 'string' && typeof row.running === 'boolean'
+      ? [{ id: row.id, accountName: row.accountName, ownerUsername: row.ownerUsername, running: row.running }] : [];
+  });
+  if (accounts.length !== item.accounts.length) return undefined;
+  return {
+    id: item.id, label: item.label, scheme: item.scheme, endpoint: item.endpoint, hasAuth: item.hasAuth,
+    maxAccounts: Number(item.maxAccounts), enabled: item.enabled, status: item.status as AdminProxy['status'],
+    lastCheckAt: item.lastCheckAt as number | null, lastLatencyMs: item.lastLatencyMs as number | null,
+    lastError: item.lastError as string | null, assigned: Number(item.assigned), accounts, createdAt: item.createdAt,
+  };
+}
+
+export async function fetchAdminProxies(): Promise<AdminProxy[]> {
+  const response = await apiFetch(`${API_BASE}/admin/proxies`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true || !Array.isArray(json?.data)) throw apiError(json, response, 'Không thể tải danh sách proxy.');
+  const proxies = json.data.map(sanitizeAdminProxy);
+  if (proxies.some((proxy) => !proxy)) throw new ApiRequestError('Dữ liệu proxy không hợp lệ.', response.status);
+  return proxies.filter((proxy): proxy is AdminProxy => proxy !== undefined);
+}
+
+export async function createAdminProxy(input: { label: string; url: string; maxAccounts: number }): Promise<AdminProxy> {
+  const json = await adminMutation('/admin/proxies', 'POST', input);
+  const proxy = sanitizeAdminProxy(json.data);
+  if (!proxy) throw new ApiRequestError('Dữ liệu proxy mới không hợp lệ.', 200);
+  return proxy;
+}
+
+export async function updateAdminProxy(id: string, input: { label?: string; url?: string; maxAccounts?: number; enabled?: boolean }): Promise<AdminProxy> {
+  const json = await adminMutation(`/admin/proxies/${encodeURIComponent(id)}`, 'PATCH', input);
+  const proxy = sanitizeAdminProxy(json.data);
+  if (!proxy) throw new ApiRequestError('Dữ liệu proxy không hợp lệ.', 200);
+  return proxy;
+}
+
+export async function checkAdminProxy(id: string): Promise<AdminProxy> {
+  const json = await adminMutation(`/admin/proxies/${encodeURIComponent(id)}/check`, 'POST');
+  const proxy = sanitizeAdminProxy(json.data);
+  if (!proxy) throw new ApiRequestError('Dữ liệu proxy không hợp lệ.', 200);
+  return proxy;
+}
+
+export async function deleteAdminProxy(id: string): Promise<void> {
+  await adminMutation(`/admin/proxies/${encodeURIComponent(id)}`, 'DELETE');
+}
+
+export async function setAccountProxy(id: string, proxyId: string | null): Promise<AccountRuntime> {
+  const response = await apiFetch(`${API_BASE}/admin/accounts/${encodeURIComponent(id)}/proxy`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxyId }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true) throw apiError(json, response, 'Không thể gán proxy.');
+  return json.data as AccountRuntime;
+}
+
 async function adminMutation(path: string, method: string, body?: unknown): Promise<Record<string, unknown>> {
   const response = await apiFetch(`${API_BASE}${path}`, {
     method,
@@ -344,7 +411,6 @@ export async function createAccount(data: {
   accountName: string;
   password?: string;
   token?: string;
-  proxyUrl?: string;
 }): Promise<AccountRuntime> {
   const response = await apiFetch(`${API_BASE}/accounts`, {
     method: 'POST',

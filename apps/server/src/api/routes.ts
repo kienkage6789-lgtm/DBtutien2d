@@ -22,6 +22,8 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { availableMemoryMb, readAvailableMemoryBytes } from '../system/memory.js';
+import { createProxyTransport } from '../network/proxy-transport.js';
+import { parseProxyUrl, redactProxyUrl, type ProxyScheme } from '../network/proxy-url.js';
 
 export const apiRouter: Router = Router();
 
@@ -114,6 +116,14 @@ function sendControlError(res: Response, error: unknown): void {
     SERVER_CAPACITY: { status: 503, message: 'Máy chủ đã đạt số runner tối đa, hãy thử lại sau.', retryable: true },
     SERVER_CAPACITY_MEMORY: { status: 503, message: 'RAM máy chủ thấp, hãy thử lại sau.', retryable: true },
   };
+  known.PROXY_REQUIRED = { status: 409, message: 'Proxy bắt buộc nhưng chưa được gán.' };
+  known.PROXY_DISABLED = { status: 409, message: 'Proxy đang tắt.' };
+  known.PROXY_UNAVAILABLE = { status: 503, message: 'Proxy tạm thời không khả dụng, hãy thử lại sau.', retryable: true };
+  known.PROXY_CONNECT_FAILED = { status: 503, message: 'Không kết nối được proxy, hãy thử lại sau.', retryable: true };
+  known.PROXY_AUTH_FAILED = { status: 503, message: 'Proxy từ chối xác thực, hãy kiểm tra cấu hình.', retryable: true };
+  known.PROXY_TIMEOUT = { status: 503, message: 'Proxy phản hồi quá lâu, hãy thử lại sau.', retryable: true };
+  known.PROXY_PROTOCOL_ERROR = { status: 503, message: 'Proxy trả về giao thức không hợp lệ.', retryable: true };
+  known.NO_PROXY_AVAILABLE = { status: 409, message: 'Chưa có proxy khả dụng cho tài khoản này.' };
   const response = known[code];
   if (response) {
     sendError(res, response.status, code === 'SERVER_CAPACITY_MEMORY' ? 'SERVER_CAPACITY' : code, response.message, { retryable: response.retryable });
@@ -151,6 +161,36 @@ function publicAdminUser(user: NonNullable<ReturnType<typeof db.getUserById>>) {
 
 function publicUserList() {
   return db.getUsers().map(publicAdminUser);
+}
+
+function publicProxy(proxy: NonNullable<ReturnType<typeof db.getProxyById>>) {
+  const secret = db.getProxySecret(proxy.id);
+  let endpoint = `${proxy.scheme}://unknown`;
+  let hasAuth = false;
+  if (secret) {
+    try {
+      const parsed = parseProxyUrl(secret, true);
+      endpoint = parsed.safeLabel;
+      hasAuth = parsed.hasAuth;
+    } catch { /* a corrupt secret is represented as unavailable, never exposed */ }
+  }
+  const accounts = db.getProxyAccounts(proxy.id);
+  return {
+    id: proxy.id,
+    label: proxy.label,
+    scheme: proxy.scheme,
+    endpoint,
+    hasAuth,
+    maxAccounts: proxy.maxAccounts,
+    enabled: proxy.enabled,
+    status: proxy.status,
+    lastCheckAt: proxy.lastCheckAt,
+    lastLatencyMs: proxy.lastLatencyMs,
+    lastError: proxy.lastError ? redactProxyUrl(proxy.lastError) : null,
+    assigned: accounts.length,
+    accounts,
+    createdAt: proxy.createdAt,
+  };
 }
 
 const recentAdminLoginFailures = new Map<string, number>();
@@ -236,6 +276,26 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 });
 
 apiRouter.use(authenticate);
+
+function stripProxySecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripProxySecrets);
+  if (!value || typeof value !== 'object') return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'proxy' || key === 'proxyId' || key === 'proxyUrl' || key === 'urlEncrypted' || key === 'encryptedPassword' || key === 'encryptedRefreshToken' || key === 'encryptedToken') continue;
+    output[key] = stripProxySecrets(item);
+  }
+  return output;
+}
+
+// Regular users may know only whether an account has a proxy. Admin-only proxy
+// endpoint data is never allowed to leak through an accidental future route.
+apiRouter.use((req: Request, res: Response, next: NextFunction) => {
+  if (isAdmin(req)) { next(); return; }
+  const sendJson = res.json.bind(res);
+  res.json = ((body: unknown) => sendJson(stripProxySecrets(body))) as typeof res.json;
+  next();
+});
 
 apiRouter.use((req: Request, res: Response, next: NextFunction) => {
   const ip = requestIp(req);
@@ -557,6 +617,143 @@ apiRouter.post('/admin/users/:id/password', requireAdmin, (req: Request, res: Re
   }
 });
 
+apiRouter.get('/admin/proxies', requireAdmin, (_req: Request, res: Response) => {
+  res.json({ success: true, data: db.getProxies().map(publicProxy) });
+});
+
+function proxyInput(body: unknown, partial = false): { label?: string; url?: string; maxAccounts?: number; enabled?: boolean } {
+  const value = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const allowed = new Set(partial ? ['label', 'url', 'maxAccounts', 'enabled'] : ['label', 'url', 'maxAccounts']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('INVALID_REQUEST');
+  const label = value.label;
+  const url = value.url;
+  const maxAccounts = value.maxAccounts;
+  if (!partial && (typeof label !== 'string' || typeof url !== 'string')) throw new Error('INVALID_REQUEST');
+  if (label !== undefined) {
+    if (typeof label !== 'string') throw new Error('PROXY_LABEL_INVALID');
+    const normalizedLabel = label.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!normalizedLabel || normalizedLabel.length > 64) throw new Error('PROXY_LABEL_INVALID');
+  }
+  if (maxAccounts !== undefined && (!Number.isInteger(maxAccounts) || Number(maxAccounts) < 1 || Number(maxAccounts) > 1000)) throw new Error('PROXY_CAPACITY_INVALID');
+  if (url !== undefined && typeof url !== 'string') throw new Error('PROXY_URL_INVALID');
+  return {
+    ...(label === undefined ? {} : { label }),
+    ...(url === undefined ? {} : { url }),
+    ...(maxAccounts === undefined ? {} : { maxAccounts: Number(maxAccounts) }),
+    ...(value.enabled === undefined ? {} : { enabled: value.enabled as boolean }),
+  };
+}
+
+apiRouter.post('/admin/proxies', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const input = proxyInput(req.body);
+    const parsed = parseProxyUrl(input.url!, CONFIG.ALLOW_PRIVATE_PROXY);
+    const duplicate = db.getProxies().some((item) => {
+      const secret = db.getProxySecret(item.id);
+      if (!secret) return false;
+      try { return parseProxyUrl(secret, true).identity === parsed.identity; } catch { return false; }
+    });
+    if (duplicate) throw new Error('PROXY_DUPLICATE');
+    const proxy = db.createProxy({ label: input.label!, url: input.url!, scheme: parsed.scheme, maxAccounts: input.maxAccounts ?? 1, createdBy: req.principal?.userId ?? null });
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'proxy_created', targetType: 'proxy', targetId: proxy.id, detail: `scheme=${proxy.scheme}; endpoint=${parsed.safeLabel}` });
+    res.status(201).json({ success: true, data: publicProxy(proxy) });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    const response: Record<string, { status: number; message: string }> = {
+      INVALID_REQUEST: { status: 400, message: 'Thông tin proxy không hợp lệ.' },
+      PROXY_LABEL_INVALID: { status: 400, message: 'Nhãn proxy không hợp lệ.' },
+      PROXY_CAPACITY_INVALID: { status: 400, message: 'Sức chứa proxy phải trong khoảng 1..1000.' },
+      PROXY_URL_INVALID: { status: 400, message: 'URL proxy không hợp lệ.' },
+      PROXY_PORT_INVALID: { status: 400, message: 'Proxy phải có cổng 1..65535.' },
+      PROXY_SCHEME_UNSUPPORTED: { status: 400, message: 'Proxy chỉ hỗ trợ HTTP hoặc SOCKS5.' },
+      PROXY_PRIVATE_HOST: { status: 400, message: 'Proxy private/loopback bị từ chối.' },
+      PROXY_DUPLICATE: { status: 409, message: 'Proxy này đã tồn tại.' },
+    };
+    const mapped = response[code];
+    sendError(res, mapped?.status ?? 400, code in response ? code : 'PROXY_URL_INVALID', mapped?.message ?? 'URL proxy không hợp lệ.');
+  }
+});
+
+apiRouter.patch('/admin/proxies/:id', requireAdmin, (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const existing = db.getProxyById(id);
+  if (!existing) { sendError(res, 404, 'PROXY_NOT_FOUND', 'Không tìm thấy proxy.'); return; }
+  try {
+    const input = proxyInput(req.body, true) as { label?: string; url?: string; maxAccounts?: number; enabled?: boolean };
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'enabled') && typeof (req.body as Record<string, unknown>).enabled !== 'boolean') throw new Error('INVALID_REQUEST');
+    const running = workerPool.getRunningAccountIdsForProxy(id);
+    if ((input.url !== undefined || input.enabled === false) && running.length > 0) throw new Error('PROXY_IN_USE_RUNNING');
+    let scheme: ProxyScheme | undefined;
+    let parsed: ReturnType<typeof parseProxyUrl> | undefined;
+    if (input.url !== undefined) {
+      parsed = parseProxyUrl(input.url, CONFIG.ALLOW_PRIVATE_PROXY);
+      scheme = parsed.scheme;
+      const duplicate = db.getProxies().some((item) => {
+        if (item.id === id) return false;
+        const secret = db.getProxySecret(item.id);
+        if (!secret) return false;
+        try { return parseProxyUrl(secret, true).identity === parsed!.identity; } catch { return false; }
+      });
+      if (duplicate) throw new Error('PROXY_DUPLICATE');
+    }
+    const proxy = db.updateProxy(id, { ...input, ...(scheme ? { scheme } : {}) });
+    if (!proxy) { sendError(res, 404, 'PROXY_NOT_FOUND', 'Không tìm thấy proxy.'); return; }
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'proxy_updated', targetType: 'proxy', targetId: id, detail: input.url && parsed ? `endpoint=${parsed.safeLabel}` : undefined });
+    res.json({ success: true, data: publicProxy(proxy) });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    const status = ['PROXY_IN_USE_RUNNING', 'PROXY_FULL', 'PROXY_DUPLICATE'].includes(code) ? 409 : code === 'PROXY_NOT_FOUND' ? 404 : 400;
+    const message = code === 'PROXY_IN_USE_RUNNING' ? 'Không thể đổi/tắt proxy khi tài khoản đang chạy.'
+      : code === 'PROXY_FULL' ? 'Sức chứa mới nhỏ hơn số tài khoản đã gán.'
+        : code === 'PROXY_DUPLICATE' ? 'Proxy này đã tồn tại.' : 'Thông tin proxy không hợp lệ.';
+    sendError(res, status, ['PROXY_IN_USE_RUNNING', 'PROXY_FULL', 'PROXY_DUPLICATE'].includes(code) ? code : 'PROXY_URL_INVALID', message);
+  }
+});
+
+apiRouter.delete('/admin/proxies/:id', requireAdmin, (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    if (!db.deleteProxy(id)) { sendError(res, 404, 'PROXY_NOT_FOUND', 'Không tìm thấy proxy.'); return; }
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'proxy_deleted', targetType: 'proxy', targetId: id });
+    res.json({ success: true });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    sendError(res, code === 'PROXY_IN_USE' ? 409 : 500, code === 'PROXY_IN_USE' ? code : 'INTERNAL_ERROR', code === 'PROXY_IN_USE' ? 'Proxy đang được gán cho tài khoản.' : 'Không thể xóa proxy.');
+  }
+});
+
+apiRouter.post('/admin/proxies/:id/check', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const data = await workerPool.checkProxy(String(req.params.id));
+    res.json({ success: true, data: publicProxy(db.getProxyById(String(req.params.id))!) });
+    void data;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (code === 'PROXY_CHECK_RATE_LIMITED') { sendError(res, 429, code, 'Proxy vừa được kiểm tra, hãy thử lại sau.', { retryable: true }); return; }
+    sendError(res, code === 'PROXY_NOT_FOUND' ? 404 : 502, code === 'PROXY_NOT_FOUND' ? code : 'PROXY_UNAVAILABLE', 'Proxy tạm thời không khả dụng.', { retryable: true });
+  }
+});
+
+apiRouter.put('/admin/accounts/:id/proxy', requireAdmin, (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  const account = db.getAccountById(accountId);
+  if (!account) { sendError(res, 404, 'ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản.'); return; }
+  if (workerPool.getActiveEngine(accountId)) { sendError(res, 409, 'ACCOUNT_RUNNING', 'Phải dừng tài khoản trước khi gán proxy.'); return; }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+  if (Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, 'proxyId') || (body.proxyId !== null && typeof body.proxyId !== 'string')) {
+    sendError(res, 400, 'INVALID_REQUEST', 'proxyId phải là chuỗi hoặc null.'); return;
+  }
+  try {
+    const updated = db.setAccountProxy(accountId, body.proxyId as string | null);
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'account_proxy_set', targetType: 'account', targetId: accountId, detail: `proxyId=${updated.proxyId ?? 'null'}` });
+    res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    const status = code === 'PROXY_NOT_FOUND' ? 404 : code === 'PROXY_FULL' || code === 'PROXY_DISABLED' ? 409 : 400;
+    sendError(res, status, code, code === 'PROXY_FULL' ? 'Proxy đã đủ sức chứa.' : code === 'PROXY_DISABLED' ? 'Proxy đang tắt.' : 'Không thể gán proxy.');
+  }
+});
+
 apiRouter.delete('/admin/users/:id', requireAdmin, async (req: Request, res: Response) => {
   const userId = String(req.params.id);
   const target = db.getUserById(userId);
@@ -646,17 +843,32 @@ apiRouter.get('/maps/:mapId/geometry', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/accounts', requireAccountQuota, async (req: Request, res: Response) => {
+  let verificationTransport: ReturnType<typeof createProxyTransport> | undefined;
   try {
-    const { accountName, password, token, proxyUrl } = req.body;
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+    const accountName = typeof body.accountName === 'string' ? body.accountName : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const token = typeof body.token === 'string' ? body.token : '';
     if (!accountName || (!password && !token)) {
       sendError(res, 400, 'INVALID_REQUEST', 'Cần accountName và password hoặc token.');
       return;
     }
 
+    const candidate = CONFIG.AUTO_ASSIGN_PROXY ? db.getAvailableProxy() : undefined;
+    if (CONFIG.REQUIRE_PROXY && !candidate) {
+      sendError(res, 409, 'NO_PROXY_AVAILABLE', 'Chưa có proxy khả dụng cho tài khoản này.');
+      return;
+    }
+    if (candidate) {
+      const secret = db.getProxySecret(candidate.id);
+      if (!secret) { sendError(res, 503, 'PROXY_UNAVAILABLE', 'Proxy tạm thời không khả dụng.', { retryable: true }); return; }
+      verificationTransport = createProxyTransport(secret);
+    }
+
     let initialRefreshToken: string | undefined;
     if (password) {
       try {
-        const session = await workerPool.verifyLogin(accountName, password);
+        const session = await workerPool.verifyLogin(accountName, password, verificationTransport);
         initialRefreshToken = session.refreshToken;
       } catch (error) {
         const message = error instanceof AuthError ? error.message : `Authentication failed: ${String(error)}`;
@@ -682,7 +894,11 @@ apiRouter.post('/accounts', requireAccountQuota, async (req: Request, res: Respo
       password: password || undefined,
       refreshToken: initialRefreshToken,
       legacyToken: token || undefined,
-    }, proxyUrl, ownerScope(req), { enforceQuota: !isAdmin(req) });
+    }, null, ownerScope(req), {
+      enforceQuota: !isAdmin(req),
+      proxyId: candidate?.id,
+      requireProxy: CONFIG.REQUIRE_PROXY,
+    });
     res.json({ success: true, data: workerPool.getRuntimeInfo(created.id) });
   } catch (error) {
     if (error instanceof Error && error.message === 'QUOTA_BOTS') {
@@ -690,11 +906,16 @@ apiRouter.post('/accounts', requireAccountQuota, async (req: Request, res: Respo
       sendError(res, 403, 'QUOTA_BOTS', `Đã có ${usage.accounts}/${usage.maxBots} tài khoản, không thể thêm tài khoản mới.`);
       return;
     }
+    if (error instanceof Error && error.message === 'NO_PROXY_AVAILABLE') { sendError(res, 409, 'NO_PROXY_AVAILABLE', 'Chưa có proxy khả dụng cho tài khoản này.'); return; }
+    if (error instanceof Error && error.message === 'PROXY_FULL') { sendError(res, 409, 'NO_PROXY_AVAILABLE', 'Proxy vừa hết chỗ, hãy thử lại sau.'); return; }
     sendError(res, 500, 'INTERNAL_ERROR', 'Không thể tạo tài khoản.');
+  } finally {
+    if (verificationTransport) await verificationTransport.close().catch(() => undefined);
   }
 });
 
 apiRouter.put('/accounts/:id/password', async (req: Request, res: Response) => {
+  let transport: ReturnType<typeof createProxyTransport> | undefined;
   try {
     const id = String(req.params.id);
     const account = db.getAccountById(id);
@@ -707,13 +928,20 @@ apiRouter.put('/accounts/:id/password', async (req: Request, res: Response) => {
       res.status(400).json({ success: false, error: 'A new password is required.' });
       return;
     }
-    const session = await workerPool.verifyLogin(account.accountName, password);
+    const assigned = db.getAccountProxy(id);
+    if (assigned?.enabled === false) { sendError(res, 409, 'PROXY_DISABLED', 'Proxy đang tắt.'); return; }
+    if (assigned?.status === 'down') { sendError(res, 503, 'PROXY_UNAVAILABLE', 'Proxy tạm thời không khả dụng.', { retryable: true }); return; }
+    if (assigned) transport = createProxyTransport(assigned.url);
+    else if (CONFIG.REQUIRE_PROXY) { sendError(res, 409, 'PROXY_REQUIRED', 'Quản trị viên chưa gán proxy cho tài khoản này.'); return; }
+    const session = await workerPool.verifyLogin(account.accountName, password, transport);
     db.updateCredentials(id, { password, refreshToken: session.refreshToken });
     db.updateAccount(id, { authError: null });
     res.json({ success: true, data: workerPool.getRuntimeInfo(id) });
   } catch (error) {
     const message = error instanceof AuthError ? error.message : error instanceof Error ? error.message : String(error);
-    res.status(400).json({ success: false, error: message });
+    sendError(res, 400, 'GAME_LOGIN_FAILED', message);
+  } finally {
+    if (transport) await transport.close().catch(() => undefined);
   }
 });
 

@@ -7,6 +7,7 @@ import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
 import { notify } from '../lib/dialogs';
 
 const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped', 'error']);
+const PROXY_STATUSES = new Set(['unknown', 'ok', 'down']);
 const VITAL_STATUSES = new Set<NonNullable<AccountRuntime['vitals']>['status']>(['unknown', 'fresh', 'stale', 'invalid', 'conflict']);
 const VITAL_SOURCES = new Set<NonNullable<AccountRuntime['vitals']>['source']>(['client', null]);
 const MOVE_TO_STATUSES = new Set<MoveToOperation['status']>(['accepted', 'running', 'arrived', 'blocked', 'failed', 'cancelled']);
@@ -231,6 +232,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   if (!previous && (typeof payload.status !== 'string' || !ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status']))) return null;
 
   const next = { ...(previous ?? {} as AccountRuntime), id: payload.id } as AccountRuntime;
+  if (!previous) next.hasProxy = payload.hasProxy === true;
   const owner = sanitizeAccountOwner(payload);
   if (owner) {
     if (Object.prototype.hasOwnProperty.call(owner, 'ownerId')) next.ownerId = owner.ownerId ?? null;
@@ -251,6 +253,17 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
     if (hasOwn(payload, field) && (typeof payload[field] === 'string' || payload[field] === null)) next[field] = payload[field] as never;
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
+  if (hasOwn(payload, 'hasProxy') && typeof payload.hasProxy === 'boolean') next.hasProxy = payload.hasProxy;
+  if (hasOwn(payload, 'proxy')) {
+    if (payload.proxy === null) next.proxy = null;
+    else if (payload.proxy && typeof payload.proxy === 'object' && !Array.isArray(payload.proxy)) {
+      const proxy = payload.proxy as Record<string, unknown>;
+      if (typeof proxy.id === 'string' && typeof proxy.label === 'string' && typeof proxy.endpoint === 'string'
+        && typeof proxy.hasAuth === 'boolean' && PROXY_STATUSES.has(String(proxy.status))) {
+        next.proxy = { id: proxy.id, label: proxy.label, endpoint: proxy.endpoint, hasAuth: proxy.hasAuth, status: proxy.status as 'unknown' | 'ok' | 'down' };
+      }
+    }
+  }
   if (hasOwn(payload, 'downed') && (typeof payload.downed === 'boolean' || payload.downed === null)) next.downed = payload.downed;
   if (hasOwn(payload, 'moveTo')) {
     const moveTo = sanitizeMoveTo(payload.moveTo);

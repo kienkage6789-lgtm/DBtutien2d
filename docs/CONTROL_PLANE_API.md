@@ -34,6 +34,23 @@ Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard,
 | `POST` | `/api/admin/users/:id/revoke-sessions` | Thu hồi phiên dashboard; khi admin tự chọn mình giữ phiên hiện tại và trả `{revoked,preservedCurrent}`. |
 | `GET` | `/api/admin/audit?limit=50&before=<at-ms>` | Nhật ký kiểm toán đã làm sạch, phân trang tối đa 200 dòng; trả `data` và `nextBefore`, không có hash/token/mật khẩu. |
 
+## Proxy theo tài khoản
+
+Proxy được lưu trong bảng `proxies`; URL được mã hóa AES-256-GCM và `game_accounts.proxy_id` là liên kết duy nhất. Cột URL proxy legacy không còn được đọc/ghi. Mỗi account chỉ có một proxy và mọi request auth/WebSocket của vendor phải đi qua proxy đó; không có fallback trực tiếp. Proxy private/loopback bị từ chối mặc định.
+
+| Method | Path | Ý nghĩa |
+|---|---|---|
+| `GET` | `/api/admin/proxies` | Admin xem danh sách proxy đã làm sạch: `endpoint` không có userinfo, `hasAuth`, trạng thái, latency, sức chứa và account được gán. |
+| `POST` | `/api/admin/proxies` | Tạo `{label,url,maxAccounts}`; hỗ trợ `http/https/socks5/socks5h`, bắt buộc port và kiểm tra duplicate. |
+| `PATCH` | `/api/admin/proxies/:id` | Đổi nhãn/URL/sức chứa/bật-tắt; không cho đổi URL hoặc tắt khi account đang chạy. |
+| `DELETE` | `/api/admin/proxies/:id` | Xóa proxy chưa gán account. |
+| `POST` | `/api/admin/proxies/:id/check` | Kiểm tra health Supabase và WebSocket game qua chính proxy; trả proxy đã cập nhật với `status:"down"` và lỗi đã làm sạch nếu kiểm tra thất bại. |
+| `PUT` | `/api/admin/accounts/:id/proxy` | Gán `{proxyId:"..."}` hoặc bỏ gán bằng `{proxyId:null}`; account phải stopped. |
+
+Khi `AUTO_ASSIGN_PROXY=1` (mặc định), tạo account chọn proxy enabled/không down có ít account nhất và kiểm tra lại sức chứa trong transaction. `REQUIRE_PROXY=1` từ chối tạo/start nếu không có proxy khả dụng. Các lỗi ổn định gồm `NO_PROXY_AVAILABLE`, `PROXY_REQUIRED`, `PROXY_DISABLED`, `PROXY_UNAVAILABLE`, `PROXY_CONNECT_FAILED`, `PROXY_AUTH_FAILED`, `PROXY_TIMEOUT` và `PROXY_PROTOCOL_ERROR`; lỗi transport không trả credential hoặc URL đầy đủ.
+
+`ALLOW_PRIVATE_PROXY=1` chỉ dành cho kiểm thử cục bộ. `PROXY_CHECK_INTERVAL_MS` mặc định 300000 ms, tối thiểu 100 ms; `PROXY_CHECK_TIMEOUT_MS` mặc định 8000 ms, tối thiểu 100 ms. User thường chỉ nhận `hasProxy:boolean`, không nhận endpoint, proxy id hay trạng thái proxy; admin mới nhận dữ liệu đã sanitize.
+
 User thường chỉ thấy và điều khiển game account có `owner_id` của mình. Account của user khác trả `404 ACCOUNT_NOT_FOUND`, kể cả các route con dưới `/api/accounts/:id/**`; gọi `/api/admin/**` trả `403 FORBIDDEN`. `GET /api/orchestrator/start-all|stop-all`, `/api/logs` và `/api/system/status` cũng được giới hạn theo owner; admin vẫn thấy toàn hệ thống.
 
 `GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, `none` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `GET /api/admin/users` bổ sung `createdAt`, `lastLoginAt`, `createdBy` (username hoặc `null`), `usage` và `activeSessions`; không trả bất kỳ hash nào. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.

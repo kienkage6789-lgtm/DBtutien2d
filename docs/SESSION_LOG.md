@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — BƯỚC 3 multi-user: proxy theo account, fail-closed (offline)
+
+Đã đọc `docs/PROMPT_MULTI_USER_STEP3.md` và triển khai trong phạm vi offline: thêm bảng `proxies` và `game_accounts.proxy_id`; URL proxy mã hóa AES-256-GCM, không đọc/ghi đường legacy; parser hỗ trợ HTTP/HTTPS/SOCKS5/SOCKS5h, bắt buộc port, chặn control/độ dài/private-host mặc định và redaction. Thêm transport dùng undici cho fetch, agent cho WebSocket, stable proxy error codes và đóng transport; SupabaseAuth nhận fetch injectable; VendorRunner truyền transport cho auth và mọi reconnect socket, đóng khi stop.
+
+Worker pool thêm gate `REQUIRE_PROXY`, auto-assign least-loaded atomic, proxy checker health HTTP + WebSocket, checker định kỳ chỉ quét proxy enabled đang được gán và tối đa 3 proxy/lượt, cùng trạng thái/audit. Admin có CRUD/check/gán proxy; regular user chỉ nhận `hasProxy`. Dashboard có tab Proxy, kiểm tra/sửa/xóa/bật-tắt, selector gán proxy theo account; AddAccountModal không còn trường proxy. Thêm test source parser và fake HTTP/SOCKS5/WebSocket local. Cập nhật API/spec/deploy/env/checklist.
+
+Lệnh đã chạy: kiểm tra Node SQLite tạo foreign key trước bảng parent → pass; Node 24 type-stripping loader chạy parser proxy 2/2, database proxy 1/1 và database regression 2/2; syntax check Node server/core-client pass. Test transport fake HTTP/SOCKS5/WebSocket bị chặn lúc nạp `ws` bởi `EPERM`; `pnpm build` không chạy vì `pnpm` không có PATH; `corepack pnpm build` bị sandbox chặn kết nối registry với `EACCES`; chạy trực tiếp tsx bị `uv_os_get_passwd returned ENOMEM`. Chưa tuyên bố build/typecheck/Vitest/test server chính thức pass; cần chạy `pnpm build`, `pnpm --filter @tutien2d/web test` và test server trong môi trường toolchain đầy đủ.
+
+Chưa xác minh: proxy thật/HTTPS TLS/SOCKS5h remote DNS, Supabase/game handshake thật, failover mạng dài, checker nhiều proxy và responsive UI. Không chạm game thật, không mở mạng game, không đọc `data/`/env secret, không sửa vendor, không commit.
+
 ## 2026-10-09 — BƯỚC 5 multi-user: gia cố VPS và triển khai offline
 
 Thay đổi: thêm security headers/CSP/cache policy, `PUBLIC_ORIGIN`, trust-proxy một hop, rate-limit API theo IP/user và giới hạn/heartbeat/message guard cho WebSocket. Thêm `MIN_FREE_MEM_MB` gate cho start/restart/auto/start-all, `/api/admin/health`, shutdown có timeout/uncaught handler, đóng WS và giữ reset `running -> stopped` khi mở DB.

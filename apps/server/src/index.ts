@@ -83,6 +83,7 @@ app.use(errorHandler);
 // Initialize WebSocket Hub on same HTTP server
 wsHub.init(server, () => workerPool.getAllRuntimes());
 entitlementWatcher.start();
+workerPool.startProxyChecks();
 
 server.listen(CONFIG.PORT, CONFIG.HOST, () => {
   console.log(`[TuTien2D Server] Backend listening on http://${CONFIG.HOST}:${CONFIG.PORT}`);
@@ -106,6 +107,7 @@ async function handleShutdown(exitCode = 0): Promise<void> {
   });
   wsHub.closeAll();
   entitlementWatcher.stop();
+  workerPool.stopProxyChecks();
   try {
     await workerPool.stopAll(undefined, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
     await Promise.race([

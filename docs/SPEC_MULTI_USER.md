@@ -101,9 +101,15 @@ Bước 1 đã triển khai offline trong repo: SQLite/WAL và migration JSON m�
 
 Bước 2 đã triển khai offline trong repo: tính/cộng dồn grant, bảng `grants`, trạng thái entitlement và usage, quota tài khoản, gate quyền chạy, `MAX_TOTAL_RUNNERS`, `EntitlementWatcher` dừng runner/audit/system alert, endpoint admin cấp/đặt hạn và dashboard hiển thị hạn mức/khóa điều khiển. Người hết hạn vẫn được thêm tài khoản nếu còn quota; hạ `maxBots` không tự dừng runner đang chạy. Chưa xác minh live: lệch đồng hồ server/trình duyệt, tải watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và giới hạn runner theo RAM VPS.
 
+## Trạng thái bước 3 (2026-10-09)
+
+Bước 3 đã triển khai offline trong repo: bảng `proxies`, liên kết `game_accounts.proxy_id`, mã hóa URL AES-256-GCM, parser fail-closed và redaction; transport proxy dùng cho cả SupabaseAuth và mọi WebSocket vendor; checker health HTTP + WebSocket; auto-assign least-loaded trong transaction; gate `REQUIRE_PROXY`; CRUD/check/gán proxy chỉ cho admin; runtime regular user chỉ có `hasProxy`; tab Proxy và selector gán account trên dashboard. Không có fallback direct khi proxy lỗi; proxy private/loopback chỉ được phép khi `ALLOW_PRIVATE_PROXY=1`.
+
+Đã thêm test source offline cho parser và fake HTTP/SOCKS5/WebSocket local. Chưa xác minh live: proxy thật, SOCKS5h remote DNS, HTTPS proxy TLS, Supabase/game handshake thực tế, failover mạng dài, hiệu năng checker nhiều proxy và trình duyệt thật. Build/typecheck/Vitest cần chạy lại trong môi trường có pnpm/toolchain đầy đủ.
+
 ## Trạng thái bước 4 (2026-10-09)
 
-Bước 4 đã triển khai offline trong repo: giao diện admin gồm Người dùng, Tài khoản toàn hệ thống và Nhật ký kiểm toán; API admin có usage/phiên, dừng bot, thu hồi phiên và audit phân trang; runtime có owner để admin xem đúng phạm vi. Proxy vẫn còn ở bước 3 và chưa có tab/route proxy. Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit với nhiều dòng.
+Bước 4 đã triển khai offline trong repo: giao diện admin gồm Người dùng, Tài khoản toàn hệ thống, Proxy và Nhật ký kiểm toán; API admin có usage/phiên, dừng bot, thu hồi phiên và audit phân trang; runtime có owner để admin xem đúng phạm vi. Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit với nhiều dòng.
 
 ## Trạng thái bước 5 (2026-10-09)
 

@@ -52,6 +52,13 @@ const parseNonNegativeInt = (value: string | undefined, fallback: number): numbe
 const MAX_TOTAL_RUNNERS = parseNonNegativeInt(process.env.MAX_TOTAL_RUNNERS, 0);
 const MIN_FREE_MEM_MB = parseNonNegativeInt(process.env.MIN_FREE_MEM_MB, 300);
 const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
+const REQUIRE_PROXY = process.env.REQUIRE_PROXY === '1' || process.env.REQUIRE_PROXY === 'true';
+const AUTO_ASSIGN_PROXY = process.env.AUTO_ASSIGN_PROXY === undefined
+  ? true
+  : process.env.AUTO_ASSIGN_PROXY === '1' || process.env.AUTO_ASSIGN_PROXY === 'true';
+const ALLOW_PRIVATE_PROXY = process.env.ALLOW_PRIVATE_PROXY === '1' || process.env.ALLOW_PRIVATE_PROXY === 'true';
+const PROXY_CHECK_INTERVAL_MS = Math.max(100, parseNonNegativeInt(process.env.PROXY_CHECK_INTERVAL_MS, 300_000));
+const PROXY_CHECK_TIMEOUT_MS = Math.max(100, parseNonNegativeInt(process.env.PROXY_CHECK_TIMEOUT_MS, 8_000));
 const API_RATE_LIMIT_USER_PER_MIN = parseNonNegativeInt(process.env.API_RATE_LIMIT_USER_PER_MIN, 600);
 const API_RATE_LIMIT_IP_PER_MIN = parseNonNegativeInt(process.env.API_RATE_LIMIT_IP_PER_MIN, 1200);
 const WS_MAX_CONNECTIONS_PER_USER = Math.max(1, parseNonNegativeInt(process.env.WS_MAX_CONNECTIONS_PER_USER, 10));
@@ -103,6 +110,11 @@ export const CONFIG = {
   MAX_TOTAL_RUNNERS,
   MIN_FREE_MEM_MB,
   ENTITLEMENT_SWEEP_MS,
+  REQUIRE_PROXY,
+  AUTO_ASSIGN_PROXY,
+  ALLOW_PRIVATE_PROXY,
+  PROXY_CHECK_INTERVAL_MS,
+  PROXY_CHECK_TIMEOUT_MS,
   API_RATE_LIMIT_USER_PER_MIN,
   API_RATE_LIMIT_IP_PER_MIN,
   WS_MAX_CONNECTIONS_PER_USER,

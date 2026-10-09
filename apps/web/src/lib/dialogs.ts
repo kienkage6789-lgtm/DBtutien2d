@@ -48,6 +48,10 @@ export function cleanMessage(value: unknown): string {
 }
 
 const FRIENDLY: Array<[RegExp, string]> = [
+  [/PROXY_REQUIRED|NO_PROXY_AVAILABLE/, 'Quản trị viên chưa gán proxy cho tài khoản này.'],
+  [/PROXY_UNAVAILABLE|PROXY_CONNECT_FAILED|PROXY_TIMEOUT|PROXY_PROTOCOL_ERROR/, 'Proxy tạm thời không khả dụng, hãy thử lại sau.'],
+  [/PROXY_DISABLED/, 'Proxy đang tắt.'],
+  [/PROXY_AUTH_FAILED/, 'Proxy từ chối xác thực; hãy kiểm tra cấu hình.'],
   [/ENTITLEMENT_EXPIRED/, 'Tài khoản đã hết hạn, liên hệ admin để gia hạn.'],
   [/ENTITLEMENT_NONE/, 'Tài khoản chưa được cấp hạn sử dụng. Liên hệ admin để được cấp hạn.'],
   [/USER_DISABLED/, 'Tài khoản người dùng đã bị khóa.'],

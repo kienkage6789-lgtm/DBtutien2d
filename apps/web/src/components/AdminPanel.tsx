@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Clipboard, MoreHorizontal, Plus, RefreshCw, Search, Shield, Square, UserCog, Users, X } from 'lucide-react';
-import type { AccountRuntime, AdminUser, AuditLogEntry } from '../types';
+import { Clipboard, MoreHorizontal, Plus, RefreshCw, Search, Shield, Square, UserCog, Users, X, Network } from 'lucide-react';
+import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry } from '../types';
 import {
   createAdminUser, deleteAdminUser, fetchAdminAudit, fetchAdminUsers, grantAdminUser, resetAdminUserPassword,
   revokeAdminUserSessions, setAdminUserExpiry, stopAdminUserBots, stopBot, updateAdminUser,
+  checkAdminProxy, createAdminProxy, deleteAdminProxy, fetchAdminProxies, updateAdminProxy, setAccountProxy,
 } from '../lib/api';
 import { confirmAction, notify } from '../lib/dialogs';
 import {
@@ -11,7 +12,7 @@ import {
   generateRandomPassword, getAdminActionPolicy,
 } from '../lib/admin';
 
-type AdminTab = 'users' | 'accounts' | 'audit';
+type AdminTab = 'users' | 'accounts' | 'proxies' | 'audit';
 
 interface AdminPanelProps {
   currentUserId: string;
@@ -43,6 +44,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUserId, accounts,
   const [auditUser, setAuditUser] = useState('');
   const [auditTargetId, setAuditTargetId] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [proxies, setProxies] = useState<AdminProxy[]>([]);
+  const [loadingProxies, setLoadingProxies] = useState(false);
 
   const refreshUsers = async () => {
     setLoadingUsers(true);
@@ -58,13 +61,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUserId, accounts,
     } catch (error) { notify(error); } finally { setLoadingAudit(false); }
   };
 
+  const refreshProxies = async () => {
+    setLoadingProxies(true);
+    try { setProxies(await fetchAdminProxies()); } catch (error) { notify(error); } finally { setLoadingProxies(false); }
+  };
+
   useEffect(() => {
     void refreshUsers();
+    void refreshProxies();
     const timer = window.setInterval(() => { void refreshUsers(); }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => { if (tab === 'audit' && audit.length === 0) void refreshAudit(true); }, [tab]);
+  useEffect(() => { if (tab === 'proxies') void refreshProxies(); }, [tab]);
 
   const visibleUsers = useMemo(() => filterAdminUsers(users, query), [users, query]);
   const visibleAudit = useMemo(() => filterAuditLogs(audit, auditAction, auditUser, auditTargetId), [audit, auditAction, auditUser, auditTargetId]);
@@ -87,16 +97,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUserId, accounts,
     </div>
 
     <div className="flex max-w-full flex-wrap gap-2 border-b border-slate-800 pb-2">
-      {([['users', 'Người dùng', Users], ['accounts', 'Tài khoản toàn hệ thống', Shield], ['audit', 'Nhật ký kiểm toán', UserCog]] as const).map(([value, label, Icon]) => <button key={value} type="button" onClick={() => setTab(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${tab === value ? 'bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-500/40' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}><Icon className="mr-1.5 inline h-3.5 w-3.5" />{label}</button>)}
+      {([['users', 'Người dùng', Users], ['accounts', 'Tài khoản toàn hệ thống', Shield], ['proxies', 'Proxy', Network], ['audit', 'Nhật ký kiểm toán', UserCog]] as const).map(([value, label, Icon]) => <button key={value} type="button" onClick={() => setTab(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${tab === value ? 'bg-emerald-600/20 text-emerald-300 ring-1 ring-emerald-500/40' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}><Icon className="mr-1.5 inline h-3.5 w-3.5" />{label}</button>)}
     </div>
-
     {tab === 'users' && <UsersTab users={visibleUsers} allUsers={users} query={query} setQuery={setQuery} loading={loadingUsers} activeAdminCount={activeAdminCount} currentUserId={currentUserId} onRefresh={refreshUsers} onCreate={() => setCreateOpen(true)} />}
-    {tab === 'accounts' && <AccountsTab accounts={filteredAccounts} owners={owners} owner={accountOwner} status={accountStatus} setOwner={setAccountOwner} setStatus={setAccountStatus} onRefresh={onRefreshAccounts} onOpenAccountLog={onOpenAccountLog} />}
+    {tab === 'accounts' && <AccountsTab accounts={filteredAccounts} proxies={proxies} owners={owners} owner={accountOwner} status={accountStatus} setOwner={setAccountOwner} setStatus={setAccountStatus} onRefresh={onRefreshAccounts} onOpenAccountLog={onOpenAccountLog} />}
+    {tab === 'proxies' && <ProxyTab proxies={proxies} loading={loadingProxies} onRefresh={refreshProxies} />}
     {tab === 'audit' && <AuditTab logs={visibleAudit} action={auditAction} user={auditUser} targetId={auditTargetId} setAction={setAuditAction} setUser={setAuditUser} setTargetId={setAuditTargetId} loading={loadingAudit} hasMore={auditCursor !== null} onLoadMore={() => { if (!loadingAudit) void refreshAudit(false); }} />}
 
     <CreateUserModal isOpen={createOpen} onClose={() => setCreateOpen(false)} onCreated={async () => { await refreshUsers(); void refreshAudit(true); }} />
   </section>;
 };
+
+function ProxyTab({ proxies, loading, onRefresh }: { proxies: AdminProxy[]; loading: boolean; onRefresh: () => Promise<void> }) {
+  const [label, setLabel] = useState('');
+  const [url, setUrl] = useState('');
+  const [maxAccounts, setMaxAccounts] = useState('1');
+  const [working, setWorking] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editMax, setEditMax] = useState('1');
+  const [editEnabled, setEditEnabled] = useState(true);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const capacity = Number(maxAccounts);
+    if (!label.trim() || !url.trim() || !Number.isInteger(capacity) || capacity < 1 || capacity > 1000) { notify('Nhập nhãn, URL proxy và sức chứa 1..1000.'); return; }
+    setWorking('create');
+    try { await createAdminProxy({ label: label.trim(), url: url.trim(), maxAccounts: capacity }); setLabel(''); setUrl(''); setMaxAccounts('1'); await onRefresh(); }
+    catch (error) { notify(error); } finally { setWorking(''); }
+  };
+  const startEdit = (proxy: AdminProxy) => { setEditing(proxy.id); setEditLabel(proxy.label); setEditUrl(''); setEditMax(String(proxy.maxAccounts)); setEditEnabled(proxy.enabled); };
+  const saveEdit = async (proxy: AdminProxy) => {
+    const capacity = Number(editMax);
+    if (!editLabel.trim() || !Number.isInteger(capacity) || capacity < 1 || capacity > 1000) { notify('Nhãn/sức chứa proxy không hợp lệ.'); return; }
+    setWorking(proxy.id);
+    try { await updateAdminProxy(proxy.id, { label: editLabel.trim(), maxAccounts: capacity, enabled: editEnabled, ...(editUrl.trim() ? { url: editUrl.trim() } : {}) }); setEditing(null); await onRefresh(); }
+    catch (error) { notify(error); } finally { setWorking(''); }
+  };
+  const remove = async (proxy: AdminProxy) => {
+    if (!(await confirmAction(`Xóa proxy ${proxy.label}?`, { confirmLabel: 'Xóa', danger: true }))) return;
+    setWorking(proxy.id);
+    try { await deleteAdminProxy(proxy.id); await onRefresh(); } catch (error) { notify(error); } finally { setWorking(''); }
+  };
+  return <div className="space-y-4">
+    <form onSubmit={(event) => void submit(event)} className="grid min-w-0 gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3 md:grid-cols-[1fr_2fr_8rem_auto]">
+      <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Nhãn proxy" className={inputClass} />
+      <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="http://user:pass@host:port hoặc socks5://..." className={`${inputClass} min-w-0`} autoComplete="off" />
+      <input value={maxAccounts} onChange={(event) => setMaxAccounts(event.target.value)} type="number" min="1" max="1000" className={inputClass} />
+      <button type="submit" disabled={!!working} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"><Plus className="mr-1 inline h-3.5 w-3.5" />Thêm proxy</button>
+    </form>
+    <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {proxies.map((proxy) => <article key={proxy.id} className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-xs">
+        {editing === proxy.id ? <div className="space-y-2"><input value={editLabel} onChange={(event) => setEditLabel(event.target.value)} className={`${inputClass} w-full`} /><input value={editUrl} onChange={(event) => setEditUrl(event.target.value)} placeholder="URL mới (để trống giữ nguyên)" className={`${inputClass} w-full`} autoComplete="off" /><input value={editMax} onChange={(event) => setEditMax(event.target.value)} type="number" min="1" max="1000" className={`${inputClass} w-full`} /><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={editEnabled} onChange={(event) => setEditEnabled(event.target.checked)} /> Proxy đang bật</label><div className="flex gap-2"><button type="button" disabled={!!working} onClick={() => void saveEdit(proxy)} className={buttonClass}>Lưu</button><button type="button" onClick={() => setEditing(null)} className={buttonClass}>Hủy</button></div></div> : <><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-100">{proxy.label}</h3><p className="truncate text-[11px] text-slate-400">{proxy.endpoint}</p></div><span className={proxy.enabled && proxy.status === 'ok' ? 'text-emerald-300' : proxy.enabled && proxy.status === 'down' ? 'text-rose-300' : 'text-slate-400'}>{!proxy.enabled ? 'Tắt' : proxy.status === 'ok' ? 'Hoạt động' : proxy.status === 'down' ? 'Hỏng' : 'Chưa biết'}</span></div><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-slate-500">Đã gán</dt><dd>{proxy.assigned}/{proxy.maxAccounts}</dd></div><div><dt className="text-slate-500">Độ trễ</dt><dd>{proxy.lastLatencyMs === null ? 'chưa biết' : `${proxy.lastLatencyMs} ms`}</dd></div><div className="col-span-2 break-words text-slate-400"><dt className="text-slate-500">Lỗi gần nhất</dt><dd>{proxy.lastError || 'chưa biết'}</dd></div></dl><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={!!working} onClick={() => { setWorking(proxy.id); void checkAdminProxy(proxy.id).then(onRefresh).catch(notify).finally(() => setWorking('')); }} className={buttonClass}>Kiểm tra</button><button type="button" disabled={!!working} onClick={() => startEdit(proxy)} className={buttonClass}>Sửa</button><button type="button" disabled={!!working || proxy.assigned > 0} onClick={() => void remove(proxy)} className="rounded-lg border border-rose-500/40 px-2.5 py-1.5 text-xs text-rose-200 disabled:opacity-40">Xóa</button></div></>}
+      </article>)}
+    </div>
+    {proxies.length === 0 && <p className="rounded-xl border border-slate-800 p-8 text-center text-slate-500">{loading ? 'Đang tải…' : 'Chưa có proxy.'}</p>}
+  </div>;
+}
 
 function UsersTab(props: {
   users: AdminUser[]; allUsers: AdminUser[]; query: string; setQuery: (value: string) => void; loading: boolean;
@@ -162,14 +219,20 @@ function UserActions({ user, activeAdminCount, currentUserId, onDone }: { user: 
   </>;
 }
 
-function AccountsTab({ accounts, owners, owner, status, setOwner, setStatus, onRefresh, onOpenAccountLog }: { accounts: AccountRuntime[]; owners: string[]; owner: string; status: string; setOwner: (value: string) => void; setStatus: (value: string) => void; onRefresh: () => Promise<void>; onOpenAccountLog: (id: string) => void }) {
-  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><select value={owner} onChange={(event) => setOwner(event.target.value)} className={inputClass}><option value="all">Mọi chủ sở hữu</option>{owners.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}><option value="all">Mọi trạng thái</option><option value="running">Đang chạy</option><option value="stopped">Đã dừng</option><option value="error">Lỗi</option></select><button type="button" onClick={() => void onRefresh()} className={buttonClass}><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> Tải runtime</button></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accounts.map((account) => <AccountAdminCard key={account.id} account={account} onRefresh={onRefresh} onOpenAccountLog={onOpenAccountLog} />)}</div>{accounts.length === 0 && <p className="rounded-xl border border-slate-800 p-8 text-center text-slate-500">Không có tài khoản phù hợp.</p>}</div>;
+function AccountsTab({ accounts, proxies, owners, owner, status, setOwner, setStatus, onRefresh, onOpenAccountLog }: { accounts: AccountRuntime[]; proxies: AdminProxy[]; owners: string[]; owner: string; status: string; setOwner: (value: string) => void; setStatus: (value: string) => void; onRefresh: () => Promise<void>; onOpenAccountLog: (id: string) => void }) {
+  return <div className="space-y-3"><div className="flex flex-wrap gap-2"><select value={owner} onChange={(event) => setOwner(event.target.value)} className={inputClass}><option value="all">Mọi chủ sở hữu</option>{owners.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}><option value="all">Mọi trạng thái</option><option value="running">Đang chạy</option><option value="stopped">Đã dừng</option><option value="error">Lỗi</option></select><button type="button" onClick={() => void onRefresh()} className={buttonClass}><RefreshCw className="mr-1 inline h-3.5 w-3.5" /> Tải runtime</button></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{accounts.map((account) => <AccountAdminCard key={account.id} account={account} proxies={proxies} onRefresh={onRefresh} onOpenAccountLog={onOpenAccountLog} />)}</div>{accounts.length === 0 && <p className="rounded-xl border border-slate-800 p-8 text-center text-slate-500">Không có tài khoản phù hợp.</p>}</div>;
 }
 
-function AccountAdminCard({ account, onRefresh, onOpenAccountLog }: { account: AccountRuntime; onRefresh: () => Promise<void>; onOpenAccountLog: (id: string) => void }) {
+function AccountAdminCard({ account, proxies, onRefresh, onOpenAccountLog }: { account: AccountRuntime; proxies: AdminProxy[]; onRefresh: () => Promise<void>; onOpenAccountLog: (id: string) => void }) {
   const [working, setWorking] = useState(false);
   const stop = async () => { if (working) return; setWorking(true); try { if (await confirmAction(`Dừng tài khoản ${account.accountName}?`, { confirmLabel: 'Dừng', danger: true })) { await stopBot(account.id); await onRefresh(); } } catch (error) { notify(error); } finally { setWorking(false); } };
-  return <article className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/40 p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-100">{account.accountName}</h3><p className="truncate text-[11px] text-slate-400">Chủ sở hữu: {account.ownerUsername ?? 'chưa biết'}</p></div><span className={`shrink-0 text-xs ${account.status === 'running' ? 'text-emerald-300' : account.status === 'error' ? 'text-rose-300' : 'text-slate-400'}`}>{account.status === 'running' ? 'Đang chạy' : account.status === 'error' ? 'Lỗi' : 'Đã dừng'}</span></div><dl className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-slate-500">Map</dt><dd className="truncate text-slate-200">{account.mapId || 'chưa biết'}</dd></div><div><dt className="text-slate-500">HP</dt><dd className="text-slate-200">{account.hp === null ? 'chưa biết' : account.hp}</dd></div><div><dt className="text-slate-500">Hurt</dt><dd className="text-slate-200">{account.vendor?.hurtCount ?? 'chưa biết'}</dd></div><div><dt className="text-slate-500">Auto</dt><dd className="text-slate-200">{account.vendor?.autoRequested ? 'Bật' : 'Tắt'}</dd></div><div><dt className="text-slate-500">Kết nối</dt><dd className="truncate text-slate-200">{account.connection || 'chưa biết'}</dd></div></dl><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={working || account.status !== 'running'} onClick={() => void stop()} className="rounded-lg border border-rose-500/40 bg-rose-600/10 px-2.5 py-1.5 text-xs font-semibold text-rose-200 disabled:opacity-40"><Square className="mr-1 inline h-3.5 w-3.5" /> Dừng</button><button type="button" onClick={() => onOpenAccountLog(account.id)} className={buttonClass}>Mở nhật ký</button></div></article>;
+  const assign = async (proxyId: string | null) => {
+    if (working || account.status === 'running') return;
+    setWorking(true);
+    try { await setAccountProxy(account.id, proxyId); await onRefresh(); } catch (error) { notify(error); } finally { setWorking(false); }
+  };
+  const selectableProxies = proxies.filter((proxy) => (proxy.enabled && proxy.status !== 'down') || proxy.id === account.proxy?.id);
+  return <article className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/40 p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-100">{account.accountName}</h3><p className="truncate text-[11px] text-slate-400">Chủ sở hữu: {account.ownerUsername ?? 'chưa biết'}</p></div><span className={`shrink-0 text-xs ${account.status === 'running' ? 'text-emerald-300' : account.status === 'error' ? 'text-rose-300' : 'text-slate-400'}`}>{account.status === 'running' ? 'Đang chạy' : account.status === 'error' ? 'Lỗi' : 'Đã dừng'}</span></div><dl className="mt-3 grid grid-cols-2 gap-2 text-xs"><div><dt className="text-slate-500">Map</dt><dd className="truncate text-slate-200">{account.mapId || 'chưa biết'}</dd></div><div><dt className="text-slate-500">HP</dt><dd className="text-slate-200">{account.hp === null ? 'chưa biết' : account.hp}</dd></div><div><dt className="text-slate-500">Hurt</dt><dd className="text-slate-200">{account.vendor?.hurtCount ?? 'chưa biết'}</dd></div><div><dt className="text-slate-500">Auto</dt><dd className="text-slate-200">{account.vendor?.autoRequested ? 'Bật' : 'Tắt'}</dd></div><div><dt className="text-slate-500">Kết nối</dt><dd className="truncate text-slate-200">{account.connection || 'chưa biết'}</dd></div></dl><div className="mt-3 space-y-2"><label className="block text-[11px] text-slate-500">Proxy tài khoản<select value={account.proxy?.id ?? ''} disabled={working || account.status === 'running'} onChange={(event) => void assign(event.target.value || null)} className={`${inputClass} mt-1 w-full`}><option value="">Không gán proxy</option>{selectableProxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.label} · {proxy.endpoint}</option>)}</select></label><div className="flex flex-wrap gap-2"><button type="button" disabled={working || account.status !== 'running'} onClick={() => void stop()} className="rounded-lg border border-rose-500/40 bg-rose-600/10 px-2.5 py-1.5 text-xs font-semibold text-rose-200 disabled:opacity-40"><Square className="mr-1 inline h-3.5 w-3.5" /> Dừng</button><button type="button" onClick={() => onOpenAccountLog(account.id)} className={buttonClass}>Mở nhật ký</button></div></div></article>;
 }
 
 function AuditTab({ logs, action, user, targetId, setAction, setUser, setTargetId, loading, hasMore, onLoadMore }: { logs: AuditLogEntry[]; action: string; user: string; targetId: string; setAction: (value: string) => void; setUser: (value: string) => void; setTargetId: (value: string) => void; loading: boolean; hasMore: boolean; onLoadMore: () => void }) {

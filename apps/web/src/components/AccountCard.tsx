@@ -64,6 +64,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   const ageLabel = age === null ? '—' : age < 1000 ? '<1s' : `${Math.floor(age / 1000)}s`;
 
   return <div className={`rounded-xl p-4 border ${running ? 'border-emerald-500/30 glass-panel-glow' : 'glass-panel border-slate-800'}`}>
+    <p className="mb-2 text-[10px] text-slate-500">Proxy: <span className={account.hasProxy ? 'text-emerald-300' : 'text-amber-300'}>{account.hasProxy ? 'đã gán' : 'chưa gán'}</span></p>
     <div className="flex items-start justify-between gap-3 mb-3">
       <div className="min-w-0">
         <h3 className="text-base font-bold text-slate-100 truncate">{account.characterName || account.accountName}</h3>

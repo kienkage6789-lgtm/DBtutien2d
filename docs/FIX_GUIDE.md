@@ -1488,3 +1488,14 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Backup/restore SQLite dùng `VACUUM INTO`, `.secret`, manifest/hash/schema, retention, integrity check, checksum rejection và `pre-restore-*`; có systemd service/timer.
 5. [x] Có `deploy/env.example`, systemd hardening, Caddy/Nginx mẫu và `docs/DEPLOY_VPS.md`; cập nhật API/spec/README/AGENTS.
 6. [~] Chưa chạy `pnpm build`, Vitest và toàn bộ test server chính thức trong sandbox; chưa xác minh Linux/VPS thật, reverse proxy/systemd, CSP mọi màn hình, soak/RAM Linux, hiệu năng rate-limit/WS và restore trên máy khác.
+
+## AB. Bước 3 multi-user — proxy theo account, fail-closed (offline 2026-10-09)
+
+1. [x] SQLite có `proxies`, `game_accounts.proxy_id`, mã hóa URL AES-256-GCM; legacy proxy URL không còn được đọc/ghi; capacity/duplicate/assignment/delete được kiểm tra.
+2. [x] Parser chặn scheme ngoài danh sách, thiếu/sai port, control/URL quá dài và private/loopback mặc định; endpoint/error/audit đều redacted.
+3. [x] Fetch auth và WebSocket vendor dùng cùng per-account transport; close khi stop; lỗi proxy có mã ổn định và không fallback direct; checker health HTTP + WS có timeout.
+4. [x] `REQUIRE_PROXY`, `AUTO_ASSIGN_PROXY`, checker interval/timeout và `ALLOW_PRIVATE_PROXY` đã có; checker định kỳ chỉ quét proxy enabled đang được gán, tối đa 3 proxy/lượt; start gate down/disabled/missing; auto-assign least-loaded atomic; start-all giữ lỗi riêng từng account.
+5. [x] Admin CRUD/check/gán proxy, audit chuyển trạng thái, regular user chỉ nhận `hasProxy`; dashboard có tab Proxy, assignment selector và không nhập proxy trong AddAccountModal.
+6. [x] Test source offline cho parser và fake HTTP/SOCKS5/WebSocket local; cập nhật API/spec/deploy/env/session log.
+7. [~] `git diff --check`/build/typecheck/Vitest chưa hoàn tất trong sandbox: `pnpm` không có PATH, Corepack bị chặn registry, tsx trực tiếp lỗi `uv_os_get_passwd returned ENOMEM`. Cần chạy toàn bộ build/test trong môi trường đầy đủ.
+8. [ ] Chưa xác minh proxy thật, HTTPS proxy TLS, SOCKS5h remote DNS, Supabase/game handshake thật, failover dài, checker tải lớn và UI trình duyệt thật; không chạm game thật.

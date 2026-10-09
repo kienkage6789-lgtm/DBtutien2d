@@ -12,7 +12,6 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClos
   const [accountName, setAccountName] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [proxyUrl, setProxyUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,11 +30,9 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClos
       await createAccount({
         accountName: accountName.trim(),
         password: password,
-        proxyUrl: proxyUrl.trim() || undefined,
       });
       setAccountName('');
       setPassword('');
-      setProxyUrl('');
       onCreated();
       onClose();
     } catch (err: any) {
@@ -122,22 +119,6 @@ export const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClos
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-slate-300 font-semibold mb-1.5 flex items-center justify-between">
-              <span>Proxy Riêng (Tùy chọn):</span>
-              <span className="text-[10px] text-slate-500 font-normal">HTTP / SOCKS5</span>
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="socks5://user:pass@host:port (Để trống nếu dùng IP máy)"
-                value={proxyUrl}
-                onChange={(e) => setProxyUrl(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono text-[11px]"
-              />
             </div>
           </div>
 

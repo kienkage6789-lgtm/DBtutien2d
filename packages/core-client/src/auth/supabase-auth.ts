@@ -43,6 +43,8 @@ export interface SupabaseAuthOptions {
   /** HTTP base of the game server, used for the `tim-dang-nhap` email fallback */
   gameApiBase?: string;
   requestTimeoutMs?: number;
+  /** Injectable fetch used by the server to enforce a per-account proxy. */
+  fetchImpl?: typeof fetch;
 }
 
 /** `kienvit` -> `kienvit@players.phamnhan.game`; input that already has `@` is kept. */
@@ -56,12 +58,14 @@ export class SupabaseAuth {
   private readonly anonKey: string;
   private readonly gameApiBase?: string;
   private readonly timeoutMs: number;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(options: SupabaseAuthOptions = {}) {
     this.url = (options.url || DEFAULT_SUPABASE_URL).replace(/\/+$/, '');
     this.anonKey = options.anonKey || DEFAULT_SUPABASE_ANON_KEY;
     this.gameApiBase = options.gameApiBase?.replace(/\/+$/, '');
     this.timeoutMs = options.requestTimeoutMs ?? 15000;
+    this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   /** Login with username (đạo hiệu) or real email + password. */
@@ -167,7 +171,7 @@ export class SupabaseAuth {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
     try {
-      return await fetch(url, { ...init, signal: ctrl.signal });
+      return await this.fetchImpl(url, { ...init, signal: ctrl.signal });
     } finally {
       clearTimeout(timer);
     }

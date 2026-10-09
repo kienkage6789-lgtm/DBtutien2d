@@ -174,6 +174,8 @@ export interface AccountRuntime {
   status: 'running' | 'stopped' | 'error';
   connection: string;
   authError: string | null;
+  hasProxy: boolean;
+  proxy?: { id: string; label: string; status: 'unknown' | 'ok' | 'down'; endpoint: string; hasAuth: boolean } | null;
   hasPassword: boolean;
   tokenExpiresAt: number | null;
   characterName: string;
@@ -229,6 +231,25 @@ export interface AccountRuntime {
   };
   monsters: Array<{ id: string; name?: string; x: number; y: number; hp?: number; maxHp?: number }>;
   players: Array<{ id: string; name?: string; x: number; y: number; realm?: string; hp?: number }>;
+}
+
+export type ProxyStatus = 'unknown' | 'ok' | 'down';
+
+export interface AdminProxy {
+  id: string;
+  label: string;
+  scheme: 'http' | 'socks5';
+  endpoint: string;
+  hasAuth: boolean;
+  maxAccounts: number;
+  enabled: boolean;
+  status: ProxyStatus;
+  lastCheckAt: number | null;
+  lastLatencyMs: number | null;
+  lastError: string | null;
+  assigned: number;
+  accounts: Array<{ id: string; accountName: string; ownerUsername: string; running: boolean }>;
+  createdAt: string;
 }
 
 export interface MapDataContext {

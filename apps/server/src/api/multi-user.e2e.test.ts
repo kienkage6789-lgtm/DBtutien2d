@@ -31,7 +31,7 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     let body: any = null; try { body = await r.json(); } catch { /* không phải JSON */ }
     return { s: r.status, b: body };
   };
-  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '', MIN_FREE_MEM_MB: '0', WS_MAX_CONNECTIONS_PER_USER: '1' };
+  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '', MIN_FREE_MEM_MB: '0', ALLOW_PRIVATE_PROXY: '1', WS_MAX_CONNECTIONS_PER_USER: '1' };
   const srv = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   srv.stdout.on('data', (d) => { log += d; });
@@ -130,6 +130,39 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(overQuota.s === 403 && overQuota.b.errorCode === 'QUOTA_BOTS', 'quota blocks add ' + overQuota.s + ' ' + overQuota.b?.errorCode);
     check((await j(`/api/admin/users/${alice.id}`, 'PATCH', { maxBots: -1 }, tokA)).s === 400, 'maxBots invalid 400');
     check((await j(`/api/admin/users/${alice.id}`, 'PATCH', { maxBots: 3 }, tokA)).s === 200, 'maxBots=3 restored');
+    // Proxy: CRUD admin, sức chứa, không lộ endpoint/mật khẩu cho người dùng, fail-closed khi proxy chết (cổng 1 không có ai nghe).
+    const proxySecretWord = 'pw-proxy-bi-mat';
+    check((await j('/api/admin/proxies', 'GET', null, tokAl)).s === 403, 'user proxies 403');
+    check((await j('/api/admin/proxies', 'GET')).s === 401, 'no token proxies 401');
+    check((await j('/api/admin/proxies', 'POST', { label: 'bad', url: 'ftp://x:1' }, tokA)).s === 400, 'proxy bad scheme 400');
+    check((await j('/api/admin/proxies', 'POST', { label: 'bad', url: 'http://127.0.0.1' }, tokA)).s === 400, 'proxy missing port 400');
+    const proxyCreated = await j('/api/admin/proxies', 'POST', { label: 'px1', url: `http://pxuser:${proxySecretWord}@127.0.0.1:1`, maxAccounts: 1 }, tokA);
+    check(proxyCreated.s === 201 || proxyCreated.s === 200, 'proxy created ' + proxyCreated.s + JSON.stringify(proxyCreated.b).slice(0, 120));
+    check(!JSON.stringify(proxyCreated.b).includes(proxySecretWord), 'proxy create response hides secret');
+    const proxyId = (proxyCreated.b.data?.proxy ?? proxyCreated.b.data)?.id;
+    check(typeof proxyId === 'string', 'proxy id');
+    check((await j('/api/admin/proxies', 'POST', { label: 'dup', url: `http://pxuser:${proxySecretWord}@127.0.0.1:1` }, tokA)).s === 409, 'proxy duplicate 409');
+    const proxyList = await j('/api/admin/proxies', 'GET', null, tokA);
+    check(proxyList.s === 200 && !JSON.stringify(proxyList.b).includes(proxySecretWord) && !JSON.stringify(proxyList.b).includes('pxuser'), 'proxy list hides credentials');
+    check((await j(`/api/admin/accounts/${idA}/proxy`, 'PUT', { proxyId }, tokAl)).s === 403, 'user cannot assign proxy');
+    check((await j(`/api/admin/accounts/${idA}/proxy`, 'PUT', { proxyId }, tokA)).s === 200, 'assign proxy to alice account');
+    const fullAssign = await j(`/api/admin/accounts/${idB}/proxy`, 'PUT', { proxyId }, tokA);
+    check(fullAssign.s === 409 && fullAssign.b.errorCode === 'PROXY_FULL', 'proxy capacity enforced ' + fullAssign.s + ' ' + fullAssign.b?.errorCode);
+    const aliceView = await j('/api/accounts', 'GET', null, tokAl);
+    const aliceText = JSON.stringify(aliceView.b);
+    check(aliceView.b.data[0]?.hasProxy === true, 'user sees hasProxy');
+    check(!aliceText.includes('127.0.0.1:1') && !aliceText.includes('px1') && !aliceText.includes(proxySecretWord) && !aliceText.includes('pxuser'), 'user response hides proxy endpoint');
+    const checkResult = await j(`/api/admin/proxies/${proxyId}/check`, 'POST', {}, tokA);
+    check(checkResult.s === 200 && (checkResult.b.data?.status ?? checkResult.b.data?.proxy?.status) === 'down', 'dead proxy checks down ' + checkResult.s + JSON.stringify(checkResult.b).slice(0, 160));
+    check(!JSON.stringify(checkResult.b).includes(proxySecretWord), 'check hides secret');
+    const startDeadProxy = await j(`/api/accounts/${idA}/start`, 'POST', {}, tokAl);
+    check(startDeadProxy.s === 503 && startDeadProxy.b.errorCode === 'PROXY_UNAVAILABLE', 'start refuses dead proxy (fail-closed) ' + startDeadProxy.s + ' ' + startDeadProxy.b?.errorCode);
+    check((await j(`/api/admin/proxies/${proxyId}`, 'DELETE', null, tokA)).s === 409, 'cannot delete assigned proxy');
+    check((await j(`/api/admin/accounts/${idA}/proxy`, 'PUT', { proxyId: null }, tokA)).s === 200, 'unassign proxy');
+    check((await j(`/api/admin/proxies/${proxyId}`, 'DELETE', null, tokA)).s === 200, 'delete unassigned proxy');
+    const auditText = JSON.stringify((await j('/api/admin/audit?limit=200', 'GET', null, tokA)).b);
+    check(!auditText.includes(proxySecretWord) && auditText.includes('proxy_created'), 'audit records proxy without secret');
+    check(!log.includes(proxySecretWord), 'server log hides proxy secret');
     // 7. ma trận sở hữu
     const list = async (t: string): Promise<string[]> => (await j('/api/accounts', 'GET', null, t)).b.data.map((x: any) => x.id);
     const lA = await list(tokAl), lB = await list(tokBo), lAd = await list(tokA);

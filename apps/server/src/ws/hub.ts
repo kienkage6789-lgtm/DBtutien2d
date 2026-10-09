@@ -173,7 +173,14 @@ export class WebSocketHub {
     return accounts.filter((account) => {
       if (!account || typeof account !== 'object' || Array.isArray(account)) return false;
       const id = (account as Record<string, unknown>).id;
-      return typeof id === 'string' && this.canSeeAccount(principal, id);
+      if (typeof id !== 'string' || !this.canSeeAccount(principal, id)) return false;
+      return true;
+    }).map((account) => {
+      if (!account || typeof account !== 'object' || Array.isArray(account)) return account;
+      const copy = { ...(account as Record<string, unknown>) };
+      delete copy.proxy;
+      delete copy.proxyId;
+      return copy;
     });
   }
 
@@ -209,7 +216,16 @@ export class WebSocketHub {
   }
 
   public broadcastAccountUpdate(accountData: any): void {
-    this.broadcast({ type: 'account_updated', data: accountData });
+    const raw = JSON.stringify({ type: 'account_updated', data: accountData });
+    for (const [client, context] of this.clients) {
+      if (client.readyState !== WebSocket.OPEN || !this.canSeeMessage({ type: 'account_updated', data: accountData }, context.principal)) continue;
+      if (context.principal.role === 'admin') client.send(raw);
+      else {
+        const copy = accountData && typeof accountData === 'object' ? { ...accountData } : accountData;
+        if (copy && typeof copy === 'object') { delete copy.proxy; delete copy.proxyId; }
+        client.send(JSON.stringify({ type: 'account_updated', data: copy }));
+      }
+    }
   }
 
   public broadcastActivity(accountId: string, activity: string): void {

@@ -3,7 +3,7 @@ import { db } from '../db/database.js';
 import { wsHub } from '../ws/hub.js';
 import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
-import { VendorRunner, type KhuInfo, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { VendorRunner, type KhuInfo, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -11,6 +11,9 @@ import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import { entitlement } from '../security/entitlement.js';
 import { hasRunnerMemoryCapacity } from './capacity.js';
+import { createProxyTransport, type ProxyTransport } from '../network/proxy-transport.js';
+import { ProxyChecker } from '../network/proxy-checker.js';
+import { parseProxyUrl } from '../network/proxy-url.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
 
@@ -56,6 +59,8 @@ export interface AccountRuntimeInfo {
   status: 'running' | 'stopped' | 'error';
   connection: string;
   authError: string | null;
+  hasProxy: boolean;
+  proxy?: { id: string; label: string; status: 'unknown' | 'ok' | 'down'; endpoint: string; hasAuth: boolean } | null;
   hasPassword: boolean;
   tokenExpiresAt: number | null;
   characterName: string;
@@ -158,6 +163,9 @@ export class WorkerPool {
   private readonly activeVendors = new Map<string, { runner: VendorRunner }>();
   private runtimeBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private readonly observedMaps = new Map<string, ObservedMap>();
+  private readonly proxyChecker = new ProxyChecker();
+  private readonly proxyCheckLastAt = new Map<string, number>();
+  private proxyCheckTimer: ReturnType<typeof setInterval> | null = null;
   private readonly auth = new SupabaseAuth({
     url: CONFIG.SUPABASE_URL,
     anonKey: CONFIG.SUPABASE_ANON_KEY,
@@ -165,7 +173,16 @@ export class WorkerPool {
   });
 
   /** Verify credentials without starting a game session. */
-  public async verifyLogin(accountName: string, password: string) {
+  public async verifyLogin(accountName: string, password: string, transport?: ProxyTransport) {
+    if (transport) {
+      const auth = new SupabaseAuth({
+        url: CONFIG.SUPABASE_URL,
+        anonKey: CONFIG.SUPABASE_ANON_KEY,
+        gameApiBase: CONFIG.GAME_SERVER_URL.replace(/^ws/i, 'http'),
+        fetchImpl: transport.fetch,
+      });
+      return auth.signInWithPassword(accountName, password);
+    }
     return this.auth.signInWithPassword(accountName, password);
   }
 
@@ -175,7 +192,31 @@ export class WorkerPool {
     if (!account) throw new Error(`Account not found: ${accountId}`);
     if (this.activeVendors.has(accountId)) return true;
     this.assertCanStart(account);
-    return this.startVendorAccount(accountId, account);
+    const transport = await this.prepareProxyTransport(accountId);
+    try {
+      return await this.startVendorAccount(accountId, account, transport);
+    } catch (error) {
+      if (transport) await transport.close().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async prepareProxyTransport(accountId: string): Promise<ProxyTransport | undefined> {
+    const assigned = db.getAccountProxy(accountId);
+    if (!assigned) {
+      if (CONFIG.REQUIRE_PROXY) throw new Error('PROXY_REQUIRED');
+      return undefined;
+    }
+    if (!assigned.enabled) throw new Error('PROXY_DISABLED');
+    if (assigned.status === 'down') throw new Error('PROXY_UNAVAILABLE');
+    const checkAge = assigned.lastCheckAt === null ? Number.POSITIVE_INFINITY : Date.now() - assigned.lastCheckAt;
+    if (assigned.status === 'unknown' || checkAge > 30_000) {
+      const result = await this.checkProxy(assigned.id, true);
+      if (result.status !== 'ok') throw new Error('PROXY_UNAVAILABLE');
+    }
+    const refreshed = db.getAccountProxy(accountId);
+    if (!refreshed?.url) throw new Error('PROXY_UNAVAILABLE');
+    return createProxyTransport(refreshed.url);
   }
 
   private assertCanStart(account: NonNullable<ReturnType<typeof db.getAccountById>>): void {
@@ -197,9 +238,63 @@ export class WorkerPool {
     }
   }
 
+  public async checkProxy(proxyId: string, force = false): Promise<{ status: 'ok' | 'down'; latencyMs: number | null; error: string | null }> {
+    const proxy = db.getProxyById(proxyId);
+    if (!proxy) throw new Error('PROXY_NOT_FOUND');
+    const now = Date.now();
+    const previousCheck = this.proxyCheckLastAt.get(proxyId) ?? 0;
+    if (!force && now - previousCheck < 5_000) throw new Error('PROXY_CHECK_RATE_LIMITED');
+    this.proxyCheckLastAt.set(proxyId, now);
+    const secret = db.getProxySecret(proxyId);
+    if (!secret) {
+      const result = { status: 'down' as const, latencyMs: null, error: 'Proxy secret is unavailable.' };
+      this.recordProxyCheck(proxyId, result);
+      return result;
+    }
+    const result = await this.proxyChecker.check(secret);
+    this.recordProxyCheck(proxyId, result);
+    return result;
+  }
+
+  private recordProxyCheck(proxyId: string, result: { status: 'ok' | 'down'; latencyMs: number | null; error: string | null }): void {
+    const updated = db.updateProxyCheck(proxyId, { ...result, checkedAt: Date.now() });
+    if (!updated) return;
+    if (updated.previousStatus !== updated.proxy.status) {
+      db.addAuditLog({ actorId: null, action: 'proxy_status_changed', targetType: 'proxy', targetId: proxyId, detail: `status=${updated.proxy.status}` });
+      for (const account of db.getProxyAccounts(proxyId)) {
+        const saved = db.addLog(account.id, updated.proxy.status === 'down' ? 'warn' : 'info', 'Proxy', `Proxy status changed to ${updated.proxy.status}`);
+        wsHub.broadcastLog(saved);
+      }
+    }
+    if (updated.proxy.status === 'down' && updated.previousStatus !== 'down') {
+      db.addAuditLog({ actorId: null, action: 'proxy_check_failed', targetType: 'proxy', targetId: proxyId, detail: result.error ?? 'Proxy check failed.' });
+    }
+  }
+
+  public startProxyChecks(): void {
+    if (this.proxyCheckTimer) return;
+    this.proxyCheckTimer = setInterval(() => {
+      const candidates = db.getProxies()
+        .filter((proxy) => proxy.enabled && db.getProxyAssignedCount(proxy.id) > 0)
+        .slice(0, 3);
+      for (const proxy of candidates) void this.checkProxy(proxy.id).catch(() => undefined);
+    }, CONFIG.PROXY_CHECK_INTERVAL_MS);
+    this.proxyCheckTimer.unref?.();
+  }
+
+  public stopProxyChecks(): void {
+    if (this.proxyCheckTimer) clearInterval(this.proxyCheckTimer);
+    this.proxyCheckTimer = null;
+  }
+
+  public getRunningAccountIdsForProxy(proxyId: string): string[] {
+    return db.getProxyAccounts(proxyId).filter((account) => this.activeVendors.has(account.id)).map((account) => account.id);
+  }
+
   private async startVendorAccount(
     accountId: string,
     account: NonNullable<ReturnType<typeof db.getAccountById>>,
+    transport?: ProxyTransport,
   ): Promise<boolean> {
     const creds = db.getCredentials(accountId);
     if (!creds.password && !creds.refreshToken && !creds.legacyToken) {
@@ -217,6 +312,7 @@ export class WorkerPool {
       vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
+      ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
       onSessionUpdated: (session) => {
         db.updateCredentials(accountId, { refreshToken: session.refreshToken });
       },
@@ -334,8 +430,12 @@ export class WorkerPool {
         }
         first = false;
         await this.startAccount(account.id);
-      } catch {
-        // Individual account failures are already reflected in account status/logs.
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        const stableCode = /^(PROXY_[A-Z_]+|NO_PROXY_AVAILABLE|SERVER_CAPACITY(?:_MEMORY)?|BOT_LIMIT_REACHED|ENTITLEMENT_[A-Z_]+|USER_DISABLED)$/.exec(message)?.[1] ?? 'START_FAILED';
+        const saved = db.addLog(account.id, 'warn', 'Orchestrator', `Bỏ qua tài khoản khi khởi động: ${stableCode}`);
+        wsHub.broadcastLog(saved);
+        wsHub.broadcastAccountUpdate(this.getRuntimeInfo(account.id));
       }
     }
   }
@@ -505,6 +605,19 @@ export class WorkerPool {
       : this.getStoppedRuntimeInfo(accountId, account);
   }
 
+  private runtimeProxy(account: ReturnType<typeof db.getAccountById>): NonNullable<AccountRuntimeInfo['proxy']> | null {
+    if (!account?.proxyId) return null;
+    const proxy = db.getProxyById(account.proxyId);
+    const secret = db.getProxySecret(account.proxyId);
+    if (!proxy || !secret) return null;
+    try {
+      const parsed = parseProxyUrl(secret, true);
+      return { id: proxy.id, label: proxy.label, status: proxy.status, endpoint: parsed.safeLabel, hasAuth: parsed.hasAuth };
+    } catch {
+      return null;
+    }
+  }
+
   private getStoppedRuntimeInfo(
     accountId: string,
     account: ReturnType<typeof db.getAccountById>,
@@ -520,6 +633,8 @@ export class WorkerPool {
       status: account?.status === 'error' ? 'error' : 'stopped',
       connection: 'DISCONNECTED',
       authError: account?.authError ?? null,
+      hasProxy: !!account?.proxyId,
+      proxy: this.runtimeProxy(account),
       hasPassword: !!account?.encryptedPassword,
       tokenExpiresAt: null,
       characterName: account?.characterName || account?.accountName || 'Unknown',
@@ -610,6 +725,8 @@ export class WorkerPool {
       status: snapshot.lifecycle === 'error' ? 'error' : 'running',
       connection: snapshot.connection,
       authError: account?.authError ?? null,
+      hasProxy: !!account?.proxyId,
+      proxy: this.runtimeProxy(account),
       hasPassword: !!account?.encryptedPassword,
       tokenExpiresAt: snapshot.tokenExpiresAt,
       characterName: account?.characterName || account?.accountName || 'Unknown',
