@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Play, Square, Plus, RefreshCw, Radio, LogOut, Settings } from 'lucide-react';
 import type { AuthUser } from '../types';
+import { entitlementLockReason, formatRemaining } from '../lib/entitlement';
 
 interface NavbarProps {
   isConnected: boolean;
@@ -27,6 +28,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   onOpenAccount,
 }) => {
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const regular = user.role !== 'admin';
+  const lockReason = entitlementLockReason(user);
+  const quotaFull = regular && user.usage !== undefined && user.usage.accounts >= user.usage.maxBots;
+  const effectiveNow = clock + (user.serverClockOffsetMs ?? 0);
   return (
     <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#0a0d14]/85 backdrop-blur-md px-4 lg:px-8 py-3.5 transition-all">
       <div className="mx-auto flex min-w-0 max-w-7xl flex-col items-center justify-between gap-4 md:flex-row">
@@ -56,6 +66,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-slate-500">·</span>
             <span className="text-emerald-400">{user.role === 'admin' ? 'quản trị' : 'người dùng'}</span>
           </div>
+          {regular && <div className={`flex max-w-full flex-wrap items-center gap-x-2 rounded-lg border px-3 py-1.5 text-xs ${lockReason ? 'border-rose-500/40 bg-rose-950/40 text-rose-200' : 'border-slate-800 bg-slate-900/60 text-slate-300'}`}>
+            <span>{lockReason ?? `Hạn dùng còn ${formatRemaining(user.entitlement.expiresAt, effectiveNow)}`}</span>
+            <span className="text-slate-600">·</span>
+            <span>Bot {user.usage?.accounts ?? totalAccounts}/{user.maxBots} · chạy {user.usage?.running ?? runningCount}</span>
+          </div>}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-xs">
             <Radio className={`w-3.5 h-3.5 ${isConnected ? 'text-emerald-400 animate-pulse' : 'text-rose-500'}`} />
             <span className={isConnected ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
@@ -75,6 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               hidden
               onClick={onStartAll}
+              disabled={!!lockReason}
               title="Bắt đầu toàn bộ bot"
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-colors shadow-sm"
             >
@@ -101,7 +117,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <button
               onClick={onOpenAddModal}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.25)] transition-all"
+              disabled={quotaFull}
+              title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : 'Thêm tài khoản (nếu còn quota)'}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.25)] transition-all disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>Thêm Tài Khoản</span>

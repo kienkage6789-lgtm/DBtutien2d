@@ -6,6 +6,7 @@ import { describeContextBlock, ENTITY_CONTEXT_TTL_MS, isEntityContextValid, reso
 
 interface MiniMapProps {
   account: AccountRuntime;
+  controlsDisabled?: boolean;
   geometry?: WorldBounds | null;
   onMoveTo: (target: Point) => Promise<MoveToOperation>;
   onCancelMoveTo: (operationId: string) => Promise<MoveToOperation>;
@@ -48,7 +49,7 @@ export function getMoveToLockReason(input: {
   return null;
 }
 
-export const MiniMap: React.FC<MiniMapProps> = ({ account, geometry, onMoveTo, onCancelMoveTo }) => {
+export const MiniMap: React.FC<MiniMapProps> = ({ account, geometry, controlsDisabled = false, onMoveTo, onCancelMoveTo }) => {
   const [clock, setClock] = useState(Date.now());
   const [localOperation, setLocalOperation] = useState<MoveToOperation | null>(null);
   const [requestPending, setRequestPending] = useState(false);
@@ -71,7 +72,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ account, geometry, onMoveTo, o
   const autoActive = account.vendor?.autoRequested === true
     || (account.vendor?.supervisor?.phase !== undefined && account.vendor.supervisor.phase !== 'idle');
   const runnerReady = account.status === 'running' && account.vendor !== undefined;
-  const canMove = runnerReady && view.usable && view.khu !== null && validGeometry !== null && !autoActive
+  const canMove = !controlsDisabled && runnerReady && view.usable && view.khu !== null && validGeometry !== null && !autoActive
     && !isRunning(operation) && !requestPending;
   const coordinate = (x: number, y: number) => worldToMiniMap({ x, y }, validGeometry!, W, H);
 
@@ -153,7 +154,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ account, geometry, onMoveTo, o
     </div>
     {operation && <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-cyan-200" role="status">
       <span>{formatMoveToStatus(operation)}</span>
-      {isRunning(operation) && <button type="button" onClick={handleCancel} disabled={requestPending} className="rounded border border-rose-500/50 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy di chuyển</button>}
+      {isRunning(operation) && <button type="button" onClick={handleCancel} disabled={controlsDisabled || requestPending} className="rounded border border-rose-500/50 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy di chuyển</button>}
     </div>}
     <p className="text-[10px] text-slate-500">Người chơi: {playersValid ? account.players.length : 'chưa fresh'} · Quái: {monstersValid ? account.monsters.length : 'stale/không có'}</p>
   </div>;

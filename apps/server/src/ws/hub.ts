@@ -108,7 +108,12 @@ export class WebSocketHub {
   }
 
   private canSeeMessage(message: WsMessage, principal: Principal): boolean {
-    if (message.type === 'system_alert') return principal.role === 'admin';
+    if (message.type === 'system_alert') {
+      const ownerId = message.data && typeof message.data === 'object' && !Array.isArray(message.data)
+        ? (message.data as Record<string, unknown>).ownerId
+        : undefined;
+      return principal.role === 'admin' || (typeof ownerId === 'string' && ownerId === principal.userId);
+    }
     const accountId = this.accountIdFromMessage(message);
     return !!accountId && this.canSeeAccount(principal, accountId);
   }
@@ -134,6 +139,16 @@ export class WebSocketHub {
 
   public broadcastActivity(accountId: string, activity: string): void {
     this.broadcast({ type: 'bot_activity', data: { accountId, activity } });
+  }
+
+  public broadcastSystemAlertToOwner(ownerId: string, alert: { reason: string; message: string }): void {
+    const message: WsMessage = { type: 'system_alert', data: { reason: alert.reason, message: alert.message } };
+    const raw = JSON.stringify(message);
+    for (const [client, context] of this.clients) {
+      if (client.readyState === WebSocket.OPEN && context.principal.userId === ownerId) {
+        client.send(raw);
+      }
+    }
   }
 
   public closeSession(sessionId: string): void {

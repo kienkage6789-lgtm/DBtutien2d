@@ -1459,3 +1459,13 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Dashboard có login, user/role, logout, đổi mật khẩu và banner `mustChangePassword`; WS dùng session token.
 5. [~] Smoke password hash, migration/auth/session test mới và kiểm tra Node 24 `node:sqlite` đã pass; `pnpm build`/Vitest chưa chạy được vì `pnpm` không có PATH và package TypeScript/Vitest dưới `.pnpm` trả `EPERM` (test server liên quan đã chạy bằng binary tsx trực tiếp với preload môi trường).
 6. [ ] Chưa xác minh độ bền WAL khi crash, hành vi Linux, đóng WS khi session hết hạn trên server thật và hiệu năng broadcast nhiều account; chưa chạm game thật/mạng.
+
+## Y. Bước 2 multi-user — entitlement/quota/watcher (offline 2026-10-09)
+
+1. [x] Thêm `computeGrant`/`entitlement`, bảng `grants`, public `entitlement` + `usage`, endpoint admin grant/expiry và audit; admin vẫn bypass.
+2. [x] Gate mọi route điều khiển bot cần quyền, quota tạo account kiểm tra lại sau `verifyLogin` và INSERT quota nằm trong transaction; người hết hạn vẫn thêm nếu còn chỗ.
+3. [x] Thêm `MAX_TOTAL_RUNNERS`, giới hạn user đang chạy, watcher có clock/interval tiêm được, dừng runner khi expired/none/disabled, audit/log/system alert riêng owner; không chạy chồng.
+4. [x] Dashboard hiển thị đếm hạn/Bot n/max, banner khóa điều khiển, ánh xạ mã lỗi mới và thông báo `system_alert`; admin không hiện banner hạn.
+5. [x] Test source cho grant/entitlement/watcher và mở rộng e2e cấp hạn → qua gate vendor không mở game → thu hồi → 403; chưa chạy chính thức trong sandbox.
+6. [~] `pnpm build`, Vitest và từng file `npx tsx --test` cần chạy ở môi trường người giao việc; TypeScript toolchain sandbox hiện trả `EPERM` khi đọc package dưới `.pnpm`.
+7. [ ] Chưa xác minh live lệch giờ server/trình duyệt, watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và `MAX_TOTAL_RUNNERS` theo RAM/soak Linux.

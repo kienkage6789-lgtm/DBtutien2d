@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — BƯỚC 2 multi-user: entitlement, hạn mức bot và watcher tự ngắt (offline)
+
+Thay đổi: thêm `computeGrant`/`entitlement` dùng đồng hồ truyền vào, bảng SQLite `grants` idempotent và cấp hạn cộng dồn; public user/auth me có entitlement, usage và `serverNow`. Thêm endpoint admin cấp hạn `1d|7d|30d`/đặt hạn tuyệt đối, audit `user_granted`/`user_expiry_set`, kiểm tra `maxBots` trong khoảng 0..1000 và kích watcher sau thay đổi. Route điều khiển bot của user không còn quyền trả mã 403 ổn định; tạo account cho user hết hạn vẫn được nếu còn quota, còn quota được kiểm tra lại sau `verifyLogin` và trong transaction INSERT.
+
+Thêm `MAX_TOTAL_RUNNERS` (0 = không giới hạn), gate số runner theo owner/toàn server, kiểm tra lại entitlement sau `await runner.start()`, `EntitlementWatcher` có clock/interval tiêm được, chống chạy chồng, dừng toàn bộ runner expired/none/disabled, audit/log từng account và `system_alert` WS chỉ cho owner. Khi server khởi động, trạng thái persisted `running` được đặt lại `stopped`; bot không tự chạy lại. Dashboard hiển thị hạn dùng/Bot n/max, banner khóa điều khiển tự cập nhật theo đồng hồ trình duyệt, sanitizer user mới, thông báo system alert và ánh xạ lỗi quota/entitlement. Khi một runner lỗi lúc sweep, pool tiếp tục thử các runner còn lại và giữ lỗi để lượt sau thử lại.
+
+Test source: `security/entitlement.test.ts`, `orchestrator/entitlement-watcher.test.ts`; mở rộng `api/multi-user.e2e.test.ts` để cấp hạn → kiểm tra qua cổng entitlement mà không mở game → thu hồi → 403. Không chạm game thật, vendor/headless hay mạng.
+
+Lệnh đã thử: `node --version` → `v24.16.0`; syntax check Node 24 cho các file server thay đổi pass; test offline bằng loader Node 24: `entitlement` 2/2, `EntitlementWatcher` 2/2; `git diff --check` pass. `pnpm build` và `pnpm --filter @tutien2d/web test` bị chặn vì `pnpm` không có PATH; `npx --no-install tsx --test src/security/entitlement.test.ts` bị `uv_os_get_passwd returned ENOMEM`; `node_modules/.bin/tsc.cmd -p apps/server/tsconfig.json --noEmit` bị `EPERM` khi đọc `node_modules/.pnpm/typescript@5.9.3/.../tsc`. Chưa tuyên bố build/test chính thức pass. Người giao việc cần chạy `pnpm build`, `pnpm --filter @tutien2d/web test` và từng file server bằng `cd apps/server && npx tsx --test <file>`.
+
+Chưa xác minh: lệch giờ server/trình duyệt, watcher khi có nhiều trăm user, runner bị dừng giữa nhiệm vụ, `MAX_TOTAL_RUNNERS` theo RAM/soak Linux và live game.
+
 ## 2026-10-09 — BƯỚC 1 multi-user: SQLite, đăng nhập/phiên và ownership REST/WS (offline)
 
 Thay đổi: chuyển `DatabaseService` sang `node:sqlite` tại `DATA_DIR/tutien_db.sqlite`, bật WAL/foreign keys, thêm users/sessions/game_accounts/bot_configs/logs/audit_log, migration một lần từ `tutien_db.json` sang owner admin và giữ file cũ `.migrated` khi thành công. Bổ sung scrypt password hash, chuẩn hóa username, admin đầu tiên với `must_change_password`, session bearer 32 byte chỉ lưu SHA-256, sliding TTL 7 ngày, tối đa 5 session và rate-limit login theo IP + username. `/health` và login là route công khai duy nhất; API_TOKEN cũ chỉ còn compatibility loopback theo `ALLOW_LEGACY_API_TOKEN`.

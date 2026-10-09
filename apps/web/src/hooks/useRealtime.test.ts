@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo } from './useRealtime';
+import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -130,5 +130,10 @@ describe('mergeAccountRuntime vitals freshness', () => {
       id: 'log-1', accountId: 'account-test', timestamp: 1, level: 'info', module: 'test', message: 'ok',
     });
     expect(sanitizeLog({ id: 'log-1', accountId: 'account-test', timestamp: '1', level: 'info', module: 'test', message: 'bad' })).toBeUndefined();
+  });
+
+  it('sanitizes owner-only system alerts', () => {
+    expect(sanitizeSystemAlert({ reason: 'expired', message: 'Hạn đã hết.' })).toEqual({ reason: 'expired', message: 'Hạn đã hết.' });
+    expect(sanitizeSystemAlert({ reason: 'expired', message: 7 })).toBeUndefined();
   });
 });

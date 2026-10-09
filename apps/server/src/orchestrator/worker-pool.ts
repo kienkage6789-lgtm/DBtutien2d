@@ -9,6 +9,7 @@ import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import { entitlement } from '../security/entitlement.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
 
@@ -170,7 +171,24 @@ export class WorkerPool {
     const account = db.getAccountById(accountId);
     if (!account) throw new Error(`Account not found: ${accountId}`);
     if (this.activeVendors.has(accountId)) return true;
+    this.assertCanStart(account);
     return this.startVendorAccount(accountId, account);
+  }
+
+  private assertCanStart(account: NonNullable<ReturnType<typeof db.getAccountById>>): void {
+    const owner = db.getUserById(account.ownerId);
+    if (owner?.role === 'user') {
+      const current = entitlement(owner, Date.now());
+      if (current.state !== 'active') {
+        const code = current.state === 'disabled' ? 'USER_DISABLED' : current.state === 'none' ? 'ENTITLEMENT_NONE' : 'ENTITLEMENT_EXPIRED';
+        throw new Error(code);
+      }
+      const runningForOwner = this.getRunningAccountIdsForOwner(owner.id).filter((id) => id !== account.id).length;
+      if (runningForOwner >= owner.maxBots) throw new Error('BOT_LIMIT_REACHED');
+    }
+    if (CONFIG.MAX_TOTAL_RUNNERS > 0 && this.activeVendors.size >= CONFIG.MAX_TOTAL_RUNNERS) {
+      throw new Error('SERVER_CAPACITY');
+    }
   }
 
   private async startVendorAccount(
@@ -211,14 +229,35 @@ export class WorkerPool {
     this.ensureRuntimeBroadcast();
     try {
       await runner.start();
+      if (this.activeVendors.get(accountId)?.runner !== runner) {
+        await runner.stop().catch(() => undefined);
+        db.updateAccount(accountId, { status: 'stopped' });
+        return false;
+      }
+      const owner = db.getUserById(account.ownerId);
+      const afterStartEntitlement = owner?.role === 'user' ? entitlement(owner, Date.now()) : null;
+      if (afterStartEntitlement && afterStartEntitlement.state !== 'active') {
+        await runner.stop().catch(() => undefined);
+        this.activeVendors.delete(accountId);
+        db.updateAccount(accountId, { status: 'stopped' });
+        const code = afterStartEntitlement.state === 'disabled'
+          ? 'USER_DISABLED'
+          : afterStartEntitlement.state === 'none' ? 'ENTITLEMENT_NONE' : 'ENTITLEMENT_EXPIRED';
+        throw new Error(code);
+      }
       db.updateAccount(accountId, { status: 'running', authError: null });
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
       return true;
     } catch (error) {
       this.activeVendors.delete(accountId);
-      db.updateAccount(accountId, { status: 'error' });
       const rawCode = error instanceof Error ? error.message.split(':', 1)[0].trim() : '';
       const code = /^[A-Z][A-Z0-9_]{2,79}$/.test(rawCode) ? rawCode : 'UNKNOWN';
+      if (code === 'ENTITLEMENT_EXPIRED' || code === 'ENTITLEMENT_NONE' || code === 'USER_DISABLED') {
+        db.updateAccount(accountId, { status: 'stopped' });
+        wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+        throw error;
+      }
+      db.updateAccount(accountId, { status: 'error' });
       const saved = db.addLog(accountId, 'error', 'VendorRunner', `Vendor runner start failed (${code})`);
       wsHub.broadcastLog(saved);
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
@@ -277,6 +316,11 @@ export class WorkerPool {
     let first = true;
     for (const account of db.getAccounts(ownerId)) {
       if (this.activeVendors.has(account.id)) continue;
+      const owner = db.getUserById(account.ownerId);
+      if (owner?.role === 'user' && entitlement(owner, Date.now()).state !== 'active') {
+        db.addLog(account.id, 'warn', 'Orchestrator', 'Bỏ qua do người dùng không còn quyền sử dụng');
+        continue;
+      }
       try {
         if (!first) {
           const { min, max } = CONFIG.LOGIN_STAGGER_MS;
@@ -297,10 +341,19 @@ export class WorkerPool {
 
   public async stopAccountsForOwner(ownerId: string): Promise<boolean> {
     const accountIds = db.getAccounts(ownerId).map((account) => account.id);
+    let ok = true;
     for (const accountId of accountIds) {
-      if (this.activeVendors.has(accountId) && !(await this.stopAccount(accountId))) return false;
+      if (this.activeVendors.has(accountId) && !(await this.stopAccount(accountId))) ok = false;
     }
-    return accountIds.every((accountId) => !this.activeVendors.has(accountId));
+    return ok && accountIds.every((accountId) => !this.activeVendors.has(accountId));
+  }
+
+  public getRunningAccountIdsForOwner(ownerId: string): string[] {
+    return Array.from(this.activeVendors.keys()).filter((accountId) => db.getOwnerId(accountId) === ownerId);
+  }
+
+  public getActiveAccountCount(): number {
+    return this.activeVendors.size;
   }
 
   public getActiveEngine(accountId: string): RuntimeEngine | null {

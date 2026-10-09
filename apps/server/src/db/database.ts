@@ -7,6 +7,7 @@ import { decryptSecret, encryptSecret } from '../security/crypto.js';
 import { hashPassword, normalizeUsername } from '../security/password.js';
 import { DEFAULT_BOT_CONFIG, normalizeBotConfig } from './bot-config.js';
 import type { BotConfig } from './bot-config.js';
+import { computeGrant, type GrantDuration } from '../security/entitlement.js';
 
 export type UserRole = 'admin' | 'user';
 export type UserStatus = 'active' | 'disabled';
@@ -89,6 +90,22 @@ export interface AuditLogInput {
   at?: number;
 }
 
+export interface DbGrant {
+  id: string;
+  userId: string;
+  grantedBy: string;
+  duration: GrantDuration;
+  fromAt: number;
+  toAt: number;
+  createdAt: number;
+}
+
+export interface DbUsage {
+  accounts: number;
+  running: number;
+  maxBots: number;
+}
+
 export interface UserUpdates {
   status?: UserStatus;
   maxBots?: number;
@@ -135,6 +152,7 @@ export class DatabaseService {
     this.createSchema();
     this.ensureInitialAdmin();
     this.migrateLegacyJson();
+    this.resetRunningAccountStatuses();
   }
 
   private createSchema(): void {
@@ -205,6 +223,16 @@ export class DatabaseService {
         FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
       );
       CREATE INDEX IF NOT EXISTS audit_log_at_idx ON audit_log(at);
+      CREATE TABLE IF NOT EXISTS grants (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        granted_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        duration TEXT NOT NULL CHECK (duration IN ('1d', '7d', '30d', 'custom')),
+        from_at INTEGER NOT NULL,
+        to_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS grants_user_created_idx ON grants(user_id, created_at);
     `);
   }
 
@@ -377,6 +405,12 @@ export class DatabaseService {
     )`, this.maxLogs);
   }
 
+  private resetRunningAccountStatuses(): void {
+    // Vendor sessions are never restored from SQLite after a process restart.
+    // Clear the persisted display state so usage does not count stale runners.
+    this.run("UPDATE game_accounts SET status = 'stopped', updated_at = ? WHERE status = 'running'", Date.now());
+  }
+
   public flush(): void {
     this.sqlite.exec('PRAGMA wal_checkpoint(PASSIVE);');
   }
@@ -410,7 +444,7 @@ export class DatabaseService {
     if (!normalized || normalized.length > 64) throw new Error('USERNAME_INVALID');
     const id = `usr_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`;
     const maxBots = options.maxBots ?? 3;
-    if (!Number.isInteger(maxBots) || maxBots < 1) throw new Error('MAX_BOTS_INVALID');
+    if (!Number.isInteger(maxBots) || maxBots < 0 || maxBots > 1000) throw new Error('MAX_BOTS_INVALID');
     this.run(
       `INSERT INTO users (id, username, password_hash, role, status, expires_at, max_bots, must_change_password, created_at, created_by)
        VALUES (?, ?, ?, ?, 'active', NULL, ?, 0, ?, ?)`,
@@ -423,7 +457,10 @@ export class DatabaseService {
     const sets: string[] = [];
     const params: Array<string | number | null> = [];
     if (updates.status !== undefined) { sets.push('status = ?'); params.push(updates.status); }
-    if (updates.maxBots !== undefined) { sets.push('max_bots = ?'); params.push(updates.maxBots); }
+    if (updates.maxBots !== undefined) {
+      if (!Number.isInteger(updates.maxBots) || updates.maxBots < 0 || updates.maxBots > 1000) throw new Error('MAX_BOTS_INVALID');
+      sets.push('max_bots = ?'); params.push(updates.maxBots);
+    }
     if (updates.mustChangePassword !== undefined) { sets.push('must_change_password = ?'); params.push(updates.mustChangePassword ? 1 : 0); }
     if (updates.expiresAt !== undefined) { sets.push('expires_at = ?'); params.push(updates.expiresAt); }
     if (updates.lastLoginAt !== undefined) { sets.push('last_login_at = ?'); params.push(updates.lastLoginAt); }
@@ -494,6 +531,59 @@ export class DatabaseService {
     );
   }
 
+  public grantUser(userId: string, grantedBy: string, duration: GrantDuration, now: number): { user: DbUser; grant: DbGrant } {
+    return this.transaction(() => {
+      const row = this.queryOne<{ expires_at: number | null; role: string; status: string }>('SELECT expires_at, role, status FROM users WHERE id = ?', userId);
+      if (!row) throw new Error('USER_NOT_FOUND');
+      if (row.role === 'admin') throw new Error('ADMIN_NOT_EXPIRING');
+      if (row.status === 'disabled') throw new Error('USER_DISABLED');
+      const computed = computeGrant(row.expires_at === null ? null : Number(row.expires_at), now, duration);
+      const grant: DbGrant = {
+        id: `grant_${crypto.randomUUID()}`,
+        userId,
+        grantedBy,
+        duration,
+        fromAt: computed.from,
+        toAt: computed.to,
+        createdAt: now,
+      };
+      this.run(
+        'INSERT INTO grants (id, user_id, granted_by, duration, from_at, to_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        grant.id, grant.userId, grant.grantedBy, grant.duration, grant.fromAt, grant.toAt, grant.createdAt,
+      );
+      this.run('UPDATE users SET expires_at = ? WHERE id = ?', grant.toAt, userId);
+      return { user: this.getUserById(userId)!, grant };
+    });
+  }
+
+  public setUserExpiry(userId: string, expiresAt: number | null): DbUser | undefined {
+    this.run('UPDATE users SET expires_at = ? WHERE id = ?', expiresAt, userId);
+    return this.getUserById(userId);
+  }
+
+  public getGrants(userId?: string): DbGrant[] {
+    const rows = userId
+      ? this.queryAll<Record<string, unknown>>('SELECT id, user_id, granted_by, duration, from_at, to_at, created_at FROM grants WHERE user_id = ? ORDER BY created_at, id', userId)
+      : this.queryAll<Record<string, unknown>>('SELECT id, user_id, granted_by, duration, from_at, to_at, created_at FROM grants ORDER BY created_at, id');
+    return rows.map((row) => ({
+      id: String(row.id), userId: String(row.user_id), grantedBy: String(row.granted_by),
+      duration: row.duration as GrantDuration, fromAt: Number(row.from_at), toAt: Number(row.to_at), createdAt: Number(row.created_at),
+    }));
+  }
+
+  public getUserUsage(userId: string): DbUsage {
+    const user = this.getUserById(userId);
+    const row = this.queryOne<{ accounts: number; running: number }>(
+      "SELECT COUNT(*) AS accounts, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running FROM game_accounts WHERE owner_id = ?",
+      userId,
+    );
+    return {
+      accounts: Number(row?.accounts ?? 0),
+      running: Number(row?.running ?? 0),
+      maxBots: user?.maxBots ?? 0,
+    };
+  }
+
   public deleteUserCascade(userId: string): boolean {
     return this.transaction(() => {
       const exists = this.queryOne<{ id: string }>('SELECT id FROM users WHERE id = ?', userId);
@@ -536,6 +626,7 @@ export class DatabaseService {
     credentials: { password?: string; refreshToken?: string; legacyToken?: string },
     proxyUrl?: string | null,
     ownerId?: string,
+    options: { enforceQuota?: boolean } = {},
   ): DbGameAccount {
     const normalizedName = cleanText(accountName, 128);
     if (!normalizedName) throw new Error('ACCOUNT_NAME_REQUIRED');
@@ -546,6 +637,14 @@ export class DatabaseService {
     const id = `acc_${crypto.randomUUID().slice(0, 8)}`;
     const now = Date.now();
     this.transaction(() => {
+      if (options.enforceQuota) {
+        const quota = this.queryOne<{ max_bots: number; accounts: number }>(
+          'SELECT u.max_bots, COUNT(a.id) AS accounts FROM users u LEFT JOIN game_accounts a ON a.owner_id = u.id WHERE u.id = ? GROUP BY u.id',
+          owner,
+        );
+        if (!quota) throw new Error('OWNER_NOT_FOUND');
+        if (Number(quota.accounts) >= Number(quota.max_bots)) throw new Error('QUOTA_BOTS');
+      }
       this.run(
         `INSERT INTO game_accounts
          (id, owner_id, account_name, encrypted_password, encrypted_refresh_token, encrypted_token, proxy_url_encrypted,

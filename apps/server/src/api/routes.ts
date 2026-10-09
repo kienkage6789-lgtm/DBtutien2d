@@ -1,6 +1,7 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { AuthError } from '@tutien2d/core-client';
 import { db } from '../db/database.js';
+import { CONFIG } from '../config.js';
 import { workerPool } from '../orchestrator/worker-pool.js';
 import { authenticate, authenticatePassword, loginRateLimiter, publicUser, requestIp, SESSION_TTL_MS } from '../security/auth.js';
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../security/password.js';
@@ -13,6 +14,8 @@ import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
 import { moveToErrorResponse } from './move-to-errors.js';
 import { khuErrorResponse } from './khu-errors.js';
 import { dailyErrorResponse } from './daily-errors.js';
+import { entitlement } from '../security/entitlement.js';
+import { entitlementWatcher } from '../orchestrator/entitlement-runtime.js';
 
 export const apiRouter: Router = Router();
 
@@ -36,6 +39,86 @@ function loadOwnedAccount(req: Request, res: Response, next: NextFunction): void
     return;
   }
   req.ownedAccount = { id: account.id, ownerId: account.ownerId };
+  next();
+}
+
+function entitlementFailure(userId: string): { status: 403; code: string; message: string; expiresAt: number | null } | null {
+  const user = db.getUserById(userId);
+  if (!user || user.role === 'admin') return null;
+  const current = entitlement(user, Date.now());
+  if (current.state === 'active') return null;
+  const code = current.state === 'disabled' ? 'USER_DISABLED' : current.state === 'none' ? 'ENTITLEMENT_NONE' : 'ENTITLEMENT_EXPIRED';
+  const message = current.state === 'disabled'
+    ? 'Tài khoản người dùng đã bị khóa.'
+    : current.state === 'none'
+      ? 'Tài khoản chưa được cấp hạn sử dụng.'
+      : 'Hạn sử dụng đã hết. Liên hệ admin để gia hạn.';
+  return { status: 403, code, message, expiresAt: current.expiresAt };
+}
+
+export function requireEntitlement(req: Request, res: Response, next: NextFunction): void {
+  const userId = principalUserId(req);
+  if (!userId || isAdmin(req)) { next(); return; }
+  const failure = entitlementFailure(userId);
+  if (!failure) { next(); return; }
+  sendError(res, failure.status, failure.code, failure.message, { details: { expiresAt: failure.expiresAt } });
+}
+
+function requireStartCapacity(req: Request, res: Response, next: NextFunction): void {
+  const accountId = typeof req.params.id === 'string' ? req.params.id : undefined;
+  if (accountId && workerPool.getRunningAccountIdsForOwner(principalUserId(req) ?? '').includes(accountId)) { next(); return; }
+  const ownerId = principalUserId(req);
+  const account = accountId ? db.getAccountById(accountId) : undefined;
+  const owner = ownerId ? db.getUserById(ownerId) : undefined;
+  const allRunning = new Set(db.getAccounts().flatMap((item) => workerPool.getRunningAccountIdsForOwner(item.ownerId).includes(item.id) ? [item.id] : []));
+  const candidates = (ownerId ? db.getAccounts(ownerId) : db.getAccounts()).filter((item) => !allRunning.has(item.id));
+  if (owner?.role === 'user') {
+    const running = workerPool.getRunningAccountIdsForOwner(owner.id).length;
+    const quotaReached = running >= owner.maxBots && (!accountId || candidates.length > 0 || !!account);
+    if (quotaReached) {
+      sendError(res, 409, 'BOT_LIMIT_REACHED', `Đã đạt giới hạn bot ${running}/${owner.maxBots}.`);
+      return;
+    }
+  }
+  const needsRunner = accountId ? !!account && !workerPool.getRunningAccountIdsForOwner(account.ownerId).includes(accountId) : candidates.length > 0;
+  if (needsRunner && CONFIG.MAX_TOTAL_RUNNERS > 0 && workerPool.getActiveAccountCount() >= CONFIG.MAX_TOTAL_RUNNERS) {
+    sendError(res, 503, 'SERVER_CAPACITY', 'Máy chủ đã đạt số runner tối đa, hãy thử lại sau.', { retryable: true });
+    return;
+  }
+  next();
+}
+
+function sendControlError(res: Response, error: unknown): void {
+  const raw = error instanceof Error ? error.message : String(error);
+  const code = raw.split(':', 1)[0].trim();
+  const known: Record<string, { status: number; message: string; retryable?: boolean }> = {
+    ENTITLEMENT_EXPIRED: { status: 403, message: 'Hạn sử dụng đã hết. Liên hệ admin để gia hạn.' },
+    ENTITLEMENT_NONE: { status: 403, message: 'Tài khoản chưa được cấp hạn sử dụng.' },
+    USER_DISABLED: { status: 403, message: 'Tài khoản người dùng đã bị khóa.' },
+    BOT_LIMIT_REACHED: { status: 409, message: 'Đã đạt giới hạn bot của người dùng.' },
+    SERVER_CAPACITY: { status: 503, message: 'Máy chủ đã đạt số runner tối đa, hãy thử lại sau.', retryable: true },
+  };
+  const response = known[code];
+  if (response) {
+    sendError(res, response.status, code, response.message, { retryable: response.retryable });
+    return;
+  }
+  sendError(res, 500, 'INTERNAL_ERROR', 'Không thể thực hiện thao tác bot.');
+}
+
+function requireAccountQuota(req: Request, res: Response, next: NextFunction): void {
+  if (isAdmin(req)) { next(); return; }
+  const userId = principalUserId(req);
+  const user = userId ? db.getUserById(userId) : undefined;
+  if (!user || user.status === 'disabled') {
+    sendError(res, 403, 'USER_DISABLED', 'Tài khoản người dùng đã bị khóa.');
+    return;
+  }
+  const usage = db.getUserUsage(user.id);
+  if (usage.accounts >= user.maxBots) {
+    sendError(res, 403, 'QUOTA_BOTS', `Đã có ${usage.accounts}/${user.maxBots} tài khoản, không thể thêm tài khoản mới.`);
+    return;
+  }
   next();
 }
 
@@ -79,6 +162,7 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       token: result.token,
       user: publicUser(result.user),
       sessionExpiresAt: result.session.expiresAt,
+      serverNow: Date.now(),
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : String(error);
@@ -101,12 +185,12 @@ apiRouter.get('/auth/me', (req: Request, res: Response) => {
   if (req.principal?.legacyToken) {
     const admin = db.getUsers().find((user) => user.role === 'admin');
     if (!admin) { sendError(res, 401, 'UNAUTHORIZED', 'Unauthorized'); return; }
-    res.json({ success: true, user: publicUser(admin), sessionExpiresAt: null });
+    res.json({ success: true, user: publicUser(admin), sessionExpiresAt: null, serverNow: Date.now() });
     return;
   }
   const user = req.principal?.userId ? db.getUserById(req.principal.userId) : undefined;
   if (!user || !req.session) { sendError(res, 401, 'UNAUTHORIZED', 'Unauthorized'); return; }
-  res.json({ success: true, user: publicUser(user), sessionExpiresAt: req.session.expiresAt });
+  res.json({ success: true, user: publicUser(user), sessionExpiresAt: req.session.expiresAt, serverNow: Date.now() });
 });
 
 apiRouter.post('/auth/password', (req: Request, res: Response) => {
@@ -130,13 +214,19 @@ apiRouter.post('/auth/password', (req: Request, res: Response) => {
     db.touchSession(req.session.id, now, now + SESSION_TTL_MS);
     wsHub.closeUserSessions(userId, req.session.id);
     const user = db.getUserById(userId)!;
-    res.json({ success: true, user: publicUser(user), sessionExpiresAt: now + SESSION_TTL_MS });
+    res.json({ success: true, user: publicUser(user), sessionExpiresAt: now + SESSION_TTL_MS, serverNow: now });
   } catch {
     sendError(res, 400, 'PASSWORD_TOO_SHORT', 'Mật khẩu mới phải có ít nhất 6 ký tự.');
   }
 });
 
 apiRouter.use('/accounts/:id', loadOwnedAccount);
+
+apiRouter.use('/accounts/:id/start', requireEntitlement, requireStartCapacity);
+apiRouter.use('/accounts/:id/restart', requireEntitlement, requireStartCapacity);
+apiRouter.use('/accounts/:id/auto/start', requireEntitlement, requireStartCapacity);
+apiRouter.use('/accounts/:id/move-to', requireEntitlement);
+apiRouter.use('/orchestrator/start-all', requireEntitlement, requireStartCapacity);
 
 apiRouter.get('/admin/users', requireAdmin, (_req: Request, res: Response) => {
   res.json({ success: true, data: publicUserList() });
@@ -147,8 +237,8 @@ apiRouter.post('/admin/users', requireAdmin, (req: Request, res: Response) => {
     const username = validateUsername(req.body?.username);
     const password = validatePassword(req.body?.password);
     const maxBots = req.body?.maxBots === undefined ? 3 : req.body.maxBots;
-    if (!Number.isInteger(maxBots) || Number(maxBots) < 1) {
-      sendError(res, 400, 'MAX_BOTS_INVALID', 'maxBots phải là số nguyên dương.');
+    if (!Number.isInteger(maxBots) || Number(maxBots) < 0 || Number(maxBots) > 1000) {
+      sendError(res, 400, 'MAX_BOTS_INVALID', 'maxBots phải là số nguyên trong khoảng 0..1000.');
       return;
     }
     const user = db.createUser(username, hashPassword(password), {
@@ -185,8 +275,8 @@ apiRouter.patch('/admin/users/:id', requireAdmin, async (req: Request, res: Resp
     sendError(res, 400, 'INVALID_STATUS', 'Trạng thái không hợp lệ.');
     return;
   }
-  if (maxBots !== undefined && (!Number.isInteger(maxBots) || Number(maxBots) < 1)) {
-    sendError(res, 400, 'MAX_BOTS_INVALID', 'maxBots phải là số nguyên dương.');
+  if (maxBots !== undefined && (!Number.isInteger(maxBots) || Number(maxBots) < 0 || Number(maxBots) > 1000)) {
+    sendError(res, 400, 'MAX_BOTS_INVALID', 'maxBots phải là số nguyên trong khoảng 0..1000.');
     return;
   }
   if (nextStatus === 'disabled' && req.principal?.userId === userId) {
@@ -208,7 +298,47 @@ apiRouter.patch('/admin/users/:id', requireAdmin, async (req: Request, res: Resp
     ...(maxBots === undefined ? {} : { maxBots: Number(maxBots) }),
   })!;
   db.addAuditLog({ actorId: req.principal?.userId ?? null, action: nextStatus === 'disabled' ? 'user_disabled' : 'user_updated', targetType: 'user', targetId: userId });
+  await entitlementWatcher.sweepNow();
   res.json({ success: true, data: publicUser(user) });
+});
+
+apiRouter.post('/admin/users/:id/grant', requireAdmin, async (req: Request, res: Response) => {
+  const userId = String(req.params.id);
+  const duration = req.body?.duration;
+  if (duration !== '1d' && duration !== '7d' && duration !== '30d') {
+    sendError(res, 400, 'INVALID_REQUEST', 'duration phải là 1d, 7d hoặc 30d.');
+    return;
+  }
+  try {
+    const grantedBy = req.principal?.userId ?? db.getUsers().find((user) => user.role === 'admin')?.id;
+    if (!grantedBy) { sendError(res, 500, 'INTERNAL_ERROR', 'Không thể xác định admin cấp hạn.'); return; }
+    const granted = db.grantUser(userId, grantedBy, duration, Date.now());
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'user_granted', targetType: 'user', targetId: userId, detail: `duration=${duration}; to=${granted.grant.toAt}` });
+    await entitlementWatcher.sweepNow();
+    res.json({ success: true, data: publicUser(granted.user) });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (code === 'USER_NOT_FOUND') { sendError(res, 404, 'USER_NOT_FOUND', 'Không tìm thấy người dùng.'); return; }
+    if (code === 'ADMIN_NOT_EXPIRING') { sendError(res, 409, code, 'Admin không dùng thời hạn sử dụng.'); return; }
+    if (code === 'USER_DISABLED') { sendError(res, 409, code, 'Không thể cấp hạn cho người dùng đã bị khóa.'); return; }
+    sendError(res, 500, 'INTERNAL_ERROR', 'Không thể cấp hạn sử dụng.');
+  }
+});
+
+apiRouter.post('/admin/users/:id/expiry', requireAdmin, async (req: Request, res: Response) => {
+  const userId = String(req.params.id);
+  const expiresAt = req.body?.expiresAt;
+  if (expiresAt !== null && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || !Number.isInteger(expiresAt) || expiresAt < 0)) {
+    sendError(res, 400, 'INVALID_REQUEST', 'expiresAt phải là số nguyên không âm hoặc null.');
+    return;
+  }
+  const target = db.getUserById(userId);
+  if (!target) { sendError(res, 404, 'USER_NOT_FOUND', 'Không tìm thấy người dùng.'); return; }
+  if (target.role === 'admin') { sendError(res, 409, 'ADMIN_NOT_EXPIRING', 'Admin không dùng thời hạn sử dụng.'); return; }
+  const user = db.setUserExpiry(userId, expiresAt as number | null);
+  db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'user_expiry_set', targetType: 'user', targetId: userId, detail: `expiresAt=${expiresAt === null ? 'null' : expiresAt}` });
+  await entitlementWatcher.sweepNow();
+  res.json({ success: true, data: publicUser(user!) });
 });
 
 apiRouter.post('/admin/users/:id/password', requireAdmin, (req: Request, res: Response) => {
@@ -240,6 +370,7 @@ apiRouter.delete('/admin/users/:id', requireAdmin, async (req: Request, res: Res
   db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'user_deleted', targetType: 'user', targetId: userId });
   db.deleteUserCascade(userId);
   wsHub.closeUserSessions(userId);
+  await entitlementWatcher.sweepNow();
   res.json({ success: true });
 });
 
@@ -314,11 +445,11 @@ apiRouter.get('/maps/:mapId/geometry', (req: Request, res: Response) => {
   });
 });
 
-apiRouter.post('/accounts', async (req: Request, res: Response) => {
+apiRouter.post('/accounts', requireAccountQuota, async (req: Request, res: Response) => {
   try {
     const { accountName, password, token, proxyUrl } = req.body;
     if (!accountName || (!password && !token)) {
-      res.status(400).json({ success: false, error: 'Account name and password/token are required.' });
+      sendError(res, 400, 'INVALID_REQUEST', 'Cần accountName và password hoặc token.');
       return;
     }
 
@@ -329,7 +460,20 @@ apiRouter.post('/accounts', async (req: Request, res: Response) => {
         initialRefreshToken = session.refreshToken;
       } catch (error) {
         const message = error instanceof AuthError ? error.message : `Authentication failed: ${String(error)}`;
-        res.status(400).json({ success: false, error: message });
+        sendError(res, 400, 'GAME_LOGIN_FAILED', message);
+        return;
+      }
+    }
+
+    // verifyLogin awaits external authentication. Re-check here and enforce the
+    // final check + INSERT atomically so two concurrent requests cannot exceed maxBots.
+    if (!isAdmin(req)) {
+      const userId = principalUserId(req);
+      const user = userId ? db.getUserById(userId) : undefined;
+      if (!user || user.status === 'disabled') { sendError(res, 403, 'USER_DISABLED', 'Tài khoản người dùng đã bị khóa.'); return; }
+      const usage = db.getUserUsage(user.id);
+      if (usage.accounts >= user.maxBots) {
+        sendError(res, 403, 'QUOTA_BOTS', `Đã có ${usage.accounts}/${user.maxBots} tài khoản, không thể thêm tài khoản mới.`);
         return;
       }
     }
@@ -338,10 +482,15 @@ apiRouter.post('/accounts', async (req: Request, res: Response) => {
       password: password || undefined,
       refreshToken: initialRefreshToken,
       legacyToken: token || undefined,
-    }, proxyUrl, ownerScope(req));
+    }, proxyUrl, ownerScope(req), { enforceQuota: !isAdmin(req) });
     res.json({ success: true, data: workerPool.getRuntimeInfo(created.id) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    if (error instanceof Error && error.message === 'QUOTA_BOTS') {
+      const usage = principalUserId(req) ? db.getUserUsage(principalUserId(req)!) : { accounts: 0, maxBots: 0 };
+      sendError(res, 403, 'QUOTA_BOTS', `Đã có ${usage.accounts}/${usage.maxBots} tài khoản, không thể thêm tài khoản mới.`);
+      return;
+    }
+    sendError(res, 500, 'INTERNAL_ERROR', 'Không thể tạo tài khoản.');
   }
 });
 
@@ -397,7 +546,7 @@ apiRouter.post('/accounts/:id/start', async (req: Request, res: Response) => {
     await workerPool.startAccount(id);
     res.json({ success: true, data: workerPool.getRuntimeInfo(id) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    sendControlError(res, error);
   }
 });
 
@@ -417,7 +566,7 @@ apiRouter.post('/accounts/:id/restart', async (req: Request, res: Response) => {
     await workerPool.restartAccount(id);
     res.json({ success: true, data: workerPool.getRuntimeInfo(id) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    sendControlError(res, error);
   }
 });
 
@@ -435,6 +584,10 @@ apiRouter.post('/accounts/:id/auto/start', async (req: Request, res: Response) =
     res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
   } catch (error) {
     const code = error instanceof Error ? error.message : String(error);
+    if (['ENTITLEMENT_EXPIRED', 'ENTITLEMENT_NONE', 'USER_DISABLED', 'BOT_LIMIT_REACHED', 'SERVER_CAPACITY'].includes(code)) {
+      sendControlError(res, error);
+      return;
+    }
     const response = code === 'INVALID_REQUEST' || code === 'INVALID_AUTO_ANCHOR'
       ? { status: 400, body: { success: false, error: code, errorCode: code, retryable: false } }
       : vendorAutoErrorResponse(code);
@@ -472,7 +625,7 @@ apiRouter.get('/accounts/:id/khu', async (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/khu', async (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/khu', requireEntitlement, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -638,7 +791,7 @@ apiRouter.get('/accounts/:id/daily', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/daily/checkin', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/checkin', requireEntitlement, (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -657,7 +810,7 @@ apiRouter.post('/accounts/:id/daily/checkin', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/daily/seed', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/seed', requireEntitlement, (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -689,7 +842,7 @@ apiRouter.post('/accounts/:id/daily/seed', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/daily/cancel', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/cancel', requireEntitlement, (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -722,7 +875,7 @@ apiRouter.post('/orchestrator/start-all', async (req: Request, res: Response) =>
     await workerPool.startAll(ownerScope(req));
     res.json({ success: true, data: workerPool.getAllRuntimes(ownerScope(req)) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    sendControlError(res, error);
   }
 });
 
@@ -731,7 +884,7 @@ apiRouter.post('/orchestrator/stop-all', async (req: Request, res: Response) => 
     await workerPool.stopAll(ownerScope(req));
     res.json({ success: true, data: workerPool.getAllRuntimes(ownerScope(req)) });
   } catch (error) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    sendError(res, 500, 'INTERNAL_ERROR', 'Không thể dừng toàn bộ bot.');
   }
 });
 

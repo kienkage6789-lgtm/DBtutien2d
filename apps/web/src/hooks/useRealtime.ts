@@ -4,6 +4,7 @@ import { fetchAccounts, fetchLogs } from '../lib/api';
 import { isContextNewer, isOlderEpoch, sanitizeEntityContext, sanitizeMapContext } from '../lib/context';
 import { sanitizeKhuList } from '../lib/khu';
 import { getToken, notifyAuthRequired, onAuthChanged } from '../lib/auth';
+import { notify } from '../lib/dialogs';
 
 const ACCOUNT_STATUSES = new Set<AccountRuntime['status']>(['running', 'stopped', 'error']);
 const VITAL_STATUSES = new Set<NonNullable<AccountRuntime['vitals']>['status']>(['unknown', 'fresh', 'stale', 'invalid', 'conflict']);
@@ -195,6 +196,13 @@ export function sanitizeLog(value: unknown): LogEntry | undefined {
     || !isFiniteNumber(item.timestamp) || (item.level !== 'info' && item.level !== 'warn' && item.level !== 'error' && item.level !== 'success')
     || typeof item.module !== 'string' || typeof item.message !== 'string') return undefined;
   return { id: item.id, accountId: item.accountId, timestamp: item.timestamp, level: item.level, module: item.module, message: item.message };
+}
+
+export function sanitizeSystemAlert(value: unknown): { reason: string; message: string } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.reason !== 'string' || typeof item.message !== 'string' || !item.message.trim()) return undefined;
+  return { reason: item.reason, message: item.message };
 }
 
 const WORLD_NUMBER_FIELDS = new Set<string>(['khu', 'x', 'y', 'soKhu']);
@@ -437,6 +445,12 @@ export function useRealtime() {
             case 'account_log': {
               const newLog = sanitizeLog(msg.data);
               if (newLog) setLogs((prev) => [...prev.slice(-300), newLog]);
+              break;
+            }
+
+            case 'system_alert': {
+              const alert = sanitizeSystemAlert(msg.data);
+              if (alert) notify(alert.message, 'error');
               break;
             }
           }

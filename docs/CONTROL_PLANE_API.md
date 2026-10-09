@@ -25,8 +25,27 @@ Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard,
 | `PATCH` | `/api/admin/users/:id` | Admin cập nhật `status` (`active`/`disabled`) hoặc `maxBots`. Khóa user dừng runner và thu hồi session. |
 | `POST` | `/api/admin/users/:id/password` | Admin đặt lại mật khẩu, thu hồi session và buộc đổi mật khẩu lần sau. |
 | `DELETE` | `/api/admin/users/:id` | Dừng runner rồi xóa user cùng game account/config/log/session; không xóa chính mình hoặc admin cuối. |
+| `POST` | `/api/admin/users/:id/grant` | Admin cấp thêm `{duration:"1d"|"7d"|"30d"}`; cộng dồn từ hạn còn lại, ghi `grants` và audit `user_granted`. Admin/ user bị khóa trả lỗi riêng. |
+| `POST` | `/api/admin/users/:id/expiry` | Admin đặt hạn tuyệt đối `{expiresAt:number|null}`; `null`/hạn đã qua là chưa có quyền chạy và kích watcher ngay, audit `user_expiry_set`. |
 
 User thường chỉ thấy và điều khiển game account có `owner_id` của mình. Account của user khác trả `404 ACCOUNT_NOT_FOUND`, kể cả các route con dưới `/api/accounts/:id/**`; gọi `/api/admin/**` trả `403 FORBIDDEN`. `GET /api/orchestrator/start-all|stop-all`, `/api/logs` và `/api/system/status` cũng được giới hạn theo owner; admin vẫn thấy toàn hệ thống.
+
+`GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, `none` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.
+
+Khi hết hạn, các route điều khiển sau bị chặn với HTTP 403: `POST /api/accounts/:id/start`, `restart`, `auto/start`, `khu`, `move-to` (kể cả cancel), `daily/checkin`, `daily/seed`, `daily/cancel` và các route điều khiển tương tự; `POST /api/orchestrator/start-all` cũng bị chặn. Các route `GET` chỉ đọc, `POST /stop`, `POST /auto/stop`, `DELETE /api/accounts/:id`, `PUT /api/accounts/:id/password`, log và trạng thái vẫn được qua để người dùng tự dừng/dọn tài khoản. `POST /api/accounts` không yêu cầu còn hạn: user hết hạn vẫn được thêm tài khoản nếu còn chỗ; user bị khóa không được thêm. Hạ `maxBots` dưới số tài khoản hoặc runner hiện có không tự xóa/dừng gì, chỉ chặn thêm tài khoản/chạy thêm.
+
+Các mã lỗi quyền/hạn mức ổn định: `ENTITLEMENT_EXPIRED`, `ENTITLEMENT_NONE`, `USER_DISABLED`, `QUOTA_BOTS` (HTTP 403), `BOT_LIMIT_REACHED` (HTTP 409) và `SERVER_CAPACITY` (HTTP 503, `retryable:true`). Lỗi dùng envelope `{success:false,error,errorCode,requestId,retryable}`.
+
+Ví dụ admin cấp hạn (thay `<user-id>` bằng id nhận từ danh sách user; không đặt token vào URL và không ghi token vào log):
+
+```sh
+curl -X POST http://127.0.0.1:4000/api/admin/users/<user-id>/grant \
+  -H 'Authorization: Bearer <session-token>' \
+  -H 'Content-Type: application/json' \
+  --data '{"duration":"1d"}'
+```
+
+Trần runner toàn máy chủ cấu hình bằng `MAX_TOTAL_RUNNERS` trong môi trường; mặc định `0` là không giới hạn. `ENTITLEMENT_SWEEP_MS` cấu hình chu kỳ `EntitlementWatcher`, mặc định 30.000 ms và bị kẹp tối thiểu 100 ms. Watcher chạy ngay một lượt lúc khởi động và sau grant/expiry/status/maxBots/delete; với user thường ở state bị chặn, nó dừng toàn bộ runner, audit `entitlement_stop`, ghi log từng account và gửi `system_alert` riêng cho owner. Kết nối WS không bị đóng vì hết hạn. Khi khởi động lại, các account persisted ở `running` được đặt lại `stopped`; bot không tự chạy lại.
 
 SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi có `tutien_db.json` mà chưa có dữ liệu SQLite, server nhập account/config/log vào owner admin trong transaction rồi đổi tên file cũ thành `.migrated`; nếu nhập lỗi file cũ được giữ nguyên. Password game, refresh token, token cũ và proxy URL vẫn mã hóa AES-256-GCM; response public không chứa chúng.
 

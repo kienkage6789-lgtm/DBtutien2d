@@ -6,6 +6,13 @@ export interface AuthUser {
   expiresAt: number | null;
   maxBots: number;
   mustChangePassword: boolean;
+  entitlement: {
+    state: 'admin' | 'active' | 'expired' | 'none' | 'disabled';
+    expiresAt: number | null;
+    remainingMs: number | null;
+  };
+  usage?: { accounts: number; running: number; maxBots: number };
+  serverClockOffsetMs?: number;
 }
 
 export type MoveToStatus = 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';

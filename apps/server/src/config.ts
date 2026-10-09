@@ -42,6 +42,12 @@ const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
 const ALLOW_LEGACY_API_TOKEN = process.env.ALLOW_LEGACY_API_TOKEN === '1';
+const parseNonNegativeInt = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+};
+const MAX_TOTAL_RUNNERS = parseNonNegativeInt(process.env.MAX_TOTAL_RUNNERS, 0);
+const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
 
 if (!isLoopback(HOST) && API_TOKEN.length < 32) {
   throw new Error('HOST không phải loopback thì bắt buộc đặt API_TOKEN >= 32 ký tự.');
@@ -61,6 +67,8 @@ export const CONFIG = {
   ADMIN_PASSWORD,
   TRUST_PROXY,
   ALLOW_LEGACY_API_TOKEN,
+  MAX_TOTAL_RUNNERS,
+  ENTITLEMENT_SWEEP_MS,
   ALLOWED_ORIGINS: (process.env.ALLOWED_ORIGINS
     || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000')
     .split(',').map((s) => s.trim()).filter(Boolean),

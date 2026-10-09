@@ -15,6 +15,7 @@ import type { MapCatalogItem } from './lib/api';
 import type { WorldBounds } from './lib/minimap';
 import { resolveMapContext } from './lib/context';
 import { confirmAction, notify } from './lib/dialogs';
+import { entitlementLockReason } from './lib/entitlement';
 import { clearToken, getToken, onAuthRequired } from './lib/auth';
 import type { AuthUser } from './types';
 
@@ -29,7 +30,15 @@ export const App: React.FC = () => {
   const [activePasswordAccount, setActivePasswordAccount] = useState<AccountRuntime | null>(null);
   const [isUserPasswordOpen, setIsUserPasswordOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [clock, setClock] = useState(Date.now());
   const runningCount = accounts.filter((account) => account.status === 'running').length;
+  const entitlementLock = user ? entitlementLockReason(user, clock) : null;
+  const quotaFull = user?.role === 'user' && user.usage !== undefined && user.usage.accounts >= user.usage.maxBots;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -132,13 +141,14 @@ export const App: React.FC = () => {
   return <div className="min-h-screen flex flex-col bg-[#07090e] text-slate-100">
     <Navbar user={user} onLogout={handleLogout} onOpenAccount={() => setIsUserPasswordOpen(true)} isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} />
     {user.mustChangePassword && <div className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">Bạn đang dùng mật khẩu mặc định. Hãy đổi mật khẩu (nút Quản lý tài khoản) trước khi mở ra internet.</div>}
+    {user.role !== 'admin' && entitlementLock && <div role="alert" className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">{entitlementLock}. Các điều khiển bot đã khóa; bạn vẫn có thể dừng, xóa tài khoản và đổi mật khẩu.</div>}
     <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-6 space-y-6">
       <StatsBar accounts={accounts} />
       <section>
         <h2 className="text-base font-bold uppercase tracking-wider text-slate-200 font-title mb-4">Ma trận tài khoản ({accounts.length})</h2>
         {accounts.length === 0
-          ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white">+ Thêm tài khoản</button></div>
-          : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
+          ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} disabled={quotaFull} title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : undefined} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white disabled:cursor-not-allowed disabled:opacity-40">+ Thêm tài khoản</button></div>
+          : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} controlsDisabled={!!entitlementLock} controlLockReason={entitlementLock} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
       </section>
       <section className="pt-2"><LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} /></section>
     </main>

@@ -78,6 +78,42 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const m = /\[("[^"]+"),("[^"]+")\]/.exec(out);
     assert.ok(m, 'seed lỗi: ' + out.slice(0, 300));
     const idA = JSON.parse(m[1]), idB = JSON.parse(m[2]);
+    // Grant/expiry contract without opening a game connection: auto/start reaches
+    // the vendor gate after entitlement, and is rejected by entitlement before it
+    // can touch the game when the expiry is forced into the past.
+    r = await j(`/api/admin/users/${alice.id}/grant`, 'POST', { duration: '1d' }, tokA);
+    check(r.s === 200 && r.b.data?.entitlement?.state === 'active', 'grant alice ' + r.s);
+    const autoBeforeExpiry = await j(`/api/accounts/${idA}/auto/start`, 'POST', {}, tokAl);
+    check(autoBeforeExpiry.s === 409 && autoBeforeExpiry.b.errorCode === 'ENGINE_VENDOR_REQUIRED', 'active user passed entitlement gate ' + autoBeforeExpiry.s);
+    r = await j(`/api/admin/users/${alice.id}/expiry`, 'POST', { expiresAt: 0 }, tokA);
+    check(r.s === 200 && r.b.data?.entitlement?.state === 'expired', 'expiry alice ' + r.s);
+    const autoAfterExpiry = await j(`/api/accounts/${idA}/auto/start`, 'POST', {}, tokAl);
+    check(autoAfterExpiry.s === 403 && autoAfterExpiry.b.errorCode === 'ENTITLEMENT_EXPIRED', 'expired user blocked ' + autoAfterExpiry.s);
+    // Ma trận cổng quyền khi hết hạn: route điều khiển bị chặn, route đọc/dừng/đổi mật khẩu vẫn qua.
+    const gated: Array<[string, string, unknown?]> = [['POST', '/start'], ['POST', '/restart'], ['POST', '/auto/start', {}], ['POST', '/khu', { khu: 1 }], ['POST', '/move-to', { x: 1, y: 1 }], ['POST', '/daily/checkin', {}], ['POST', '/daily/seed', { taskId: 'duoc_moc' }], ['POST', '/daily/cancel', { operationId: 'x' }]];
+    for (const [mth, suf, body] of gated) {
+      const x = await j(`/api/accounts/${idA}${suf}`, mth, body, tokAl);
+      check(x.s === 403 && x.b.errorCode === 'ENTITLEMENT_EXPIRED', `expired gate ${mth} ${suf} -> ${x.s} ${x.b?.errorCode}`);
+    }
+    const startAllExpired = await j('/api/orchestrator/start-all', 'POST', {}, tokAl);
+    check(startAllExpired.s === 403 && startAllExpired.b.errorCode === 'ENTITLEMENT_EXPIRED', 'expired start-all ' + startAllExpired.s);
+    const allowed: Array<[string, string, unknown?]> = [['GET', ''], ['GET', '/logs'], ['POST', '/stop'], ['POST', '/auto/stop']];
+    for (const [mth, suf, body] of allowed) {
+      const x = await j(`/api/accounts/${idA}${suf}`, mth, body, tokAl);
+      check(x.b?.errorCode !== 'ENTITLEMENT_EXPIRED' && x.s !== 403, `expired allowed ${mth} ${suf} -> ${x.s} ${x.b?.errorCode}`);
+    }
+    check((await j('/api/orchestrator/stop-all', 'POST', {}, tokAl)).s === 200, 'expired stop-all allowed');
+    const meExpired = (await j('/api/auth/me', 'GET', null, tokAl)).b;
+    check(meExpired.user?.entitlement?.state === 'expired', 'me shows expired');
+    r = await j(`/api/admin/users/${alice.id}/grant`, 'POST', { duration: '1d' }, tokA);
+    check(r.s === 200 && r.b.data?.entitlement?.state === 'active', 'regrant alice ' + r.s);
+    // Hạn mức bot: alice có 1 tài khoản; hạ maxBots còn 1 thì không thêm được tài khoản (chặn trước khi chạm mạng).
+    r = await j(`/api/admin/users/${alice.id}`, 'PATCH', { maxBots: 1 }, tokA);
+    check(r.s === 200, 'maxBots=1 ' + r.s);
+    const overQuota = await j('/api/accounts', 'POST', { accountName: 'quota_probe', password: 'secret1' }, tokAl);
+    check(overQuota.s === 403 && overQuota.b.errorCode === 'QUOTA_BOTS', 'quota blocks add ' + overQuota.s + ' ' + overQuota.b?.errorCode);
+    check((await j(`/api/admin/users/${alice.id}`, 'PATCH', { maxBots: -1 }, tokA)).s === 400, 'maxBots invalid 400');
+    check((await j(`/api/admin/users/${alice.id}`, 'PATCH', { maxBots: 3 }, tokA)).s === 200, 'maxBots=3 restored');
     // 7. ma trận sở hữu
     const list = async (t: string): Promise<string[]> => (await j('/api/accounts', 'GET', null, t)).b.data.map((x: any) => x.id);
     const lA = await list(tokAl), lB = await list(tokBo), lAd = await list(tokA);

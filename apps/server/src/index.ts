@@ -11,6 +11,7 @@ import { wsHub } from './ws/hub.js';
 import { workerPool } from './orchestrator/worker-pool.js';
 import { db } from './db/database.js';
 import { errorHandler } from './security/errors.js';
+import { entitlementWatcher } from './orchestrator/entitlement-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +71,7 @@ app.use(errorHandler);
 
 // Initialize WebSocket Hub on same HTTP server
 wsHub.init(server, () => workerPool.getAllRuntimes());
+entitlementWatcher.start();
 
 server.listen(CONFIG.PORT, CONFIG.HOST, () => {
   console.log(`[TuTien2D Server] Backend listening on http://${CONFIG.HOST}:${CONFIG.PORT}`);
@@ -82,6 +84,7 @@ server.listen(CONFIG.PORT, CONFIG.HOST, () => {
 // Graceful shutdown
 async function handleShutdown() {
   console.log('\n[TuTien2D Server] Shutting down, stopping all active bots...');
+  entitlementWatcher.stop();
   await workerPool.stopAll();
   db.flush();
   server.close(() => {

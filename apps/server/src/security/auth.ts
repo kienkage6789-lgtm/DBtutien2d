@@ -6,6 +6,7 @@ import { db } from '../db/database.js';
 import { sendError } from './errors.js';
 import { DUMMY_PASSWORD_HASH, hashPassword, normalizeUsername, validatePassword, validateUsername, verifyPassword } from './password.js';
 import type { DbSession, DbUser, UserRole } from '../db/database.js';
+import { entitlement, type EntitlementSnapshot } from './entitlement.js';
 
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -132,7 +133,7 @@ export function verifyWsUpgrade(req: IncomingMessage): { ok: true; principal: Pr
   return resolved ? { ok: true, principal: resolved.principal, token: token ?? '' } : { ok: false, code: 401, reason: 'Unauthorized' };
 }
 
-export function publicUser(user: DbUser): {
+export function publicUser(user: DbUser, now: number = Date.now()): {
   id: string;
   username: string;
   role: UserRole;
@@ -140,7 +141,10 @@ export function publicUser(user: DbUser): {
   expiresAt: number | null;
   maxBots: number;
   mustChangePassword: boolean;
+  entitlement: EntitlementSnapshot;
+  usage?: { accounts: number; running: number; maxBots: number };
 } {
+  const usage = user.role === 'user' ? db.getUserUsage(user.id) : undefined;
   return {
     id: user.id,
     username: user.username,
@@ -149,6 +153,8 @@ export function publicUser(user: DbUser): {
     expiresAt: user.expiresAt,
     maxBots: user.maxBots,
     mustChangePassword: user.mustChangePassword,
+    entitlement: entitlement(user, now),
+    ...(usage ? { usage } : {}),
   };
 }
 

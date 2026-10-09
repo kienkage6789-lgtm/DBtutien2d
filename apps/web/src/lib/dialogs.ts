@@ -48,6 +48,12 @@ export function cleanMessage(value: unknown): string {
 }
 
 const FRIENDLY: Array<[RegExp, string]> = [
+  [/ENTITLEMENT_EXPIRED/, 'Tài khoản đã hết hạn, liên hệ admin để gia hạn.'],
+  [/ENTITLEMENT_NONE/, 'Tài khoản chưa được cấp hạn sử dụng. Liên hệ admin để được cấp hạn.'],
+  [/USER_DISABLED/, 'Tài khoản người dùng đã bị khóa.'],
+  [/QUOTA_BOTS/, 'Đã đủ số tài khoản theo hạn mức bot.'],
+  [/BOT_LIMIT_REACHED/, 'Đã đạt số bot chạy đồng thời cho phép.'],
+  [/SERVER_CAPACITY/, 'Máy chủ đang đủ runner, hãy thử lại sau.'],
   [/TARGET_ON_PORTAL/, 'Điểm đã chọn nằm trên ô cổng. Hãy chọn điểm khác (muốn sang map khác thì dùng "Đi tới map").'],
   [/TARGET_UNREACHABLE/, 'Không có đường tới điểm đã chọn.'],
   [/TARGET_INVALID/, 'Điểm hoặc tham số đã chọn không hợp lệ.'],

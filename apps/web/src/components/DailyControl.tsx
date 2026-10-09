@@ -36,7 +36,7 @@ function statusLabel(operation: DailyOperation | null): string {
   return labels[operation.status] ?? operation.status;
 }
 
-export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account }) => {
+export const DailyControl: React.FC<{ account: AccountRuntime; controlsDisabled?: boolean; controlLockReason?: string | null }> = ({ account, controlsDisabled = false, controlLockReason = null }) => {
   const [localOperation, setLocalOperation] = useState<DailyOperation | null>(account.daily);
   const [runs, setRuns] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +48,8 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
   const mapReady = runnerReady && vendor?.connection === 'IN_GAME' && vendor.mapId !== null;
   const autoActive = vendor?.autoRequested === true || vendor?.supervisor.phase !== undefined && vendor.supervisor.phase !== 'idle';
   const moveTo = account.moveTo ?? vendor?.moveTo ?? null;
-  const checkinLock = getDailyLockReason({ runnerReady, mapReady, autoActive, operation, moveTo, stage: status?.stage ?? null });
-  const seedLock = getDailyLockReason({ runnerReady, mapReady, autoActive, operation, moveTo, stage: status?.stage ?? null, forSeed: true });
+  const checkinLock = controlLockReason ?? getDailyLockReason({ runnerReady, mapReady, autoActive, operation, moveTo, stage: status?.stage ?? null });
+  const seedLock = controlLockReason ?? getDailyLockReason({ runnerReady, mapReady, autoActive, operation, moveTo, stage: status?.stage ?? null, forSeed: true });
   const supportedTasks = useMemo(() => status?.seedTasks.filter((item) => item.supported) ?? [], [status]);
 
   useEffect(() => {
@@ -126,7 +126,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
     {seedLock && supportedTasks.some((item) => item.runsLeft !== null && item.runsLeft > 0) && <p role="status" className="mt-2 text-amber-300">{seedLock}</p>}
     {operation && <div className="mt-2 flex items-center justify-between gap-2 rounded border border-cyan-500/25 bg-cyan-950/15 px-2 py-1.5 text-cyan-200">
       <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.progress?.itemId === 'nam_linh_chi' ? ` · nấm ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'truc_gia' && operation.progress?.itemId === 'truc_tam' ? ` · Trúc Tâm: ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'cau_ca' && operation.progress?.itemId === 'ca' ? ` · Cá: ${operation.progress.collected}/${operation.progress.required}` : ''}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>
-      {active(operation) && <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded border border-rose-500/40 bg-rose-600/20 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy</button>}
+      {active(operation) && <button type="button" onClick={() => void cancel()} disabled={controlsDisabled || busy} className="rounded border border-rose-500/40 bg-rose-600/20 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy</button>}
     </div>}
     {operation?.why && <p role="alert" className="mt-2 text-rose-300">{cleanWhy(operation.why)}</p>}
     {error && <p role="alert" className="mt-2 text-rose-300">{error}</p>}

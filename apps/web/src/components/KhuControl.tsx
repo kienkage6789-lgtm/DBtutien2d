@@ -7,7 +7,7 @@ import { resolveMapContext } from '../lib/context';
 const KHU_REQUEST_MIN_INTERVAL_MS = 2_500;
 const KHU_SUCCESS_COOLDOWN_MS = 5_000;
 
-export function KhuControl({ account }: { account: AccountRuntime }): React.ReactElement {
+export function KhuControl({ account, controlsDisabled = false, controlLockReason = null }: { account: AccountRuntime; controlsDisabled?: boolean; controlLockReason?: string | null }): React.ReactElement {
   const [list, setList] = useState<KhuList | null>(account.khuList);
   const [selected, setSelected] = useState<number | ''>('');
   const [localKhu, setLocalKhu] = useState<number | null>(account.khu);
@@ -28,7 +28,7 @@ export function KhuControl({ account }: { account: AccountRuntime }): React.Reac
     || (account.vendor?.supervisor.phase !== undefined && account.vendor.supervisor.phase !== 'idle');
   const runnerReady = account.status === 'running' && account.vendor !== undefined;
   const cooldownRemainingSec = khuCooldownRemainingSec(cooldownUntil, now);
-  const lockReason = getKhuLockReason({
+  const lockReason = controlLockReason ?? getKhuLockReason({
     runnerReady,
     contextUsable: context.usable,
     soKhu,
@@ -137,7 +137,7 @@ export function KhuControl({ account }: { account: AccountRuntime }): React.Reac
         })}
       </select>
       <button type="button" onClick={() => void choose()} disabled={selected === '' || !!lockReason || loading || pending || !list} className="rounded border border-amber-500/40 bg-amber-600/20 px-2.5 py-1.5 text-amber-200 disabled:opacity-40">{pending ? 'Đang đổi…' : 'Đổi khu'}</button>
-      <button type="button" onClick={() => loadList(true)} disabled={loading || pending || !runnerReady || !context.usable} className="rounded border border-slate-600 bg-slate-800/60 px-2.5 py-1.5 text-slate-200 disabled:opacity-40">Làm mới</button>
+      <button type="button" onClick={() => loadList(true)} disabled={controlsDisabled || loading || pending || !runnerReady || !context.usable} className="rounded border border-slate-600 bg-slate-800/60 px-2.5 py-1.5 text-slate-200 disabled:opacity-40">Làm mới</button>
     </div>
     {cooldownRemainingSec > 0 && <p className="mt-2 text-amber-300">Đang hồi: còn {cooldownRemainingSec}s</p>}
     {message && <p role="status" className="mt-2 text-emerald-300">{message}</p>}

@@ -30,12 +30,32 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
 function parseApiUser(value: unknown): AuthUser | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const user = value as Record<string, unknown>;
+  const rawEntitlement = user.entitlement;
+  if (!rawEntitlement || typeof rawEntitlement !== 'object' || Array.isArray(rawEntitlement)) return undefined;
+  const entitlement = rawEntitlement as Record<string, unknown>;
   if (typeof user.id !== 'string' || typeof user.username !== 'string'
     || (user.role !== 'admin' && user.role !== 'user')
     || (user.status !== 'active' && user.status !== 'disabled')
     || (user.expiresAt !== null && !isFiniteNumber(user.expiresAt))
-    || !Number.isInteger(user.maxBots) || Number(user.maxBots) < 1
-    || typeof user.mustChangePassword !== 'boolean') return undefined;
+    || !Number.isInteger(user.maxBots) || Number(user.maxBots) < 0 || Number(user.maxBots) > 1000
+    || typeof user.mustChangePassword !== 'boolean'
+    || !['admin', 'active', 'expired', 'none', 'disabled'].includes(String(entitlement.state))
+    || (entitlement.expiresAt !== null && !isFiniteNumber(entitlement.expiresAt))
+    || (entitlement.remainingMs !== null && !isFiniteNumber(entitlement.remainingMs))) return undefined;
+  const rawUsage = user.usage;
+  const usage = rawUsage === undefined ? undefined : rawUsage && typeof rawUsage === 'object' && !Array.isArray(rawUsage)
+    && Number.isInteger((rawUsage as Record<string, unknown>).accounts)
+    && Number.isInteger((rawUsage as Record<string, unknown>).running)
+    && Number.isInteger((rawUsage as Record<string, unknown>).maxBots)
+    && Number((rawUsage as Record<string, unknown>).accounts) >= 0
+    && Number((rawUsage as Record<string, unknown>).running) >= 0
+    && Number((rawUsage as Record<string, unknown>).maxBots) >= 0
+    ? {
+      accounts: Number((rawUsage as Record<string, unknown>).accounts),
+      running: Number((rawUsage as Record<string, unknown>).running),
+      maxBots: Number((rawUsage as Record<string, unknown>).maxBots),
+    } : undefined;
+  if (rawUsage !== undefined && !usage) return undefined;
   return {
     id: user.id,
     username: user.username,
@@ -44,7 +64,25 @@ function parseApiUser(value: unknown): AuthUser | undefined {
     expiresAt: user.expiresAt as number | null,
     maxBots: Number(user.maxBots),
     mustChangePassword: user.mustChangePassword,
+    entitlement: {
+      state: entitlement.state as AuthUser['entitlement']['state'],
+      expiresAt: entitlement.expiresAt as number | null,
+      remainingMs: entitlement.remainingMs as number | null,
+    },
+    ...(usage ? { usage } : {}),
   };
+}
+
+function attachServerClock(user: AuthUser, json: Record<string, unknown> | null): AuthUser {
+  const serverNow = typeof json?.serverNow === 'number' && Number.isFinite(json.serverNow) ? json.serverNow : null;
+  return serverNow === null ? user : { ...user, serverClockOffsetMs: serverNow - Date.now() };
+}
+
+function apiError(json: Record<string, unknown> | null, response: Response, fallback: string): ApiRequestError {
+  const message = typeof json?.error === 'string' ? json.error : fallback;
+  const code = typeof json?.errorCode === 'string' ? json.errorCode : undefined;
+  const retryAfterSec = response.status === 429 ? Number(response.headers.get('Retry-After') ?? 0) || undefined : undefined;
+  return new ApiRequestError(code ? `${message} [${code}]` : message, response.status, code, retryAfterSec);
 }
 
 export async function login(username: string, password: string): Promise<{ user: AuthUser; sessionExpiresAt: number | null }> {
@@ -54,13 +92,14 @@ export async function login(username: string, password: string): Promise<{ user:
     body: JSON.stringify({ username, password }),
   });
   const json = await response.json().catch(() => null) as Record<string, unknown> | null;
-  const user = parseApiUser(json?.user);
+  const parsedUser = parseApiUser(json?.user);
+  const user = parsedUser ? attachServerClock(parsedUser, json) : undefined;
   const token = typeof json?.token === 'string' ? json.token : '';
   if (!response.ok || json?.success !== true || !user || !token) {
     const retryAfterSec = response.status === 429
       ? Number(response.headers.get('Retry-After') ?? 0) || undefined : undefined;
     throw new ApiRequestError(
-      typeof json?.error === 'string' ? json.error : 'Đăng nhập thất bại.',
+      typeof json?.errorCode === 'string' && typeof json?.error === 'string' ? `${json.error} [${json.errorCode}]` : typeof json?.error === 'string' ? json.error : 'Đăng nhập thất bại.',
       response.status,
       typeof json?.errorCode === 'string' ? json.errorCode : undefined,
       retryAfterSec,
@@ -69,18 +108,19 @@ export async function login(username: string, password: string): Promise<{ user:
   setToken(token);
   return {
     user,
-    sessionExpiresAt: typeof json.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null,
+    sessionExpiresAt: typeof json?.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null,
   };
 }
 
 export async function fetchCurrentUser(): Promise<{ user: AuthUser; sessionExpiresAt: number | null }> {
   const response = await apiFetch(`${API_BASE}/auth/me`);
   const json = await response.json().catch(() => null) as Record<string, unknown> | null;
-  const user = parseApiUser(json?.user);
+  const parsedUser = parseApiUser(json?.user);
+  const user = parsedUser ? attachServerClock(parsedUser, json) : undefined;
   if (!response.ok || json?.success !== true || !user) {
     throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Phiên đăng nhập không hợp lệ.', response.status, typeof json?.errorCode === 'string' ? json.errorCode : undefined);
   }
-  return { user, sessionExpiresAt: typeof json.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null };
+  return { user, sessionExpiresAt: typeof json?.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null };
 }
 
 export async function logout(): Promise<void> {
@@ -98,7 +138,8 @@ export async function changeOwnPassword(currentPassword: string, newPassword: st
     body: JSON.stringify({ currentPassword, newPassword }),
   });
   const json = await response.json().catch(() => null) as Record<string, unknown> | null;
-  const user = parseApiUser(json?.user);
+  const parsedUser = parseApiUser(json?.user);
+  const user = parsedUser ? attachServerClock(parsedUser, json) : undefined;
   if (!response.ok || json?.success !== true || !user) {
     throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Không thể đổi mật khẩu.', response.status, typeof json?.errorCode === 'string' ? json.errorCode : undefined);
   }
@@ -183,9 +224,9 @@ export async function createAccount(data: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể thêm tài khoản.');
+  return json.data as AccountRuntime;
 }
 
 export async function updatePassword(id: string, password: string): Promise<AccountRuntime> {
@@ -194,23 +235,23 @@ export async function updatePassword(id: string, password: string): Promise<Acco
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
   });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể cập nhật mật khẩu game.');
+  return json.data as AccountRuntime;
 }
 
 export async function startBot(id: string): Promise<AccountRuntime> {
   const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(id)}/start`, { method: 'POST' });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể chạy bot.');
+  return json.data as AccountRuntime;
 }
 
 export async function stopBot(id: string): Promise<AccountRuntime> {
   const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(id)}/stop`, { method: 'POST' });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể dừng bot.');
+  return json.data as AccountRuntime;
 }
 
 export async function startVendorAuto(
@@ -223,15 +264,15 @@ export async function startVendorAuto(
     body: JSON.stringify(anchor ? { anchor } : {}),
   });
   const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.errorCode ? `${json.error} [${json.errorCode}]` : json.error);
-  return json.data;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể bật Auto.');
+  return json.data as AccountRuntime;
 }
 
 export async function stopVendorAuto(id: string): Promise<AccountRuntime> {
   const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(id)}/auto/stop`, { method: 'POST' });
   const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.errorCode ? `${json.error} [${json.errorCode}]` : json.error);
-  return json.data;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể dừng Auto.');
+  return json.data as AccountRuntime;
 }
 
 export class MoveToApiError extends Error {
@@ -520,22 +561,22 @@ export function cancelDaily(accountId: string, operationId: string): Promise<Dai
 
 export async function startAllBots(): Promise<AccountRuntime[]> {
   const response = await apiFetch(`${API_BASE}/orchestrator/start-all`, { method: 'POST' });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể bật toàn bộ bot.');
+  return json.data as AccountRuntime[];
 }
 
 export async function stopAllBots(): Promise<AccountRuntime[]> {
   const response = await apiFetch(`${API_BASE}/orchestrator/stop-all`, { method: 'POST' });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
-  return json.data;
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || !json || json.success !== true) throw apiError(json, response, 'Không thể dừng toàn bộ bot.');
+  return json.data as AccountRuntime[];
 }
 
 export async function deleteAccount(id: string): Promise<void> {
   const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  const json = await response.json();
-  if (!response.ok || !json.success) throw new Error(json.error);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true) throw apiError(json, response, 'Không thể xóa tài khoản.');
 }
 
 export async function fetchLogs(accountId?: string, limit = 100): Promise<LogEntry[]> {

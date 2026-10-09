@@ -5,6 +5,8 @@ import { resolveMapContext } from '../lib/context';
 
 interface MapTravelControlProps {
   account: AccountRuntime;
+  controlsDisabled?: boolean;
+  controlLockReason?: string | null;
   mapCatalog: MapCatalogItem[];
   onMoveTo: (
     target?: { x: number; y: number },
@@ -48,7 +50,7 @@ const statusLabel: Record<string, string> = {
   cancelled: 'Đã hủy',
 };
 
-export const MapTravelControl: React.FC<MapTravelControlProps> = ({ account, mapCatalog, onMoveTo, onCancelMoveTo }) => {
+export const MapTravelControl: React.FC<MapTravelControlProps> = ({ account, mapCatalog, controlsDisabled = false, controlLockReason = null, onMoveTo, onCancelMoveTo }) => {
   const [loading, setLoading] = useState(false);
   const [maps, setMaps] = useState<ReachableMap[]>([]);
   const [currentMapId, setCurrentMapId] = useState<string | null>(null);
@@ -63,7 +65,7 @@ export const MapTravelControl: React.FC<MapTravelControlProps> = ({ account, map
   const autoActive = account.vendor?.autoRequested === true
     || (account.vendor?.supervisor.phase !== undefined && account.vendor.supervisor.phase !== 'idle');
   const runnerReady = account.status === 'running' && account.vendor !== undefined;
-  const lockReason = getMapTravelLockReason({ runnerReady, contextUsable: context.usable, autoActive, operation });
+  const lockReason = controlLockReason ?? getMapTravelLockReason({ runnerReady, contextUsable: context.usable, autoActive, operation });
   const operationRunning = running(operation);
   const reachableById = useMemo(() => new Map(maps.map((map) => [map.mapId, map])), [maps]);
 
@@ -157,7 +159,7 @@ export const MapTravelControl: React.FC<MapTravelControlProps> = ({ account, map
       {selected && <p className="text-amber-300">Lưu ý: tuyến có thể đi qua map có quái; hủy giữa đường nghĩa là nhân vật đứng lại tại chỗ.</p>}
       <div className="flex items-center gap-2">
         <button type="button" onClick={start} disabled={!selected || !!lockReason} className="rounded border border-emerald-500/40 bg-emerald-600/20 px-2.5 py-1.5 text-emerald-200 disabled:opacity-40">Đi tới map này</button>
-        {operationRunning && <button type="button" onClick={cancel} className="rounded border border-rose-500/40 bg-rose-600/20 px-2.5 py-1.5 text-rose-200">Hủy</button>}
+        {operationRunning && <button type="button" onClick={cancel} disabled={controlsDisabled} className="rounded border border-rose-500/40 bg-rose-600/20 px-2.5 py-1.5 text-rose-200 disabled:opacity-40">Hủy</button>}
       </div>
       {operation && <p role="status" className="text-cyan-200">
         {operation.leg && operationRunning

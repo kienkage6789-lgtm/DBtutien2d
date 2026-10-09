@@ -96,3 +96,7 @@ Cập nhật: 2026-10-09. Chưa có mã nào được viết theo đặc tả n�
 ## Trạng thái bước 1 (2026-10-09)
 
 Bước 1 đã triển khai offline trong repo: SQLite/WAL và migration JSON một lần, users/sessions/password scrypt, login/logout/me/đổi mật khẩu, admin user tối thiểu, ownership REST/WS và giao diện đăng nhập tối thiểu. Chưa triển khai ở bước này: entitlement/quota enforcement, proxy CRUD/kiểm tra/gắn vào network, EntitlementWatcher và giao diện quản trị đầy đủ.
+
+## Trạng thái bước 2 (2026-10-09)
+
+Bước 2 đã triển khai offline trong repo: tính/cộng dồn grant, bảng `grants`, trạng thái entitlement và usage, quota tài khoản, gate quyền chạy, `MAX_TOTAL_RUNNERS`, `EntitlementWatcher` dừng runner/audit/system alert, endpoint admin cấp/đặt hạn và dashboard hiển thị hạn mức/khóa điều khiển. Người hết hạn vẫn được thêm tài khoản nếu còn quota; hạ `maxBots` không tự dừng runner đang chạy. Chưa xác minh live: lệch đồng hồ server/trình duyệt, tải watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và giới hạn runner theo RAM VPS.

@@ -17,6 +17,8 @@ const display = (value: unknown): string => {
 
 interface AccountCardProps {
   account: AccountRuntime;
+  controlsDisabled?: boolean;
+  controlLockReason?: string | null;
   mapCatalog: MapCatalogItem[];
   onStart: (id: string) => void;
   onStop: (id: string) => void;
@@ -31,6 +33,8 @@ interface AccountCardProps {
 
 export const AccountCard: React.FC<AccountCardProps> = ({
   account,
+  controlsDisabled = false,
+  controlLockReason = null,
   mapCatalog,
   onStart,
   onStop,
@@ -64,7 +68,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         <p className="text-[11px] text-slate-500 truncate">@{account.accountName} · engine vendor</p>
       </div>
       {running ? <button onClick={() => onStop(account.id)} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40"><Square className="w-3.5 h-3.5 fill-rose-400" /> Dừng</button>
-        : <button onClick={() => onStart(account.id)} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/40"><Play className="w-3.5 h-3.5 fill-emerald-400" /> Chạy</button>}
+        : <button onClick={() => onStart(account.id)} disabled={controlsDisabled} title={controlLockReason ?? 'Chạy bot'} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-40"><Play className="w-3.5 h-3.5 fill-emerald-400" /> Chạy</button>}
     </div>
 
     {account.authError && <div className="mb-3 p-2 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-2">
@@ -84,6 +88,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
     <MiniMap
       account={account}
+      controlsDisabled={controlsDisabled}
       geometry={mapGeometry}
       onMoveTo={(target) => onMoveTo(account.id, target)}
       onCancelMoveTo={(operationId) => onCancelMoveTo(account.id, operationId)}
@@ -91,14 +96,16 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
     <MapTravelControl
       account={account}
+      controlsDisabled={controlsDisabled}
+      controlLockReason={controlLockReason}
       mapCatalog={mapCatalog}
       onMoveTo={(target, options) => onMoveTo(account.id, target, options)}
       onCancelMoveTo={(operationId) => onCancelMoveTo(account.id, operationId)}
     />
 
-    <KhuControl account={account} />
+    <KhuControl account={account} controlsDisabled={controlsDisabled} controlLockReason={controlLockReason} />
 
-    <DailyControl account={account} />
+    <DailyControl account={account} controlsDisabled={controlsDisabled} controlLockReason={controlLockReason} />
 
     {account.vendor && <div className="mt-3 rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2 text-[11px]">
       <div className="flex items-center justify-between gap-2"><span className="font-semibold text-cyan-200">Auto chính thức · {account.vendor.supervisor.phase}</span><span className={account.vendor.autoRequested ? 'text-emerald-300' : 'text-slate-400'}>{account.vendor.autoRequested ? 'Đang bật' : 'Đang tắt'}</span></div>
@@ -106,7 +113,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
       <div className="mt-1 flex flex-wrap gap-x-3 text-slate-400"><span>Chết: {account.vendor.supervisor.stats.deaths}</span><span>Chuyến về: {account.vendor.supervisor.stats.trips}</span><span>Hurt: {account.vendor.hurtCount}</span></div>
       {account.vendor.supervisor.phase === 'halted' && <p role="alert" className="mt-1 text-rose-300">Đã dừng an toàn: {account.vendor.supervisor.reasonCode || 'không rõ lý do'}</p>}
       <div className="mt-2 flex gap-2">
-        <button type="button" disabled={account.vendor.autoRequested || account.vendor.downed === true} onClick={() => onStartVendorAuto(account)} className="rounded-lg border border-cyan-500/40 bg-cyan-600/20 px-2.5 py-1.5 text-cyan-200 disabled:opacity-40">Bật Auto tại vị trí này</button>
+        <button type="button" disabled={controlsDisabled || account.vendor.autoRequested || account.vendor.downed === true} title={controlLockReason ?? 'Bật Auto'} onClick={() => onStartVendorAuto(account)} className="rounded-lg border border-cyan-500/40 bg-cyan-600/20 px-2.5 py-1.5 text-cyan-200 disabled:opacity-40">Bật Auto tại vị trí này</button>
         <button type="button" disabled={!account.vendor.autoRequested && account.vendor.supervisor.phase === 'idle'} onClick={() => onStopVendorAuto(account.id)} className="rounded-lg border border-rose-500/40 bg-rose-600/20 px-2.5 py-1.5 text-rose-200 disabled:opacity-40">Dừng Auto</button>
       </div>
     </div>}
