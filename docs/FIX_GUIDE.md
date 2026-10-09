@@ -1436,9 +1436,9 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [~] `typescript.transpileModule` cho 5 file TS/TSX thay đổi pass cú pháp; `daily-quests.test.ts` và `vendor-runner.test.ts` bị chặn trước khi nạp bởi `uv_os_get_passwd returned ENOMEM`; chưa chạy được `pnpm build`, Vitest hoặc các test `tsx --test` còn lại trong sandbox; cần chạy từng file server theo danh sách handoff và toàn bộ build/test.
 5. [ ] Chưa xác minh live ngưỡng khoảng cách, cây bị người khác chặt/`hidden`, giới hạn 3 lượt/ngày phía server; `cau_ca`/`ho_tong_chau`/`dai_hoi` chưa hỗ trợ.
 
-## V. Việc `cau_ca` — đo live (2026-10-09), triển khai đang chờ Codex
+## V. Việc `cau_ca` — đo live và triển khai offline (2026-10-09)
 
 1. [x] Đo live chu trình: `seed.start` (41 px), `seed.complete` bằng cá có sẵn (+30 Linh Thạch, +4 Dược Công, tiêu 3 cá), câu từ xa bị từ chối "không đứng cạnh mặt nước", câu ở bờ hồ (5 lần: 3 được, 2 hụt); chi tiết ở `docs/RESEARCH_DAILY_QUESTS.md` mục 12.
 2. [x] Thăm dò `quest-probe`: `fish`, `status` (`ca`, `fishing`), `props` tìm `interactables`; build 3 package pass.
-3. [ ] Triển khai `cau_ca` trong `daily-quests.ts` (dùng cá có sẵn nếu đủ, thiếu thì câu ở `ho_bich_thuy_cong`): giao Codex bằng `docs/PROMPT_DAILY_CAU_CA.md`, chưa nghiệm thu.
+3. [x] Triển khai `cau_ca` trong `daily-quests.ts`/`vendor-runner.ts` (dùng cá có sẵn nếu đủ, thiếu thì câu ở `ho_bich_thuy_cong`), thêm UI/API/realtime và test source; chưa chạy build/test chính thức trong sandbox.
 4. [ ] Chưa xác minh: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, túi đầy, giới hạn 3 lượt/ngày phía server; `ho_tong_chau`/`dai_hoi` chưa đo.

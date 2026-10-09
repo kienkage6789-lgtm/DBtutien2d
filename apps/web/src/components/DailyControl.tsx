@@ -101,6 +101,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
       <span>Dược Công: {status?.duocCong ?? 'chưa biết'}</span>
       <span>Cành Khô: {status?.canhKho ?? 'chưa biết'}</span>
       <span>Nấm Linh Chi Núi: {status?.namLinhChi ?? 'chưa biết'}</span>
+      <span>Cá: {status?.fishInBag ?? 'chưa biết'}/3</span>
     </div>
     {!status && <p role="status" className="mb-2 text-amber-300">Chưa đọc được trạng thái nhiệm vụ.</p>}
     <div className="flex items-center gap-2">
@@ -114,6 +115,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
         <div className="min-w-0 basis-40 flex-1">
           <div className="break-words">{item.name || item.id}{item.active ? ' · đang làm' : ''}</div>
           <div className="text-slate-500">Lượt còn: {item.runsLeft ?? 'chưa biết'}</div>
+          {item.id === 'cau_ca' && <div className="text-slate-500">Dùng cá có sẵn trong túi; thiếu thì ra hồ câu</div>}
         </div>
         <div className="shrink-0">{item.supported
           ? <div className="flex items-center gap-1.5"><select aria-label={`Số lượt ${item.name || item.id}`} value={Math.min(runs, Math.max(1, Math.min(3, item.runsLeft ?? 1)))} onChange={(event) => setRuns(Math.max(1, Math.min(3, Number(event.target.value) || 1)))} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-slate-700 bg-slate-950 px-1 py-1 disabled:opacity-50">{Array.from({ length: Math.min(3, item.runsLeft ?? 0) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} lượt</option>)}</select><button type="button" onClick={() => void beginSeed(item)} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-emerald-500/40 bg-emerald-600/20 px-2 py-1 text-emerald-200 disabled:opacity-40">Làm</button></div>
@@ -122,7 +124,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
     </ul>
     {seedLock && supportedTasks.some((item) => item.runsLeft !== null && item.runsLeft > 0) && <p role="status" className="mt-2 text-amber-300">{seedLock}</p>}
     {operation && <div className="mt-2 flex items-center justify-between gap-2 rounded border border-cyan-500/25 bg-cyan-950/15 px-2 py-1.5 text-cyan-200">
-      <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.progress?.itemId === 'nam_linh_chi' ? ` · nấm ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'truc_gia' && operation.progress?.itemId === 'truc_tam' ? ` · Trúc Tâm: ${operation.progress.collected}/${operation.progress.required}` : ''}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>
+      <span>{statusLabel(operation)} · {operation.step} · lượt {operation.runIndex}/{operation.runsTotal}{operation.progress?.itemId === 'nam_linh_chi' ? ` · nấm ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'truc_gia' && operation.progress?.itemId === 'truc_tam' ? ` · Trúc Tâm: ${operation.progress.collected}/${operation.progress.required}` : operation?.taskId === 'cau_ca' && operation.progress?.itemId === 'ca' ? ` · Cá: ${operation.progress.collected}/${operation.progress.required}` : ''}{operation.rewards ? ` · +${operation.rewards.stones} Linh Thạch, +${operation.rewards.duocCong} Dược Công` : ''}</span>
       {active(operation) && <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded border border-rose-500/40 bg-rose-600/20 px-2 py-1 text-rose-200 disabled:opacity-40">Hủy</button>}
     </div>}
     {operation?.why && <p role="alert" className="mt-2 text-rose-300">{cleanWhy(operation.why)}</p>}

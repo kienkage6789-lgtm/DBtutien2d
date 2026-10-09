@@ -1,8 +1,26 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — `cau_ca` trong nhiệm vụ hằng ngày: triển khai, nghiệm thu, chạy thử live qua dashboard
+
+Codex triển khai `cau_ca` theo `docs/PROMPT_DAILY_CAU_CA.md` (dùng cá có sẵn trong túi nếu đủ 3, thiếu thì ra hồ `ho_bich_thuy_cong` câu lặp có giới hạn ~20 lần/150 s, chờ `ack` của `fishing.catch`, xử lý hụt/được, áp sát hơn một lần khi bị "không đứng cạnh mặt nước", dọn trạng thái câu khi hủy/Auto/gục/reconnect/stop, tìm điểm câu trong `interactables` và công thức toạ độ tâm ô).
+
+Nghiệm thu: build 3 package pass; test web 33; `daily-quests` 31 (1 test Codex fail do thứ tự trong test: lấy `first` trước khi đi tới hồ lần đầu nên vòng chờ dừng ở bước đi tới hồ (bán kính 12) thay vì bước áp sát lại (bán kính 4) mà mã làm đúng; đã sửa test), `vendor-runner` 19 (6 lần chạy ổn định), các test khác pass.
+
+Chạy thử live qua dashboard (hộp xác nhận trong giao diện, 1 lượt): `cau_ca` `done` trong 2,6 s qua nhánh dùng cá có sẵn (túi 25 cá): Linh Thạch 1435 → 1465 (+30), Dược Công 30 → 34 (+4), hurt 0. Hôm nay (2026-10-09) `cau_ca` đã dùng 2/3 lượt.
+
+Chưa xác minh live: nhánh câu cá thật trong mô-đun (túi thiếu cá; chỉ có test với fake và phép đo bằng `quest-probe`), ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, túi đầy, giới hạn 3 lượt/ngày ở server; `ho_tong_chau`/`dai_hoi` chưa hỗ trợ.
+
+## 2026-10-09 — Triển khai offline Dược Công `cau_ca`
+
+Thay đổi: mở rộng `DailyQuests` và `VendorRunner` để hỗ trợ đủ `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca`. Với `cau_ca`, state machine nhận việc ở Đại Phu, đọc `ca_song + linh_ngu` trong túi và giao ngay khi đủ 3; nếu thiếu thì đi theo map tới `duoc_vien`, đi bộ tới `ho_bich_thuy_cong`, đặt `SceneWorld.fishing` qua adapter và chờ đúng ACK `fishing.catch` theo `cmd`. ACK được cá/hụt được xử lý riêng; tối đa 20 lần hoặc khoảng 150 giây mỗi lượt, lỗi đứng xa mặt nước chỉ áp sát lại một lần, timeout không retry mù. Hủy, gục, reconnect, stop hoặc Auto đều xóa trạng thái câu. `getDailyProp`/`getDailyProps` đã đọc `interactables` và dùng công thức tâm ô cho tọa độ suy từ `MapData`; probe `fish` vẫn giữ nguyên qua helper dùng chung.
+
+API/docs/dashboard/realtime thêm hỗ trợ và hiển thị `Cá: n/3` cùng ghi chú dùng cá sẵn trong túi. Test source thêm các nhánh cá có sẵn, được/hụt, từ chối khoảng cách, quá giới hạn, tiếp tục việc dở, timeout, hủy/Auto và đi từ map khác; vendor fixture kiểm tra `(592,528)` cho `ho_bich_thuy_cong` và danh sách `interactables`.
+
+Lệnh đã chạy: rà soát offline bằng PowerShell/`apply_patch`; `typescript.transpileModule` cho các file TS/TSX thay đổi pass syntax; mô phỏng in-memory state machine `cau_ca` (được/hụt/được/được → giao việc) pass; `git diff --check` pass (chỉ cảnh báo LF/CRLF). `npx tsx --test` cho `daily-quests`, `vendor-runner`, `daily.contract` đều bị chặn trước khi nạp test bởi `uv_os_get_passwd returned ENOMEM`; Vitest bị chặn bởi `EPERM` khi đọc package dưới `.pnpm`; `pnpm build` chưa chạy được vì `pnpm` không có PATH. Chưa xác minh: build/typecheck/test đầy đủ; ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, túi đầy, giới hạn 3 lượt/ngày phía server, `ho_tong_chau`/`dai_hoi`. Không chạm game thật, không mở mạng, không đọc `data/`/`.env*`, không sửa `vendor/`/`auto-supervisor.ts`, không commit.
+
 ## 2026-10-09 — Đo live việc `cau_ca` (câu cá) và chuẩn bị triển khai
 
-Chưa có mã triển khai `cau_ca` trong commit này: chỉ có phần đo, thăm dò và tài liệu; phần triển khai đã giao Codex (`docs/PROMPT_DAILY_CAU_CA.md`), sẽ nghiệm thu và commit riêng.
+Đây là ghi nhận phần đo live; mã triển khai offline được ghi ở mục phiên ngay phía trên và chưa phải xác minh live mới.
 
 Đo live (`quest-probe`; kết quả đầy đủ ở docs/RESEARCH_DAILY_QUESTS.md mục 12), hurt 0:
 - `seed.start cau_ca` ở 41 px thành công (`n = 1`).

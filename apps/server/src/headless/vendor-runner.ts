@@ -831,6 +831,11 @@ export class VendorRunner {
           ? { mapId, x: Number(player.x), y: Number(player.y) } : null;
       },
       startChopping: (prop: DailyProp, mapId?: string) => this.startDailyChopping(prop, mapId),
+      startFishing: (propId: string) => this.startDailyFishing(propId),
+      isFishing: () => !!this.P?.SceneWorld?.fishing,
+      fishInBag: () => this.fishInBag(),
+      getFishingApproach: (prop: DailyProp) => this.getDailyFishingApproach(prop),
+      stopFishing: () => { if (this.P?.SceneWorld) this.P.SceneWorld.fishing = null; },
       invokeCheckin: () => this.P?.Gateway?.cmd?.('diemdanh', {}, () => undefined),
       startSeedQuest: (taskId: string) => this.P?.Quest?.startSeedQuest?.(taskId),
       completeSeedQuest: () => this.P?.Quest?.completeSeedQuest?.(),
@@ -893,7 +898,7 @@ export class VendorRunner {
       const limitValue = Number.isInteger(rawLimit) ? Number(rawLimit)
         : Number.isInteger(info.limit) ? Number(info.limit)
         : Number.isInteger(info.dailyLimit) ? Number(info.dailyLimit)
-        : id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' ? 3 : null;
+        : id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca' ? 3 : null;
       const runsLeftValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsLeft) ? Number(rawEntry.raw.runsLeft)
         : typeof quest?.seedTaskRunsLeft === 'function' ? quest.seedTaskRunsLeft(id) : null;
       const runsLeft = Number.isInteger(runsLeftValue)
@@ -908,7 +913,7 @@ export class VendorRunner {
         limit: limitValue,
         runsToday: count,
         runsLeft,
-        supported: id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia',
+        supported: id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca',
         active: !!seed?.active && seed.task === id,
       };
     });
@@ -938,6 +943,8 @@ export class VendorRunner {
       const value = P?.Inventory?.count?.(id);
       return typeof value === 'number' && Number.isFinite(value) ? value : null;
     };
+    const fishInBag = [countInventory('ca_song'), countInventory('linh_ngu')].every((value) => value !== null)
+      ? (countInventory('ca_song') ?? 0) + (countInventory('linh_ngu') ?? 0) : null;
     const stones = typeof P?.Progress?.stones === 'number' && Number.isFinite(P.Progress.stones) ? P.Progress.stones : null;
     const duocCong = typeof P?.Progress?.duocCong === 'number' && Number.isFinite(P.Progress.duocCong) ? P.Progress.duocCong : null;
     return {
@@ -950,9 +957,10 @@ export class VendorRunner {
       duocCong,
       canhKho: countInventory('canh_kho'),
       namLinhChi: countInventory('nam_linh_chi'),
+      fishInBag,
       activeCollected,
       activeCollectedIds,
-      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : seed?.active && seed.task === 'truc_gia' ? 4 : null,
+      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : seed?.active && seed.task === 'truc_gia' ? 4 : seed?.active && seed.task === 'cau_ca' ? 3 : null,
       drops,
     };
   }
@@ -960,11 +968,13 @@ export class VendorRunner {
   private getDailyProp(mapId: string, propId: string): DailyProp | null {
     const P = this.P;
     const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
-    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
+    const interactables = Array.isArray(map?.interactables) ? map.interactables : [];
+    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : []), ...interactables];
     const found = candidates.find((candidate: unknown) => candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).id === propId) as Record<string, unknown> | undefined;
     if (!found || typeof found.id !== 'string') return null;
-    // Prop của map đang tải có sẵn x/y. Dữ liệu MapData tĩnh (map khác) chỉ có ô tx/ty: suy ra x = ô*TILE + TILE/2,
-    // y = (ô+1)*TILE (đáy ô), đã đối chiếu với prop đã tải (dai_phu (14,8) -> (464,288), co_thu_linh_moc (34,25) -> (1104,832)).
+    const isInteractable = interactables.includes(found);
+    // Prop thường của MapData dùng đáy ô; interactable (như điểm câu) dùng tâm ô.
+    // Map đang tải thường đã có x/y nên giữ nguyên toạ độ client đã tính.
     let x = Number(found.x);
     let y = Number(found.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
@@ -973,7 +983,7 @@ export class VendorRunner {
       if (!Number.isFinite(tx) || !Number.isFinite(ty)) return null;
       const tile = Number(P?.CONFIG?.TILE) || 32;
       x = tx * tile + tile / 2;
-      y = (ty + 1) * tile;
+      y = isInteractable ? ty * tile + tile / 2 : (ty + 1) * tile;
     }
     return {
       id: found.id,
@@ -993,13 +1003,17 @@ export class VendorRunner {
     // của map khác không đúng, nên chỉ liệt kê khi nhân vật đang đứng trong map đó.
     if ((type === 'ling_chi_prop' || type === 'seed_bamboo_prop') && mapId !== this.getMapId()) return [];
     const map = mapId === this.getMapId() ? P?.SceneWorld?.map : P?.MapData?.get ? P.MapData.get(mapId) : P?.MapData?.[mapId];
-    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : [])];
+    const interactables = Array.isArray(map?.interactables) ? map.interactables : [];
+    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : []), ...interactables];
     const seen = new Set<string>();
     const props: DailyProp[] = [];
     for (const candidate of candidates) {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
       const raw = candidate as Record<string, unknown>;
-      if (raw.type !== type || typeof raw.id !== 'string' || seen.has(raw.id)) continue;
+      const matchesType = type === 'interactable' || type === 'interactables' || type === 'fishing' || type === 'water'
+        ? interactables.includes(candidate)
+        : raw.type === type;
+      if (!matchesType || typeof raw.id !== 'string' || seen.has(raw.id)) continue;
       const prop = this.getDailyProp(mapId, raw.id);
       if (prop) { seen.add(prop.id); props.push(prop); }
     }
@@ -1011,6 +1025,80 @@ export class VendorRunner {
     if (!actual || !this.P?.SceneWorld) return false;
     this.P.SceneWorld.chopping = { prop: actual, swing: 0, t: 10 };
     return true;
+  }
+
+  private fishInBag(): number | null {
+    const count = (id: string): number | null => {
+      const value = this.P?.Inventory?.count?.(id);
+      return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : null;
+    };
+    const caSong = count('ca_song');
+    const linhNgu = count('linh_ngu');
+    return caSong === null || linhNgu === null ? null : caSong + linhNgu;
+  }
+
+  private getDailyFishingApproach(prop: DailyProp): { x: number; y: number } | null {
+    const P = this.P;
+    const world = P?.SceneWorld;
+    const player = this.getPlayer();
+    const map = world?.map;
+    if (!world || !player || !map) return null;
+    const tile = Number(P.CONFIG?.TILE) || 32;
+    if (!Array.isArray(map.groundName) || !Number.isInteger(map.width) || !Number.isInteger(map.height)) return { x: prop.x, y: prop.y };
+    const cx = Math.floor(Number(player.x) / tile);
+    const cy = Math.floor(Number(player.y) / tile);
+    let bestPoint: { x: number; y: number } | null = null;
+    let best = Infinity;
+    for (let ty = Math.max(0, cy - 3); ty <= Math.min(Number(map.height) - 1, cy + 3); ty += 1) {
+      for (let tx = Math.max(0, cx - 3); tx <= Math.min(Number(map.width) - 1, cx + 3); tx += 1) {
+        if (map.groundName[ty * Number(map.width) + tx] !== 'water') continue;
+        const point = { x: tx * tile + tile / 2, y: ty * tile + tile / 2 };
+        const distance = Math.hypot(prop.x - point.x, prop.y - point.y) + 0.25 * Math.hypot(Number(player.x) - point.x, Number(player.y) - point.y);
+        if (distance < best) { best = distance; bestPoint = point; }
+      }
+    }
+    return bestPoint ?? { x: prop.x, y: prop.y };
+  }
+
+  /** Bắt chước In(prop) của client: dừng nhân vật, đặt phao ở ô nước gần nhất và để vòng update tự gửi fishing.catch. */
+  private startDailyFishing(propId: string): { started: boolean; durationMs?: number; waterNear?: boolean } {
+    const P = this.P;
+    const world = P?.SceneWorld;
+    const player = this.getPlayer();
+    const map = world?.map;
+    const candidates = [...(Array.isArray(map?.props) ? map.props : []), ...(Array.isArray(map?.flatProps) ? map.flatProps : []), ...(Array.isArray(map?.interactables) ? map.interactables : [])];
+    const prop = candidates.find((candidate: unknown) => candidate && typeof candidate === 'object' && (candidate as Record<string, unknown>).id === propId) as Record<string, unknown> | undefined;
+    if (!world || !player || !map || !prop || !P?.Fishing || world.fishing) return { started: false, waterNear: false };
+    player.stop?.();
+    P.Player?.stand?.(player);
+    player.state = 'idle';
+    const tile = Number(P.CONFIG?.TILE) || 32;
+    let bob: { x: number; y: number } | null = null;
+    let best = Infinity;
+    if (Array.isArray(map.groundName) && Number.isInteger(map.width) && Number.isInteger(map.height)) {
+      const cx = Math.floor(Number(player.x) / tile);
+      const cy = Math.floor(Number(player.y) / tile);
+      for (let ty = Math.max(0, cy - 3); ty <= Math.min(Number(map.height) - 1, cy + 3); ty += 1) {
+        for (let tx = Math.max(0, cx - 3); tx <= Math.min(Number(map.width) - 1, cx + 3); tx += 1) {
+          if (map.groundName[ty * Number(map.width) + tx] !== 'water') continue;
+          const gx = tx * tile + tile / 2;
+          const gy = ty * tile + tile / 2;
+          const d = Math.hypot(Number(prop.x) - gx, Number(prop.y) - gy) + 0.25 * Math.hypot(Number(player.x) - gx, Number(player.y) - gy);
+          if (d < best) { best = d; bob = { x: gx, y: gy }; }
+        }
+      }
+    }
+    const duration = P.Fishing.waitTime();
+    world.fishing = {
+      t: 0,
+      duration,
+      bobX: bob?.x ?? Number(player.x),
+      bobY: bob?.y ?? Number(player.y),
+      waterName: String(prop.title ?? prop.name ?? 'Bờ Nước'),
+      prop,
+      auto: false,
+    };
+    return { started: true, durationMs: typeof duration === 'number' && Number.isFinite(duration) ? Math.max(0, duration) * 1_000 : undefined, waterNear: bob !== null };
   }
 
   private issueDailyCommand(command: string, action: () => unknown): Promise<DailyAck> {
@@ -1064,6 +1152,7 @@ export class VendorRunner {
       ...(typeof packet.regrowAfter === 'number' && Number.isFinite(packet.regrowAfter) ? { regrowAfter: packet.regrowAfter } : {}),
       ...(typeof packet.itemId === 'string' ? { itemId: packet.itemId } : {}),
       ...(typeof packet.propId === 'string' ? { propId: packet.propId } : {}),
+      ...(typeof packet.missed === 'boolean' ? { missed: packet.missed } : {}),
     });
   }
 
@@ -1498,36 +1587,9 @@ export class VendorRunner {
         break;
       }
       case 'fish': {
-        // Giống In(prop) của client: dừng nhân vật, tìm ô nước gần nhất (±3 ô) làm phao, đặt SceneWorld.fishing; vòng cập nhật của client
-        // lo chờ 3-6 s, gửi fishing.catch và xử lý kết quả.
         const id = safeId(params.propId);
-        const world = P.SceneWorld;
-        const map = world?.map;
-        const prop = [...(map?.props ?? []), ...(map?.flatProps ?? []), ...(map?.interactables ?? [])].find((candidate: Record<string, unknown>) => candidate.id === id);
-        if (!prop || !P.Fishing) { result = { started: false, why: 'prop_not_found' }; break; }
-        if (world.fishing) { result = { started: false, why: 'already_fishing' }; break; }
-        player.stop?.();
-        P.Player?.stand?.(player);
-        player.state = 'idle';
-        const tile = Number(P.CONFIG?.TILE) || 32;
-        let bob: { x: number; y: number } | null = null;
-        let best = Infinity;
-        if (map?.groundName) {
-          const cx = Math.floor(player.x / tile);
-          const cy = Math.floor(player.y / tile);
-          for (let ty = Math.max(0, cy - 3); ty <= Math.min(map.height - 1, cy + 3); ty += 1) {
-            for (let tx = Math.max(0, cx - 3); tx <= Math.min(map.width - 1, cx + 3); tx += 1) {
-              if (map.groundName[ty * map.width + tx] !== 'water') continue;
-              const gx = tx * tile + tile / 2;
-              const gy = ty * tile + tile / 2;
-              const d = Math.hypot(Number(prop.x) - gx, Number(prop.y) - gy) + 0.25 * Math.hypot(player.x - gx, player.y - gy);
-              if (d < best) { best = d; bob = { x: gx, y: gy }; }
-            }
-          }
-        }
-        const duration = P.Fishing.waitTime();
-        world.fishing = { t: 0, duration, bobX: bob?.x ?? player.x, bobY: bob?.y ?? player.y, waterName: String(prop.title ?? prop.name ?? 'Bờ Nước'), prop, auto: false };
-        result = { started: true, duration: Math.round(duration * 10) / 10, waterNear: bob !== null };
+        const started = this.startDailyFishing(id);
+        result = started.started ? { started: true, duration: started.durationMs === undefined ? null : Math.round(started.durationMs / 100) / 10, waterNear: started.waterNear === true } : { started: false, why: P.SceneWorld?.fishing ? 'already_fishing' : 'prop_not_found' };
         break;
       }
       case 'seed.collect': {
@@ -1590,7 +1652,7 @@ export class VendorRunner {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
     if (op === 'ack') this.settleDailyAck(packet);
-    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete)|resource\.harvest)(?::refused)?$/.test(packet.reason)) {
+    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete)|resource\.harvest|fishing\.catch)(?::refused)?$/.test(packet.reason)) {
       this.recordLog('daily_state_observed', { reasonCode: packet.reason });
     }
     if (this.khuProbeActive) this.recordKhuProbeEvent(op, packet);

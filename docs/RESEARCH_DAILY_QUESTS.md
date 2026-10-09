@@ -196,3 +196,5 @@ Triển khai offline 2026-10-09: `daily-quests.ts` và `vendor-runner.ts` đã h
 Kết luận: việc `cau_ca` KHÔNG bắt buộc phải câu nếu túi đã có ≥ 3 cá (tiêu 3 cá thường mỗi lượt); khi túi thiếu cá phải tới bờ hồ (≤ ~19 px đã đo là được; xa 240 px bị từ chối) và câu lặp tới đủ, kết quả mỗi lần do server quyết (có thể hụt).
 
 Chưa đo: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, giới hạn 3 lượt/ngày ở server, hành vi khi túi đầy.
+
+Triển khai offline 2026-10-09: `DailyQuests`/`VendorRunner` đã hỗ trợ `cau_ca`: nhận việc ở Đại Phu, dùng cá sẵn trong túi khi đủ 3, nếu thiếu thì đi theo map tới `duoc_vien`, đi bộ tới `ho_bich_thuy_cong`, chờ ACK `fishing.catch` theo `cmd`, xử lý được/hụt, áp sát một lần khi server báo đứng xa mặt nước, rồi giao việc. Giữ nguyên các điểm chưa xác minh; đây không phải phép đo live mới.

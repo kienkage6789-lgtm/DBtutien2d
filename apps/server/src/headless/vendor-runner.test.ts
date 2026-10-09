@@ -685,6 +685,7 @@ test('VendorRunner daily checkin waits for the matching ACK cmd and ignores anot
     const status = runner.getDailyStatus();
     assert.ok(status.seedTasks.some((task) => task.id === 'duoc_moc'), 'official client seedTaskList must expose duoc_moc');
     assert.equal(status.seedTasks.find((task) => task.id === 'truc_gia')?.supported, true, 'truc_gia must be supported');
+    assert.equal(status.seedTasks.find((task) => task.id === 'cau_ca')?.supported, true, 'cau_ca must be supported');
     const operation = runner.startDailyCheckin();
     await waitUntil(() => FakeSocket.outgoing.some((packet) => packet.op === 'cmd' && packet.cmd === 'diemdanh'), 10_000);
     await waitUntil(() => runner.getSnapshot().daily?.status === 'done', 10_000);
@@ -889,6 +890,10 @@ test('VendorRunner suy toạ độ prop của map khác từ ô MapData và ch�
     // Map khác (duoc_vien): chỉ có ô tx/ty trong MapData; đã đối chiếu: dai_phu ô (14,8) -> (464,288), cổ thụ ô (34,25) -> (1104,832).
     assert.deepEqual(internals.getDailyProp('duoc_vien', 'dai_phu')?.x, 464);
     assert.deepEqual(internals.getDailyProp('duoc_vien', 'dai_phu')?.y, 288);
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'ho_bich_thuy_cong')?.x, 592);
+    assert.deepEqual(internals.getDailyProp('duoc_vien', 'ho_bich_thuy_cong')?.y, 528);
+    const fishingSpots = internals.getDailyProps('duoc_vien', 'interactable');
+    assert.ok(fishingSpots.some((prop) => prop.id === 'ho_bich_thuy_cong'), 'MapData interactables must be listed for fishing');
     assert.deepEqual(internals.getDailyProp('duoc_vien', 'co_thu_linh_moc')?.x, 1104);
     assert.deepEqual(internals.getDailyProp('duoc_vien', 'co_thu_linh_moc')?.y, 832);
     // Map đang tải (tan_vien): cây Linh Chi có x/y (bố cục theo ngày); map khác thì không liệt kê.

@@ -12,6 +12,9 @@ const linhChiTask = {
 const trucGiaTask = {
   id: 'truc_gia', name: 'Chặt Trúc Tâm', kind: 'collect', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
 };
+const cauCaTask = {
+  id: 'cau_ca', name: 'Câu cá', kind: 'fishing', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
+};
 
 class FakeDailyClient implements DailyClient {
   public now = 0;
@@ -26,6 +29,9 @@ class FakeDailyClient implements DailyClient {
   public walkRequests: WalkRequest[] = [];
   public command = '';
   public commandCount = 0;
+  public fishing = false;
+  public fishingStarts = 0;
+  public fishingStops = 0;
   public resourceProps: DailyProp[] = [
     { id: 'linh_chi_1', type: 'ling_chi_prop', x: 100, y: 100 },
     { id: 'linh_chi_2', type: 'ling_chi_prop', x: 200, y: 100 },
@@ -42,7 +48,7 @@ class FakeDailyClient implements DailyClient {
   public resolveAck: ((ack: DailyAck) => void) | null = null;
   public state: DailyClientState = {
     today: '2026-10-08', stage: 21, checkin: { done: false, total: 0 }, seedTasks: [task], activeSeedTask: null,
-    stones: 100, duocCong: 4, canhKho: 0, namLinhChi: 0, activeCollected: 0, activeCollectedIds: [], activeRequired: null, drops: [],
+    stones: 100, duocCong: 4, canhKho: 0, namLinhChi: 0, fishInBag: 0, activeCollected: 0, activeCollectedIds: [], activeRequired: null, drops: [],
   };
 
   public nowMs(): number { return this.now; }
@@ -62,6 +68,10 @@ class FakeDailyClient implements DailyClient {
   public readDailyState(): DailyClientState { return { ...this.state, checkin: { ...this.state.checkin }, seedTasks: this.state.seedTasks.map((item) => ({ ...item })), activeCollectedIds: [...this.state.activeCollectedIds], drops: this.state.drops.map((item) => ({ ...item })) }; }
   public getProp(_mapId: string, propId: string): DailyProp | null { return { id: propId, x: 100, y: 100, r: 58 }; }
   public startChopping(prop: DailyProp, mapId: string = 'duoc_vien'): boolean { this.lastChopPropId = prop.id; this.chopMapIds.push(mapId); return true; }
+  public startFishing(_propId: string): { started: boolean; durationMs: number } { this.fishing = true; this.fishingStarts += 1; return { started: true, durationMs: 100 }; }
+  public isFishing(): boolean { return this.fishing; }
+  public fishInBag(): number | null { return this.state.fishInBag; }
+  public stopFishing(): void { this.fishing = false; this.fishingStops += 1; }
   public invokeCheckin(): unknown { return true; }
   public listProps(mapId: string, type: string): DailyProp[] {
     // Mô hình đúng client: cây Linh Chi chỉ đọc được từ map đang tải.
@@ -71,7 +81,7 @@ class FakeDailyClient implements DailyClient {
   }
   public getPosition(): { mapId: string; x: number; y: number } | null { return this.positionMapId ? { mapId: this.positionMapId, x: 100, y: 100 } : null; }
   public harvestResource(_propId: string): unknown { this.commandCount += 1; return true; }
-  public startSeedQuest(taskId: string): unknown { this.commandCount += 1; this.state.activeSeedTask = taskId; this.state.activeRequired = taskId === 'linh_chi' ? 3 : 5; return true; }
+  public startSeedQuest(taskId: string): unknown { this.commandCount += 1; this.state.activeSeedTask = taskId; this.state.activeRequired = taskId === 'linh_chi' ? 3 : taskId === 'cau_ca' ? 3 : 5; return true; }
   public completeSeedQuest(): unknown {
     this.commandCount += 1;
     const taskId = this.state.activeSeedTask;
@@ -79,9 +89,10 @@ class FakeDailyClient implements DailyClient {
     this.state.activeCollected = 0;
     this.state.activeCollectedIds = [];
     this.state.namLinhChi = taskId === 'linh_chi' ? 0 : this.state.namLinhChi;
+    this.state.fishInBag = taskId === 'cau_ca' ? Math.max(0, (this.state.fishInBag ?? 0) - 3) : this.state.fishInBag;
     this.state.activeRequired = null;
     // Phần thưởng thật đã đo: linh_chi 10 Linh Thạch + 1 Dược Công, truc_gia 15 + 1, duoc_moc 20 + 3.
-    const reward = taskId === 'linh_chi' ? { stones: 10, duocCong: 1 } : taskId === 'truc_gia' ? { stones: 15, duocCong: 1 } : { stones: 20, duocCong: 3 };
+    const reward = taskId === 'linh_chi' ? { stones: 10, duocCong: 1 } : taskId === 'truc_gia' ? { stones: 15, duocCong: 1 } : taskId === 'cau_ca' ? { stones: 30, duocCong: 4 } : { stones: 20, duocCong: 3 };
     this.state.stones = (this.state.stones ?? 0) + reward.stones;
     this.state.duocCong = (this.state.duocCong ?? 0) + reward.duocCong;
     return true;
@@ -673,4 +684,164 @@ test('DailyQuests truc_gia timeout ACK seed.start không retry mù', () => {
   assert.equal(daily.getOperation()?.status, 'failed');
   assert.equal(daily.getOperation()?.reason, 'ACK_TIMEOUT');
   assert.equal(client.commandCount, 2);
+});
+
+async function acceptCauCa(client: FakeDailyClient, daily: DailyQuests): Promise<void> {
+  drive(client, daily, () => client.command === 'seed.start');
+  assert.equal(client.command, 'seed.start');
+  client.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+}
+
+async function finishFishingAttempt(client: FakeDailyClient, daily: DailyQuests, result: DailyAck): Promise<void> {
+  const starts = client.fishingStarts;
+  drive(client, daily, () => client.fishingStarts > starts);
+  assert.equal(client.command, 'fishing.catch');
+  client.fishing = false;
+  if (typeof result.itemId === 'string') client.state.fishInBag = (client.state.fishInBag ?? 0) + 1;
+  client.ack({ cmd: 'fishing.catch', ...result });
+  await flush();
+  daily.tick();
+}
+
+test('DailyQuests cau_ca dùng cá sẵn trong túi, không bật câu và nhận đúng thưởng', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [cauCaTask];
+  client.state.fishInBag = 3;
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  await acceptCauCa(client, daily);
+  drive(client, daily, () => client.command === 'seed.complete');
+  assert.equal(client.fishingStarts, 0);
+  client.ack({ cmd: 'seed.complete', ok: true });
+  await flush();
+  daily.tick();
+  assert.equal(daily.getOperation()?.status, 'done');
+  assert.deepEqual(daily.getOperation()?.rewards, { stones: 30, duocCong: 4 });
+  assert.equal(client.state.fishInBag, 0);
+});
+
+test('DailyQuests cau_ca câu đủ theo ACK được/hụt/được/được rồi giao việc', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [cauCaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  await acceptCauCa(client, daily);
+  await finishFishingAttempt(client, daily, { ok: true, itemId: 'ca_song' });
+  await finishFishingAttempt(client, daily, { ok: true, missed: true });
+  await finishFishingAttempt(client, daily, { ok: true, itemId: 'linh_ngu' });
+  await finishFishingAttempt(client, daily, { ok: true, itemId: 'ca_song' });
+  drive(client, daily, () => client.command === 'seed.complete');
+  client.ack({ cmd: 'seed.complete', ok: true, stones: 30, duocCong: 4 });
+  await flush();
+  daily.tick();
+  assert.equal(client.fishingStarts, 4);
+  assert.equal(daily.getOperation()?.status, 'done');
+  assert.deepEqual(daily.getOperation()?.progress, { itemId: 'ca', collected: 0, required: 3 });
+});
+
+test('DailyQuests cau_ca bị từ chối vì xa hồ thì áp sát một lần rồi giữ why', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [cauCaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  await acceptCauCa(client, daily);
+  drive(client, daily, () => client.fishingStarts > 0);
+  // Chỉ đếm các lần đi bộ SAU khi đã tới hồ và bị từ chối (lần đi tới hồ đầu có bán kính 12).
+  const first = client.walkRequests.length;
+  client.fishing = false;
+  client.ack({ cmd: 'fishing.catch', ok: false, why: 'không đứng cạnh mặt nước' });
+  await flush();
+  drive(client, daily, () => client.walkRequests.length > first);
+  assert.equal(client.walkRequests.at(-1)?.arrivalRadius, 4);
+  await finishFishingAttempt(client, daily, { ok: false, why: 'không đứng cạnh mặt nước' });
+  assert.equal(daily.getOperation()?.status, 'failed');
+  assert.equal(daily.getOperation()?.reason, 'ACK_REFUSED');
+  assert.equal(daily.getOperation()?.why, 'không đứng cạnh mặt nước');
+  assert.equal(client.fishingStarts, 2);
+});
+
+test('DailyQuests cau_ca quá giới hạn câu thì FISHING_NO_CATCH', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [cauCaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  await acceptCauCa(client, daily);
+  for (let i = 0; i < 20; i += 1) await finishFishingAttempt(client, daily, { ok: true, missed: true });
+  assert.equal(daily.getOperation()?.status, 'failed');
+  assert.equal(daily.getOperation()?.reason, 'FISHING_NO_CATCH');
+  assert.equal(client.fishingStarts, 20);
+});
+
+test('DailyQuests cau_ca tiếp tục việc dở và không gọi seed.start lại khi đã đủ cá', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [{ ...cauCaTask, active: true }];
+  client.state.activeSeedTask = 'cau_ca';
+  client.state.fishInBag = 3;
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  drive(client, daily, () => client.command === 'seed.complete');
+  assert.equal(client.command, 'seed.complete');
+  assert.equal(client.fishingStarts, 0);
+  client.ack({ cmd: 'seed.complete', ok: true });
+  await flush();
+  daily.tick();
+  assert.equal(daily.getOperation()?.status, 'done');
+});
+
+test('DailyQuests cau_ca timeout fishing.catch không retry mù, hủy xóa trạng thái và Auto hủy', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [cauCaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  await acceptCauCa(client, daily);
+  drive(client, daily, () => client.fishingStarts > 0);
+  client.now = 6_101;
+  daily.tick();
+  assert.equal(daily.getOperation()?.reason, 'ACK_TIMEOUT');
+  assert.equal(client.fishingStarts, 1);
+  assert.equal(client.fishing, false);
+
+  const cancelledClient = new FakeDailyClient();
+  cancelledClient.positionMapId = 'duoc_vien';
+  cancelledClient.state.seedTasks = [cauCaTask];
+  const cancelledDaily = new DailyQuests(cancelledClient);
+  const operation = cancelledDaily.startSeedTask('cau_ca');
+  await acceptCauCa(cancelledClient, cancelledDaily);
+  drive(cancelledClient, cancelledDaily, () => cancelledClient.fishingStarts > 0);
+  cancelledDaily.cancel(operation.operationId, 'user_cancelled');
+  assert.equal(cancelledClient.fishing, false);
+
+  const autoClient = new FakeDailyClient();
+  autoClient.positionMapId = 'duoc_vien';
+  autoClient.state.seedTasks = [cauCaTask];
+  const autoDaily = new DailyQuests(autoClient);
+  autoDaily.startSeedTask('cau_ca');
+  await acceptCauCa(autoClient, autoDaily);
+  drive(autoClient, autoDaily, () => autoClient.fishingStarts > 0);
+  autoClient.auto = true;
+  autoDaily.tick();
+  assert.equal(autoDaily.getOperation()?.reason, 'auto_started');
+  assert.equal(autoClient.fishing, false);
+});
+
+test('DailyQuests cau_ca từ map khác đi theo map tới duoc_vien rồi mới đi Đại Phu/hồ', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'tan_vien';
+  client.state.seedTasks = [cauCaTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('cau_ca');
+  drive(client, daily, () => client.walkRequests.length >= 2);
+  assert.equal(client.walkRequests[0].targetMapId, 'duoc_vien');
+  assert.equal(client.walkRequests[0].target, undefined);
+  assert.ok(client.walkRequests[1].target);
+  await acceptCauCa(client, daily);
+  drive(client, daily, () => client.fishingStarts > 0);
+  assert.equal(client.walkRequests[1].targetMapId, 'duoc_vien');
 });

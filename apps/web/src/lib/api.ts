@@ -374,7 +374,7 @@ export function parseDailyStatus(value: unknown): DailyStatus | undefined {
     || ((checkin as Record<string, unknown>).total !== null && !isFiniteNumber((checkin as Record<string, unknown>).total))
     || !parsedTasks || parsedTasks.length !== (item.seedTasks as unknown[]).length
     || (item.activeSeedTask !== null && typeof item.activeSeedTask !== 'string')
-    || !['stones', 'duocCong', 'canhKho', 'namLinhChi'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
+    || !['stones', 'duocCong', 'canhKho', 'namLinhChi', 'fishInBag'].every((field) => item[field] === null || isFiniteNumber(item[field]))) return undefined;
   return {
     today: item.today as string | null,
     stage: item.stage as number | null,
@@ -385,6 +385,7 @@ export function parseDailyStatus(value: unknown): DailyStatus | undefined {
     duocCong: item.duocCong as number | null,
     canhKho: item.canhKho as number | null,
     namLinhChi: item.namLinhChi as number | null,
+    fishInBag: item.fishInBag as number | null,
   };
 }
 

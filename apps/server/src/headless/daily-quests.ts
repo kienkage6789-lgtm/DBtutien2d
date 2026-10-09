@@ -24,6 +24,7 @@ export interface DailyStatus {
   duocCong: number | null;
   canhKho: number | null;
   namLinhChi: number | null;
+  fishInBag: number | null;
 }
 
 export interface DailyOperation {
@@ -51,6 +52,9 @@ export type DailyStep =
   | 'seed_walk_resource'
   | 'seed_harvest'
   | 'seed_wait_harvest'
+  | 'seed_walk_fishing'
+  | 'seed_fishing'
+  | 'seed_fishing_wait'
   | 'seed_chop'
   | 'seed_wait_drop'
   | 'seed_walk_drop'
@@ -76,6 +80,7 @@ export interface DailyAck {
   regrowAfter?: number;
   itemId?: string;
   propId?: string;
+  missed?: boolean;
 }
 
 export interface DailyProp {
@@ -120,6 +125,11 @@ export interface DailyClient {
   listProps?(mapId: string, type: string): DailyProp[];
   getPosition?(): { mapId: string; x: number; y: number } | null;
   startChopping(prop: DailyProp, mapId?: string): boolean;
+  startFishing(propId: string): unknown;
+  isFishing(): boolean;
+  fishInBag(): number | null;
+  getFishingApproach?(prop: DailyProp): { x: number; y: number } | null;
+  stopFishing?(): void;
   invokeCheckin(): unknown;
   startSeedQuest(taskId: string): unknown;
   completeSeedQuest(): unknown;
@@ -162,7 +172,8 @@ const ACTIVE_DAILY = new Set<DailyOperationStatus>(['accepted', 'running']);
 const DUOC_MOC_TASK = 'duoc_moc';
 const LINH_CHI_TASK = 'linh_chi';
 const TRUC_GIA_TASK = 'truc_gia';
-const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK, TRUC_GIA_TASK]);
+const CAU_CA_TASK = 'cau_ca';
+const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK, TRUC_GIA_TASK, CAU_CA_TASK]);
 const NPC_CHECKIN = 'manh_shopt1';
 const NPC_SEED = 'dai_phu';
 const TREE_SEED = 'co_thu_linh_moc';
@@ -172,6 +183,12 @@ const TREE_TILE_SIZE = 32;
 const REQUIRED_BRANCHES = 5;
 const REQUIRED_LINH_CHI = 3;
 const REQUIRED_BAMBOO = 4;
+const REQUIRED_FISH = 3;
+const FISHING_PROP = 'ho_bich_thuy_cong';
+const MAX_FISHING_ATTEMPTS = 20;
+const FISHING_RESULT_GRACE_MS = 6_000;
+const FISHING_TOTAL_TIMEOUT_MS = 150_000;
+const FISHING_APPROACH_RADIUS = 4;
 const MAX_CHOP_ATTEMPTS = 3;
 const ACK_TIMEOUT_MS = 5_000;
 const STEP_TIMEOUT_MS = 30_000;
@@ -203,6 +220,7 @@ function formatProgress(state: DailyClientState, target: string): string {
   const map = state.activeSeedTask ?? 'unknown';
   if (map === LINH_CHI_TASK) return `${target} map=${map} nam=${state.namLinhChi ?? 'unknown'}/${REQUIRED_LINH_CHI}`;
   if (map === TRUC_GIA_TASK) return `${target} map=${map} truc=${state.activeCollectedIds.length}/${REQUIRED_BAMBOO}`;
+  if (map === CAU_CA_TASK) return `${target} map=${map} ca=${state.fishInBag ?? 'unknown'}/${REQUIRED_FISH}`;
   const collected = state.activeCollected ?? state.canhKho ?? 0;
   return `${target} map=${map} canh=${collected}/${REQUIRED_BRANCHES}`;
 }
@@ -245,6 +263,13 @@ export class DailyQuests {
   private resourceWaitUntil = 0;
   private resourceWaitRounds = 0;
   private resourceCloseAttempted = false;
+  private fishingPropId: string | null = null;
+  private fishingAttempts = 0;
+  private fishingCaught = 0;
+  private fishingBagBaseline: number | null = null;
+  private fishingActiveRun = false;
+  private fishingDeadlineAt = 0;
+  private fishingCloseAttempted = false;
 
   public constructor(private readonly client: DailyClient) {}
 
@@ -262,6 +287,7 @@ export class DailyQuests {
       duocCong: state.duocCong,
       canhKho: state.canhKho,
       namLinhChi: state.namLinhChi,
+      fishInBag: state.fishInBag,
     };
   }
 
@@ -300,9 +326,16 @@ export class DailyQuests {
       ? (state.namLinhChi ?? 0) >= REQUIRED_LINH_CHI
       : taskId === TRUC_GIA_TASK
         ? state.activeCollectedIds.length >= REQUIRED_BAMBOO
-        : false;
+        : taskId === CAU_CA_TASK
+          ? (() => {
+            const fish = state.fishInBag ?? this.client.fishInBag();
+            return fish !== null && fish >= REQUIRED_FISH;
+          })()
+          : false;
     this.setStep(continuing
-      ? enough ? 'seed_walk_complete' : taskId === LINH_CHI_TASK ? 'seed_walk_resource' : 'seed_walk_tree'
+      ? enough ? 'seed_walk_complete'
+        : taskId === LINH_CHI_TASK ? 'seed_walk_resource'
+          : taskId === CAU_CA_TASK ? 'seed_walk_fishing' : 'seed_walk_tree'
       : 'seed_walk_npc');
     this.client.recordLog({ code: 'daily_started', detail: `seed=${taskId} runs=${runs}`, at: this.client.nowMs() });
     return copyOperation(this.operation)!;
@@ -315,6 +348,8 @@ export class DailyQuests {
     if (this.pendingWalk) this.client.cancelWalk?.(this.pendingWalk.operationId, reason);
     if (this.pendingCollectAck) this.client.cancelPendingCommand?.('seed.collect');
     if (this.pendingHarvestPropId) this.client.cancelPendingCommand?.('resource.harvest');
+    if (this.pendingAck?.command === 'fishing.catch') this.client.cancelPendingCommand?.('fishing.catch');
+    this.client.stopFishing?.();
     if (this.operation.kind === 'seed' && this.client.isInGame()) {
       try { this.client.cancelSeedQuest(); } catch { /* local cancellation is best effort during stop/reconnect */ }
     }
@@ -409,6 +444,9 @@ export class DailyQuests {
       case 'seed_start': this.beginAck('seed.start', 'seed_start', () => this.client.issueCommand('seed.start', () => this.client.startSeedQuest(this.operation?.taskId ?? ''))); break;
       case 'seed_walk_tree': this.walkToTree(); break;
       case 'seed_walk_resource': this.walkToResource(); break;
+      case 'seed_walk_fishing': this.walkToFishing(); break;
+      case 'seed_fishing': this.beginFishing(); break;
+      case 'seed_fishing_wait': break;
       case 'seed_harvest': this.beginHarvest(); break;
       case 'seed_wait_harvest': this.waitForHarvest(now); break;
       case 'seed_chop': this.beginChop(); break;
@@ -455,6 +493,13 @@ export class DailyQuests {
     this.resourceWaitUntil = 0;
     this.resourceWaitRounds = 0;
     this.resourceCloseAttempted = false;
+    this.fishingPropId = null;
+    this.fishingAttempts = 0;
+    this.fishingCaught = 0;
+    this.fishingBagBaseline = this.readFishCount(state);
+    this.fishingActiveRun = false;
+    this.fishingDeadlineAt = 0;
+    this.fishingCloseAttempted = false;
     this.pendingDrop = null;
     this.chopStartedAt = 0;
     this.chopAttempts = 0;
@@ -546,6 +591,21 @@ export class DailyQuests {
 
   private isTrucGia(): boolean { return this.operation?.taskId === TRUC_GIA_TASK; }
 
+  private isCauCa(): boolean { return this.operation?.taskId === CAU_CA_TASK; }
+
+  private readFishCount(state: DailyClientState = this.client.readDailyState()): number | null {
+    const direct = this.client.fishInBag();
+    const value = direct ?? state.fishInBag;
+    return finite(value) ? Math.max(0, Math.floor(value)) : null;
+  }
+
+  private currentFishCount(): number | null {
+    const observed = this.readFishCount();
+    if (!this.fishingActiveRun || this.fishingBagBaseline === null) return observed;
+    const minimum = this.fishingBagBaseline + this.fishingCaught;
+    return observed === null ? minimum : Math.max(observed, minimum);
+  }
+
   private currentBambooCount(state: DailyClientState = this.client.readDailyState()): number {
     for (const id of state.activeCollectedIds) this.collectedIds.add(id);
     return this.collectedIds.size;
@@ -633,6 +693,76 @@ export class DailyQuests {
       maxHurt: this.maxHurt,
       requester: 'daily',
     }, 'seed_harvest');
+  }
+
+  private walkToFishing(): void {
+    if (!this.isCauCa()) { this.fail('INVALID_STEP'); return; }
+    const fish = this.currentFishCount();
+    if (fish !== null && fish >= REQUIRED_FISH) {
+      this.setStep('seed_walk_complete');
+      return;
+    }
+    const now = this.client.nowMs();
+    if (this.fishingDeadlineAt === 0) this.fishingDeadlineAt = now + FISHING_TOTAL_TIMEOUT_MS;
+    if (now >= this.fishingDeadlineAt) { this.fail('FISHING_NO_CATCH'); return; }
+    if (this.beginWalkToMapIfNeeded('duoc_vien')) return;
+    const prop = this.client.getProp('duoc_vien', FISHING_PROP);
+    if (!prop) { this.fail('TARGET_INVALID'); return; }
+    this.fishingPropId = prop.id;
+    this.beginWalk({
+      targetMapId: 'duoc_vien',
+      target: { x: prop.x, y: prop.y },
+      arrivalRadius: this.fishingCloseAttempted ? FISHING_APPROACH_RADIUS : 12,
+      abortOnHurt: this.abortOnHurt,
+      maxHurt: this.maxHurt,
+      requester: 'daily',
+    }, 'seed_fishing');
+  }
+
+  private beginFishing(): void {
+    if (!this.isCauCa()) { this.fail('INVALID_STEP'); return; }
+    const fish = this.currentFishCount();
+    if (fish !== null && fish >= REQUIRED_FISH) {
+      this.setStep('seed_walk_complete');
+      return;
+    }
+    const now = this.client.nowMs();
+    if (this.fishingAttempts >= MAX_FISHING_ATTEMPTS || now >= this.fishingDeadlineAt) {
+      this.fail('FISHING_NO_CATCH');
+      return;
+    }
+    const propId = this.fishingPropId ?? FISHING_PROP;
+    const prop = this.client.getProp('duoc_vien', propId);
+    if (!prop) { this.fail('TARGET_INVALID'); return; }
+    this.fishingActiveRun = true;
+    const pending = { command: 'fishing.catch', step: 'seed_fishing_wait' as DailyStep, deadlineAt: now + FISHING_RESULT_GRACE_MS, result: null as DailyAck | null };
+    this.pendingAck = pending;
+    this.stepDeadlineAt = pending.deadlineAt;
+    this.client.watchCommand('fishing.catch').then((ack) => {
+      if (this.pendingAck === pending) pending.result = ack;
+    }, () => {
+      if (this.pendingAck === pending) pending.result = { cmd: 'fishing.catch', ok: false, why: 'COMMAND_FAILED' };
+    });
+    try {
+      const started = this.client.isFishing() ? { started: true } : this.client.startFishing(prop.id);
+      const startInfo = started && typeof started === 'object' && !Array.isArray(started) ? started as Record<string, unknown> : null;
+      const isStarted = started !== false && startInfo?.started !== false;
+      if (!isStarted) {
+        this.client.cancelPendingCommand?.('fishing.catch');
+        this.pendingAck = null;
+        this.fail('FISHING_UNAVAILABLE');
+        return;
+      }
+      if (startInfo && finite(startInfo.durationMs)) {
+        pending.deadlineAt = now + Math.max(0, startInfo.durationMs) + FISHING_RESULT_GRACE_MS;
+        this.stepDeadlineAt = pending.deadlineAt;
+      }
+      this.client.recordLog({ code: 'daily_step', detail: `fishing_start=1 attempts=${this.fishingAttempts}/${MAX_FISHING_ATTEMPTS} fish=${this.currentFishCount() ?? 'unknown'}`, at: now });
+    } catch {
+      this.client.cancelPendingCommand?.('fishing.catch');
+      this.pendingAck = null;
+      this.fail('FISHING_UNAVAILABLE');
+    }
   }
 
   private beginHarvest(): void {
@@ -748,6 +878,10 @@ export class DailyQuests {
       this.handleHarvestAck(ack);
       return;
     }
+    if (command === 'fishing.catch') {
+      this.handleFishingAck(ack);
+      return;
+    }
     if (!ack.ok) {
       this.fail('ACK_REFUSED', cleanServerText(ack.why ?? ack.toast, 'server_refused'));
       return;
@@ -762,14 +896,24 @@ export class DailyQuests {
         this.resourceCoolingUntil.clear();
         this.resourceWaitRounds = 0;
         this.setStep((this.currentLinhChi() ?? 0) >= REQUIRED_LINH_CHI ? 'seed_walk_complete' : 'seed_walk_resource');
+      } else if (this.isCauCa()) {
+        this.fishingAttempts = 0;
+        this.fishingCaught = 0;
+        this.fishingBagBaseline = this.readFishCount();
+        this.fishingActiveRun = false;
+        this.fishingDeadlineAt = this.client.nowMs() + FISHING_TOTAL_TIMEOUT_MS;
+        this.fishingCloseAttempted = false;
+        const fish = this.currentFishCount();
+        this.setStep(fish !== null && fish >= REQUIRED_FISH ? 'seed_walk_complete' : 'seed_walk_fishing');
       } else {
         this.setStep('seed_walk_tree');
       }
     } else if (command === 'seed.collect') {
       this.setStep('seed_collect_wait');
     } else if (command === 'seed.complete') {
-      this.earnedStones += ack.stones ?? (this.isLinhChi() ? 10 : this.isTrucGia() ? 15 : 20);
-      this.earnedDuocCong += ack.duocCong ?? (this.isLinhChi() || this.isTrucGia() ? 1 : 3);
+      this.earnedStones += ack.stones ?? (this.isLinhChi() ? 10 : this.isTrucGia() ? 15 : this.isCauCa() ? 30 : 20);
+      this.earnedDuocCong += ack.duocCong ?? (this.isLinhChi() || this.isTrucGia() ? 1 : this.isCauCa() ? 4 : 3);
+      this.fishingActiveRun = false;
       if (this.operation && this.operation.runIndex < this.operation.runsTotal) {
         this.setStep('seed_wait_reset');
       } else {
@@ -778,6 +922,49 @@ export class DailyQuests {
     } else {
       this.fail('UNKNOWN_ACK_COMMAND');
     }
+  }
+
+  private handleFishingAck(ack: DailyAck): void {
+    const now = this.client.nowMs();
+    this.fishingAttempts += 1;
+    const caught = typeof ack.itemId === 'string' && ack.itemId.length > 0;
+    if (caught) this.fishingCaught += 1;
+    const fish = this.currentFishCount();
+    const result = caught ? `caught:${cleanServerText(ack.itemId, 'item')}` : ack.missed === true ? 'missed' : 'no_item';
+    const prop = this.fishingPropId ? this.client.getProp('duoc_vien', this.fishingPropId) : null;
+    const position = this.client.getPosition?.();
+    const distance = prop && position?.mapId === 'duoc_vien' ? Math.round(Math.hypot(position.x - prop.x, position.y - prop.y)) : 'unknown';
+    this.client.stopFishing?.();
+    this.client.recordLog({ code: 'daily_step', detail: `fishing_result=${result} fish=${fish ?? 'unknown'}/${REQUIRED_FISH} attempts=${this.fishingAttempts}/${MAX_FISHING_ATTEMPTS} distance=${distance}`, at: now });
+    if (!ack.ok) {
+      const why = cleanServerText(ack.why ?? ack.toast, 'server_refused');
+      if (why.toLocaleLowerCase().includes('không đứng cạnh mặt nước') && !this.fishingCloseAttempted) {
+        const water = this.fishingPropId ? this.client.getProp('duoc_vien', this.fishingPropId) : null;
+        if (!water) { this.fail('TARGET_INVALID', why); return; }
+        this.fishingCloseAttempted = true;
+        const approach = this.client.getFishingApproach?.(water) ?? { x: water.x, y: water.y };
+        this.beginWalk({
+          targetMapId: 'duoc_vien',
+          target: approach,
+          arrivalRadius: FISHING_APPROACH_RADIUS,
+          abortOnHurt: this.abortOnHurt,
+          maxHurt: this.maxHurt,
+          requester: 'daily',
+        }, 'seed_fishing');
+        return;
+      }
+      this.fail('ACK_REFUSED', why);
+      return;
+    }
+    if (fish !== null && fish >= REQUIRED_FISH) {
+      this.setStep('seed_walk_complete');
+      return;
+    }
+    if (this.fishingAttempts >= MAX_FISHING_ATTEMPTS || now >= this.fishingDeadlineAt) {
+      this.fail('FISHING_NO_CATCH');
+      return;
+    }
+    this.setStep('seed_fishing');
   }
 
   private handleHarvestAck(ack: DailyAck): void {
@@ -991,6 +1178,13 @@ export class DailyQuests {
       this.collectedIds.clear();
       this.chopPropId = null;
       this.chopMapId = null;
+      this.fishingPropId = null;
+      this.fishingAttempts = 0;
+      this.fishingCaught = 0;
+      this.fishingBagBaseline = this.readFishCount(state);
+      this.fishingActiveRun = false;
+      this.fishingDeadlineAt = 0;
+      this.fishingCloseAttempted = false;
       this.setStep('seed_walk_npc');
       return;
     }
@@ -1009,6 +1203,12 @@ export class DailyQuests {
     if (this.operation.taskId === TRUC_GIA_TASK) {
       const collected = this.currentBambooCount(state);
       this.operation.progress = { itemId: 'truc_tam', collected, required: REQUIRED_BAMBOO };
+      return;
+    }
+    if (this.operation.taskId === CAU_CA_TASK) {
+      const collected = this.currentFishCount();
+      if (collected === null) delete this.operation.progress;
+      else this.operation.progress = { itemId: 'ca', collected, required: REQUIRED_FISH };
       return;
     }
     if (this.operation.taskId !== LINH_CHI_TASK) return;
@@ -1037,6 +1237,8 @@ export class DailyQuests {
     this.pendingWalk = null;
     this.pendingCollectAck = null;
     this.pendingHarvestPropId = null;
+    this.client.stopFishing?.();
+    this.fishingActiveRun = false;
     this.client.recordLog({ code: 'daily_done', detail: `${this.operation.kind} stones=${stones} duoc=${duocCong}`, at: now });
   }
 
@@ -1051,6 +1253,8 @@ export class DailyQuests {
     this.pendingWalk = null;
     if (this.pendingCollectAck) this.client.cancelPendingCommand?.('seed.collect');
     if (this.pendingHarvestPropId) this.client.cancelPendingCommand?.('resource.harvest');
+    if (this.pendingAck?.command === 'fishing.catch') this.client.cancelPendingCommand?.('fishing.catch');
+    this.client.stopFishing?.();
     this.pendingAck = null;
     this.pendingCollectAck = null;
     this.pendingHarvestPropId = null;

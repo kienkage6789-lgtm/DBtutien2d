@@ -59,6 +59,7 @@ export interface DailyStatus {
   duocCong: number | null;
   canhKho: number | null;
   namLinhChi: number | null;
+  fishInBag: number | null;
 }
 
 export interface ReachableMap {
