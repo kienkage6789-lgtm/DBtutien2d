@@ -839,6 +839,7 @@ export class VendorRunner {
       invokeCheckin: () => this.P?.Gateway?.cmd?.('diemdanh', {}, () => undefined),
       startSeedQuest: (taskId: string) => this.P?.Quest?.startSeedQuest?.(taskId),
       completeSeedQuest: () => this.P?.Quest?.completeSeedQuest?.(),
+      completeEscortSeedQuest: () => this.P?.Quest?.completeEscortSeedQuest?.(),
       issueCommand: (command: string, action: () => unknown) => this.issueDailyCommand(command, action),
       harvestResource: (propId: string) => this.P?.Gateway?.cmd?.('resource.harvest', { propId }, () => undefined),
       watchCommand: (command: string) => this.watchDailyCommand(command),
@@ -898,7 +899,7 @@ export class VendorRunner {
       const limitValue = Number.isInteger(rawLimit) ? Number(rawLimit)
         : Number.isInteger(info.limit) ? Number(info.limit)
         : Number.isInteger(info.dailyLimit) ? Number(info.dailyLimit)
-        : id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca' ? 3 : null;
+        : id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca' || id === 'ho_tong_chau' ? 3 : null;
       const runsLeftValue = rawEntry?.raw && Number.isInteger(rawEntry.raw.runsLeft) ? Number(rawEntry.raw.runsLeft)
         : typeof quest?.seedTaskRunsLeft === 'function' ? quest.seedTaskRunsLeft(id) : null;
       const runsLeft = Number.isInteger(runsLeftValue)
@@ -913,7 +914,7 @@ export class VendorRunner {
         limit: limitValue,
         runsToday: count,
         runsLeft,
-        supported: id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca',
+        supported: id === 'duoc_moc' || id === 'linh_chi' || id === 'truc_gia' || id === 'cau_ca' || id === 'ho_tong_chau',
         active: !!seed?.active && seed.task === id,
       };
     });
@@ -960,7 +961,7 @@ export class VendorRunner {
       fishInBag,
       activeCollected,
       activeCollectedIds,
-      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : seed?.active && seed.task === 'truc_gia' ? 4 : seed?.active && seed.task === 'cau_ca' ? 3 : null,
+      activeRequired: seed?.active && seed.task === 'duoc_moc' ? 5 : seed?.active && seed.task === 'linh_chi' ? 3 : seed?.active && seed.task === 'truc_gia' ? 4 : seed?.active && seed.task === 'cau_ca' ? 3 : seed?.active && seed.task === 'ho_tong_chau' ? 0 : null,
       drops,
     };
   }
@@ -1500,7 +1501,7 @@ export class VendorRunner {
 
   /**
    * THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md). Chỉ gọi các hàm/đường lệnh của chính client:
-   * status (chỉ đọc), diemdanh (Gateway.cmd), seed.start/seed.complete/seed.cancel (Quest.* của client, bindIntents phát lệnh),
+   * status (chỉ đọc), diemdanh (Gateway.cmd), seed.start/seed.complete/seed.escortComplete/seed.cancel (Quest.* của client, bindIntents phát lệnh),
    * harvest (Gateway.cmd resource.harvest như client). Không có kiểm tra an toàn nào ngoài đang trong game.
    */
   public questProbe(act: string, params: { taskId?: string; propId?: string } = {}): { act: string; at: number; result: unknown } {
@@ -1557,6 +1558,12 @@ export class VendorRunner {
         const outBefore = this.packets.commands['seed.complete'] ?? 0;
         const done = P.Quest?.completeSeedQuest?.();
         result = { local: done ? 'completed' : 'refused', cmdSent: (this.packets.commands['seed.complete'] ?? 0) > outBefore };
+        break;
+      }
+      case 'seed.escortComplete': {
+        const outBefore = this.packets.commands['seed.escortComplete'] ?? 0;
+        const done = P.Quest?.completeEscortSeedQuest?.();
+        result = { local: done ? 'completed' : 'refused', cmdSent: (this.packets.commands['seed.escortComplete'] ?? 0) > outBefore };
         break;
       }
       case 'seed.cancel': {
@@ -1652,7 +1659,7 @@ export class VendorRunner {
     const op = typeof packet.op === 'string' ? packet.op : 'unknown';
     this.packets.incoming[op] = (this.packets.incoming[op] ?? 0) + 1;
     if (op === 'ack') this.settleDailyAck(packet);
-    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete)|resource\.harvest|fishing\.catch)(?::refused)?$/.test(packet.reason)) {
+    if (op === 'state' && typeof packet.reason === 'string' && /^(diemdanh|seed\.(start|collect|complete|escortComplete)|resource\.harvest|fishing\.catch)(?::refused)?$/.test(packet.reason)) {
       this.recordLog('daily_state_observed', { reasonCode: packet.reason });
     }
     if (this.khuProbeActive) this.recordKhuProbeEvent(op, packet);

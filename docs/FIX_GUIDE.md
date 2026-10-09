@@ -1442,3 +1442,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 2. [x] Thăm dò `quest-probe`: `fish`, `status` (`ca`, `fishing`), `props` tìm `interactables`; build 3 package pass.
 3. [x] Triển khai `cau_ca` trong `daily-quests.ts`/`vendor-runner.ts` (dùng cá có sẵn nếu đủ, thiếu thì câu ở `ho_bich_thuy_cong`), thêm UI/API/realtime và test source; chưa chạy build/test chính thức trong sandbox.
 4. [ ] Chưa xác minh: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, túi đầy, giới hạn 3 lượt/ngày phía server; `ho_tong_chau`/`dai_hoi` chưa đo.
+
+## W. Module nhiệm vụ hằng ngày — `ho_tong_chau` (offline 2026-10-09)
+
+1. [x] State machine hỗ trợ đủ năm việc; hộ tống đi Đại Phu → `tan_vien` → `su_phu`, tiếp tục việc dở, lặp nhiều lượt và ghi thưởng +25 Linh Thạch/+2 Dược Công.
+2. [x] `VendorRunner` gọi `Quest.completeEscortSeedQuest`, chờ ACK `seed.escortComplete` theo `cmd`, giữ `activeRequired: 0`/không có progress vật phẩm, áp sát lại tối đa một lần và làm sạch `ack.why`.
+3. [x] API docs/dashboard/research/session log cập nhật; route `quest-probe` và `khu-probe`, vendor client và `auto-supervisor.ts` không đổi.
+4. [x] Test source bao phủ map walk trước NPC, tiếp tục từ hai map, nhiều lượt, ACK từ chối/timeout, hủy và Auto; với preload chỉ xử lý lỗi môi trường `os.userInfo`, `daily-quests` 35/35, `vendor-runner` 19/19 và contract 1/1 pass. `pnpm build`/Vitest chưa chạy được vì toolchain sandbox (`pnpm` thiếu PATH, package `.pnpm` bị EPERM).
+5. [ ] Chưa xác minh live ngưỡng khoảng cách chính xác, giới hạn 3 lượt/ngày phía server, hủy escort giữa chừng, quái trên đường/đổi khu và `dai_hoi`.

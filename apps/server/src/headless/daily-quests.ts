@@ -48,6 +48,8 @@ export type DailyStep =
   | 'checkin_ack'
   | 'seed_walk_npc'
   | 'seed_start'
+  | 'seed_walk_escort'
+  | 'seed_escort_complete'
   | 'seed_walk_tree'
   | 'seed_walk_resource'
   | 'seed_harvest'
@@ -133,6 +135,7 @@ export interface DailyClient {
   invokeCheckin(): unknown;
   startSeedQuest(taskId: string): unknown;
   completeSeedQuest(): unknown;
+  completeEscortSeedQuest(): unknown;
   issueCommand(command: string, action: () => unknown): Promise<DailyAck>;
   harvestResource?(propId: string): unknown;
   watchCommand(command: string): Promise<DailyAck>;
@@ -173,9 +176,12 @@ const DUOC_MOC_TASK = 'duoc_moc';
 const LINH_CHI_TASK = 'linh_chi';
 const TRUC_GIA_TASK = 'truc_gia';
 const CAU_CA_TASK = 'cau_ca';
-const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK, TRUC_GIA_TASK, CAU_CA_TASK]);
+const HO_TONG_CHAU_TASK = 'ho_tong_chau';
+const SUPPORTED_TASKS = new Set([DUOC_MOC_TASK, LINH_CHI_TASK, TRUC_GIA_TASK, CAU_CA_TASK, HO_TONG_CHAU_TASK]);
 const NPC_CHECKIN = 'manh_shopt1';
 const NPC_SEED = 'dai_phu';
+const NPC_ESCORT = 'su_phu';
+const ESCORT_MAP = 'tan_vien';
 const TREE_SEED = 'co_thu_linh_moc';
 const BAMBOO_MAP = 'thanh_truc_lam';
 const BAMBOO_PROP_TYPE = 'seed_bamboo_prop';
@@ -194,6 +200,7 @@ const ACK_TIMEOUT_MS = 5_000;
 const STEP_TIMEOUT_MS = 30_000;
 const CHOP_WAIT_MS = 6_000;
 const TOTAL_RUN_TIMEOUT_MS = 6 * 60_000;
+const ESCORT_RUN_TIMEOUT_MS = 3 * 60_000;
 const RESOURCE_APPROACH_OFFSET = 30;
 const RESOURCE_CLOSE_OFFSET = 12;
 const RESOURCE_WAIT_CAP_MS = 15_000;
@@ -221,6 +228,7 @@ function formatProgress(state: DailyClientState, target: string): string {
   if (map === LINH_CHI_TASK) return `${target} map=${map} nam=${state.namLinhChi ?? 'unknown'}/${REQUIRED_LINH_CHI}`;
   if (map === TRUC_GIA_TASK) return `${target} map=${map} truc=${state.activeCollectedIds.length}/${REQUIRED_BAMBOO}`;
   if (map === CAU_CA_TASK) return `${target} map=${map} ca=${state.fishInBag ?? 'unknown'}/${REQUIRED_FISH}`;
+  if (map === HO_TONG_CHAU_TASK) return `${target} map=${map} escort=1`;
   const collected = state.activeCollected ?? state.canhKho ?? 0;
   return `${target} map=${map} canh=${collected}/${REQUIRED_BRANCHES}`;
 }
@@ -270,6 +278,7 @@ export class DailyQuests {
   private fishingActiveRun = false;
   private fishingDeadlineAt = 0;
   private fishingCloseAttempted = false;
+  private escortCloseAttempted = false;
 
   public constructor(private readonly client: DailyClient) {}
 
@@ -333,7 +342,8 @@ export class DailyQuests {
           })()
           : false;
     this.setStep(continuing
-      ? enough ? 'seed_walk_complete'
+      ? taskId === HO_TONG_CHAU_TASK ? 'seed_walk_escort'
+        : enough ? 'seed_walk_complete'
         : taskId === LINH_CHI_TASK ? 'seed_walk_resource'
           : taskId === CAU_CA_TASK ? 'seed_walk_fishing' : 'seed_walk_tree'
       : 'seed_walk_npc');
@@ -350,9 +360,8 @@ export class DailyQuests {
     if (this.pendingHarvestPropId) this.client.cancelPendingCommand?.('resource.harvest');
     if (this.pendingAck?.command === 'fishing.catch') this.client.cancelPendingCommand?.('fishing.catch');
     this.client.stopFishing?.();
-    if (this.operation.kind === 'seed' && this.client.isInGame()) {
-      try { this.client.cancelSeedQuest(); } catch { /* local cancellation is best effort during stop/reconnect */ }
-    }
+    // Keep the server-side seed active for an explicit later continuation;
+    // cancellation stops local movement/waiters but never sends seed.cancel automatically.
     this.pendingAck = null;
     this.pendingWalk = null;
     this.pendingCollectAck = null;
@@ -442,6 +451,8 @@ export class DailyQuests {
       case 'checkin_ack': this.beginAck('diemdanh', 'checkin_ack', () => this.client.issueCommand('diemdanh', () => this.client.invokeCheckin())); break;
       case 'seed_walk_npc': this.walkToNpc(NPC_SEED, 'duoc_vien', 'seed_start'); break;
       case 'seed_start': this.beginAck('seed.start', 'seed_start', () => this.client.issueCommand('seed.start', () => this.client.startSeedQuest(this.operation?.taskId ?? ''))); break;
+      case 'seed_walk_escort': this.walkToNpc(NPC_ESCORT, ESCORT_MAP, 'seed_escort_complete'); break;
+      case 'seed_escort_complete': this.beginAck('seed.escortComplete', 'seed_escort_complete', () => this.client.issueCommand('seed.escortComplete', () => this.client.completeEscortSeedQuest())); break;
       case 'seed_walk_tree': this.walkToTree(); break;
       case 'seed_walk_resource': this.walkToResource(); break;
       case 'seed_walk_fishing': this.walkToFishing(); break;
@@ -500,6 +511,7 @@ export class DailyQuests {
     this.fishingActiveRun = false;
     this.fishingDeadlineAt = 0;
     this.fishingCloseAttempted = false;
+    this.escortCloseAttempted = false;
     this.pendingDrop = null;
     this.chopStartedAt = 0;
     this.chopAttempts = 0;
@@ -512,7 +524,8 @@ export class DailyQuests {
     this.earnedStones = 0;
     this.earnedDuocCong = 0;
     this.hurtAtStart = this.client.getHurtCount();
-    this.totalDeadlineAt = now + TOTAL_RUN_TIMEOUT_MS * runs;
+    const perRunTimeout = taskId === HO_TONG_CHAU_TASK ? ESCORT_RUN_TIMEOUT_MS : TOTAL_RUN_TIMEOUT_MS;
+    this.totalDeadlineAt = now + perRunTimeout * runs;
     this.updateProgress(state);
   }
 
@@ -592,6 +605,8 @@ export class DailyQuests {
   private isTrucGia(): boolean { return this.operation?.taskId === TRUC_GIA_TASK; }
 
   private isCauCa(): boolean { return this.operation?.taskId === CAU_CA_TASK; }
+
+  private isHoTongChau(): boolean { return this.operation?.taskId === HO_TONG_CHAU_TASK; }
 
   private readFishCount(state: DailyClientState = this.client.readDailyState()): number | null {
     const direct = this.client.fishInBag();
@@ -882,7 +897,7 @@ export class DailyQuests {
       this.handleFishingAck(ack);
       return;
     }
-    if (!ack.ok) {
+    if (!ack.ok && command !== 'seed.escortComplete') {
       this.fail('ACK_REFUSED', cleanServerText(ack.why ?? ack.toast, 'server_refused'));
       return;
     }
@@ -891,7 +906,9 @@ export class DailyQuests {
       this.finishDone();
     } else if (command === 'seed.start') {
       this.chopAttempts = 0;
-      if (this.isLinhChi()) {
+      if (this.isHoTongChau()) {
+        this.setStep('seed_walk_escort');
+      } else if (this.isLinhChi()) {
         this.resourceTried.clear();
         this.resourceCoolingUntil.clear();
         this.resourceWaitRounds = 0;
@@ -919,6 +936,26 @@ export class DailyQuests {
       } else {
         this.finishDone();
       }
+    } else if (command === 'seed.escortComplete') {
+      const why = cleanServerText(ack.why ?? ack.toast, 'server_refused');
+      const position = this.client.getPosition?.();
+      const prop = this.client.getProp(ESCORT_MAP, NPC_ESCORT);
+      const distance = prop && position?.mapId === ESCORT_MAP
+        ? Math.round(Math.hypot(position.x - prop.x, position.y - prop.y)) : 'unknown';
+      this.client.recordLog({ code: 'daily_step', detail: `escort_result=${ack.ok ? 'ok' : 'refused'} map=${position?.mapId ?? 'unknown'} distance=${distance}`, at: this.client.nowMs() });
+      if (!ack.ok) {
+        if (!this.escortCloseAttempted && why.toLocaleLowerCase().includes('không đứng cạnh')) {
+          this.escortCloseAttempted = true;
+          this.setStep('seed_walk_escort');
+          return;
+        }
+        this.fail('ACK_REFUSED', why);
+        return;
+      }
+      this.earnedStones += ack.stones ?? 25;
+      this.earnedDuocCong += ack.duocCong ?? 2;
+      if (this.operation && this.operation.runIndex < this.operation.runsTotal) this.setStep('seed_wait_reset');
+      else this.finishDone();
     } else {
       this.fail('UNKNOWN_ACK_COMMAND');
     }
@@ -1185,6 +1222,7 @@ export class DailyQuests {
       this.fishingActiveRun = false;
       this.fishingDeadlineAt = 0;
       this.fishingCloseAttempted = false;
+      this.escortCloseAttempted = false;
       this.setStep('seed_walk_npc');
       return;
     }

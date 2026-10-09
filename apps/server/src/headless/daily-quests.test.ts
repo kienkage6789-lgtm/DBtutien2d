@@ -15,6 +15,9 @@ const trucGiaTask = {
 const cauCaTask = {
   id: 'cau_ca', name: 'Câu cá', kind: 'fishing', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
 };
+const hoTongChauTask = {
+  id: 'ho_tong_chau', name: 'Hộ tống cháu', kind: 'escort', limit: 3, runsToday: 0, runsLeft: 3, supported: true, active: false,
+};
 
 class FakeDailyClient implements DailyClient {
   public now = 0;
@@ -27,8 +30,11 @@ class FakeDailyClient implements DailyClient {
   /** Map mà nhân vật đang đứng; null = không mô hình hóa vị trí (hành vi cũ của các test đầu tiên). */
   public positionMapId: string | null = null;
   public walkRequests: WalkRequest[] = [];
+  public cancelWalkCalls = 0;
+  public cancelSeedQuestCalls = 0;
   public command = '';
   public commandCount = 0;
+  public issuedCommands: string[] = [];
   public fishing = false;
   public fishingStarts = 0;
   public fishingStops = 0;
@@ -59,6 +65,7 @@ class FakeDailyClient implements DailyClient {
   public getSupervisorPhase(): string { return 'idle'; }
   public getHurtCount(): number { return this.hurt; }
   public getWalkOperation(): WalkOperation | null { return this.walk; }
+  public cancelWalk(_operationId: string, _reason: string): void { this.cancelWalkCalls += 1; if (this.walk) this.walk.status = 'cancelled'; }
   public walkTo(request: WalkRequest): WalkOperation {
     this.walkRequests.push(request);
     if (this.positionMapId !== null && request.targetMapId) this.positionMapId = request.targetMapId;
@@ -66,7 +73,11 @@ class FakeDailyClient implements DailyClient {
     return this.walk;
   }
   public readDailyState(): DailyClientState { return { ...this.state, checkin: { ...this.state.checkin }, seedTasks: this.state.seedTasks.map((item) => ({ ...item })), activeCollectedIds: [...this.state.activeCollectedIds], drops: this.state.drops.map((item) => ({ ...item })) }; }
-  public getProp(_mapId: string, propId: string): DailyProp | null { return { id: propId, x: 100, y: 100, r: 58 }; }
+  public getProp(mapId: string, propId: string): DailyProp | null {
+    if (this.positionMapId !== null && this.positionMapId !== mapId) return null;
+    const known = propId === 'dai_phu' ? { x: 464, y: 288 } : propId === 'su_phu' ? { x: 304, y: 352 } : { x: 100, y: 100 };
+    return { id: propId, ...known, r: 58 };
+  }
   public startChopping(prop: DailyProp, mapId: string = 'duoc_vien'): boolean { this.lastChopPropId = prop.id; this.chopMapIds.push(mapId); return true; }
   public startFishing(_propId: string): { started: boolean; durationMs: number } { this.fishing = true; this.fishingStarts += 1; return { started: true, durationMs: 100 }; }
   public isFishing(): boolean { return this.fishing; }
@@ -81,7 +92,7 @@ class FakeDailyClient implements DailyClient {
   }
   public getPosition(): { mapId: string; x: number; y: number } | null { return this.positionMapId ? { mapId: this.positionMapId, x: 100, y: 100 } : null; }
   public harvestResource(_propId: string): unknown { this.commandCount += 1; return true; }
-  public startSeedQuest(taskId: string): unknown { this.commandCount += 1; this.state.activeSeedTask = taskId; this.state.activeRequired = taskId === 'linh_chi' ? 3 : taskId === 'cau_ca' ? 3 : 5; return true; }
+  public startSeedQuest(taskId: string): unknown { this.commandCount += 1; this.state.activeSeedTask = taskId; this.state.activeRequired = taskId === 'linh_chi' ? 3 : taskId === 'cau_ca' ? 3 : taskId === 'ho_tong_chau' ? 0 : 5; return true; }
   public completeSeedQuest(): unknown {
     this.commandCount += 1;
     const taskId = this.state.activeSeedTask;
@@ -97,8 +108,17 @@ class FakeDailyClient implements DailyClient {
     this.state.duocCong = (this.state.duocCong ?? 0) + reward.duocCong;
     return true;
   }
+  public completeEscortSeedQuest(): unknown {
+    this.commandCount += 1;
+    this.state.activeSeedTask = null;
+    this.state.activeRequired = null;
+    this.state.stones = (this.state.stones ?? 0) + 25;
+    this.state.duocCong = (this.state.duocCong ?? 0) + 2;
+    return true;
+  }
   public issueCommand(command: string, action: () => unknown): Promise<DailyAck> {
     this.command = command;
+    this.issuedCommands.push(command);
     this.commandCount += 1;
     action();
     return new Promise<DailyAck>((resolve) => { this.resolveAck = resolve; });
@@ -109,7 +129,7 @@ class FakeDailyClient implements DailyClient {
   }
   public cancelPendingCommand(): void { this.resolveAck = null; }
   public collectSeedMaterial(): unknown { return true; }
-  public cancelSeedQuest(): unknown { this.state.activeSeedTask = null; return true; }
+  public cancelSeedQuest(): unknown { this.cancelSeedQuestCalls += 1; this.state.activeSeedTask = null; return true; }
   public recordLog(): void {}
   public ack(ack: DailyAck): void { this.resolveAck?.(ack); this.resolveAck = null; }
 }
@@ -545,6 +565,131 @@ test('DailyQuests điểm danh từ map khác đi theo map tới tan_vien trư�
   assert.ok(client.walkRequests[1].target);
   drive(client, daily, () => client.command === 'diemdanh');
   assert.equal(client.command, 'diemdanh');
+});
+
+async function completeEscortRun(client: FakeDailyClient, daily: DailyQuests): Promise<void> {
+  drive(client, daily, () => client.command === 'seed.start');
+  assert.equal(client.command, 'seed.start');
+  client.command = '';
+  client.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+
+  const mapWalk = client.walkRequests.length;
+  drive(client, daily, () => client.walkRequests.length > mapWalk);
+  assert.equal(client.walkRequests[mapWalk].targetMapId, 'tan_vien');
+  assert.equal(client.walkRequests[mapWalk].target, undefined);
+
+  drive(client, daily, () => client.walkRequests.length > mapWalk + 1);
+  assert.equal(client.walkRequests[mapWalk + 1].targetMapId, 'tan_vien');
+  assert.deepEqual(client.walkRequests[mapWalk + 1].target, { x: 304, y: 392 });
+  drive(client, daily, () => client.command === 'seed.escortComplete');
+  assert.equal(client.command, 'seed.escortComplete');
+  client.command = '';
+  client.ack({ cmd: 'seed.escortComplete', ok: true, stones: 25, duocCong: 2 });
+  await flush();
+  daily.tick();
+  daily.tick();
+}
+
+test('DailyQuests ho_tong_chau đi theo map, giao đúng NPC, lặp nhiều lượt và cộng +25/+2', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [hoTongChauTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('ho_tong_chau', 2);
+
+  await completeEscortRun(client, daily);
+  assert.equal(daily.getOperation()?.runIndex, 2);
+  const secondRunMapWalk = client.walkRequests.length;
+  await completeEscortRun(client, daily);
+
+  assert.equal(client.walkRequests[secondRunMapWalk].targetMapId, 'duoc_vien', 'lượt sau phải quay lại Dược Cốc nhận việc');
+  assert.equal(client.walkRequests[secondRunMapWalk].target, undefined);
+  assert.equal(daily.getOperation()?.status, 'done');
+  assert.deepEqual(daily.getOperation()?.rewards, { stones: 50, duocCong: 4 });
+});
+
+test('DailyQuests ho_tong_chau tiếp tục việc dở từ Dược Cốc hoặc Tản Viên mà không gọi seed.start lại', () => {
+  for (const mapId of ['duoc_vien', 'tan_vien']) {
+    const client = new FakeDailyClient();
+    client.positionMapId = mapId;
+    client.state.seedTasks = [{ ...hoTongChauTask, active: true }];
+    client.state.activeSeedTask = 'ho_tong_chau';
+    const daily = new DailyQuests(client);
+    daily.startSeedTask('ho_tong_chau');
+    assert.equal(daily.getOperation()?.step, 'seed_walk_escort');
+    drive(client, daily, () => client.command === 'seed.escortComplete');
+    assert.equal(client.command, 'seed.escortComplete');
+    assert.deepEqual(client.issuedCommands, ['seed.escortComplete'], `${mapId}: tiếp tục không được gửi seed.start`);
+  }
+});
+
+test('DailyQuests ho_tong_chau chỉ áp sát lại một lần khi escort bị từ chối và giữ why lần hai', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [hoTongChauTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('ho_tong_chau');
+  drive(client, daily, () => client.command === 'seed.start');
+  client.command = '';
+  client.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+  drive(client, daily, () => client.command === 'seed.escortComplete');
+  const beforeClose = client.walkRequests.length;
+  client.command = '';
+  client.ack({ cmd: 'seed.escortComplete', ok: false, why: 'không đứng cạnh Thầy Ông Nội' });
+  await flush();
+  daily.tick();
+  assert.equal(daily.getOperation()?.status, 'running');
+  drive(client, daily, () => client.walkRequests.length > beforeClose);
+  assert.deepEqual(client.walkRequests.at(-1)?.target, { x: 304, y: 392 });
+  drive(client, daily, () => client.command === 'seed.escortComplete');
+  assert.deepEqual(client.issuedCommands, ['seed.start', 'seed.escortComplete', 'seed.escortComplete']);
+  client.ack({ cmd: 'seed.escortComplete', ok: false, why: 'không đứng cạnh Thầy Ông Nội' });
+  await flush();
+  daily.tick();
+  assert.equal(daily.getOperation()?.status, 'failed');
+  assert.equal(daily.getOperation()?.reason, 'ACK_REFUSED');
+  assert.equal(daily.getOperation()?.why, 'không đứng cạnh Thầy Ông Nội');
+});
+
+test('DailyQuests ho_tong_chau timeout không retry mù, hủy và Auto đều dừng walk/ACK', async () => {
+  const client = new FakeDailyClient();
+  client.positionMapId = 'duoc_vien';
+  client.state.seedTasks = [hoTongChauTask];
+  const daily = new DailyQuests(client);
+  daily.startSeedTask('ho_tong_chau');
+  drive(client, daily, () => client.command === 'seed.start');
+  const commandCount = client.commandCount;
+  client.now = 6_000;
+  daily.tick();
+  assert.equal(daily.getOperation()?.reason, 'ACK_TIMEOUT');
+  assert.equal(client.commandCount, commandCount);
+
+  const autoClient = new FakeDailyClient();
+  autoClient.positionMapId = 'duoc_vien';
+  autoClient.state.seedTasks = [hoTongChauTask];
+  const autoDaily = new DailyQuests(autoClient);
+  autoDaily.startSeedTask('ho_tong_chau');
+  autoClient.auto = true;
+  autoDaily.tick();
+  assert.equal(autoDaily.getOperation()?.status, 'cancelled');
+  assert.equal(autoDaily.getOperation()?.reason, 'auto_started');
+
+  const cancelledClient = new FakeDailyClient();
+  cancelledClient.positionMapId = 'duoc_vien';
+  cancelledClient.state.seedTasks = [hoTongChauTask];
+  const cancelledDaily = new DailyQuests(cancelledClient);
+  const operation = cancelledDaily.startSeedTask('ho_tong_chau');
+  drive(cancelledClient, cancelledDaily, () => cancelledClient.command === 'seed.start');
+  cancelledClient.command = '';
+  cancelledClient.ack({ cmd: 'seed.start', ok: true });
+  await flush();
+  cancelledDaily.tick();
+  cancelledDaily.tick();
+  assert.equal(cancelledDaily.cancel(operation.operationId, 'user_cancelled'), true);
+  assert.equal(cancelledClient.cancelSeedQuestCalls, 0, 'hủy escort không tự gửi seed.cancel');
+  assert.ok(cancelledClient.cancelWalkCalls >= 1, 'hủy phải dừng walk hiện tại');
 });
 
 async function acceptTrucGia(client: FakeDailyClient, daily: DailyQuests): Promise<void> {

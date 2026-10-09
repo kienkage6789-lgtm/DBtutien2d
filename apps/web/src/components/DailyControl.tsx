@@ -116,6 +116,7 @@ export const DailyControl: React.FC<{ account: AccountRuntime }> = ({ account })
           <div className="break-words">{item.name || item.id}{item.active ? ' · đang làm' : ''}</div>
           <div className="text-slate-500">Lượt còn: {item.runsLeft ?? 'chưa biết'}</div>
           {item.id === 'cau_ca' && <div className="text-slate-500">Dùng cá có sẵn trong túi; thiếu thì ra hồ câu</div>}
+          {item.id === 'ho_tong_chau' && <div className="text-slate-500">Đi từ Dược Cốc về làng Tản Viên gặp Thầy Ông Nội</div>}
         </div>
         <div className="shrink-0">{item.supported
           ? <div className="flex items-center gap-1.5"><select aria-label={`Số lượt ${item.name || item.id}`} value={Math.min(runs, Math.max(1, Math.min(3, item.runsLeft ?? 1)))} onChange={(event) => setRuns(Math.max(1, Math.min(3, Number(event.target.value) || 1)))} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-slate-700 bg-slate-950 px-1 py-1 disabled:opacity-50">{Array.from({ length: Math.min(3, item.runsLeft ?? 0) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} lượt</option>)}</select><button type="button" onClick={() => void beginSeed(item)} disabled={!!seedLock || item.runsLeft === null || item.runsLeft < 1 || busy} className="rounded border border-emerald-500/40 bg-emerald-600/20 px-2 py-1 text-emerald-200 disabled:opacity-40">Làm</button></div>

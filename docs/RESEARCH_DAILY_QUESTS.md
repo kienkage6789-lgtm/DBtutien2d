@@ -198,3 +198,15 @@ Kết luận: việc `cau_ca` KHÔNG bắt buộc phải câu nếu túi đã c�
 Chưa đo: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, giới hạn 3 lượt/ngày ở server, hành vi khi túi đầy.
 
 Triển khai offline 2026-10-09: `DailyQuests`/`VendorRunner` đã hỗ trợ `cau_ca`: nhận việc ở Đại Phu, dùng cá sẵn trong túi khi đủ 3, nếu thiếu thì đi theo map tới `duoc_vien`, đi bộ tới `ho_bich_thuy_cong`, chờ ACK `fishing.catch` theo `cmd`, xử lý được/hụt, áp sát một lần khi server báo đứng xa mặt nước, rồi giao việc. Giữ nguyên các điểm chưa xác minh; đây không phải phép đo live mới.
+
+## 13. KẾT QUẢ ĐO LIVE — việc `ho_tong_chau` (2026-10-09, `duoc_vien` → `thanh_truc_lam` → `tan_vien`)
+
+Đo bằng `quest-probe` (thêm act `seed.escortComplete` = `Quest.completeEscortSeedQuest()`), đi bộ bằng `move-to`. Auto tắt, `hurtCount` tăng 0 suốt chuyến.
+
+- Nhận việc: đứng cách Đại Phu 56 px → `seed.start {taskId:"ho_tong_chau"}` → `ack {ok:true, toast:"Đã nhận việc của Đại Phu"}`; `seedQuest.daily.ho_tong_chau` thành `{day:"2026-10-09", n:1}`.
+- "Cháu của Đại Phu" (`escortFollower`) CHỈ là hình vẽ phía client (đi theo nhân vật, không có gói/đối tượng ở server) → không cần bám theo, không có điều kiện "cháu còn sống/đi cùng".
+- Hoàn thành = `seed.escortComplete` khi đứng cạnh NPC `su_phu` ("Thầy Ông Nội") trong `tan_vien`, vị trí `(304,352)`. Không cần đi hết đường (đã thử ở `duoc_vien` ngay sau khi nhận): `ack {ok:false, why:"không đứng cạnh Thầy Ông Nội"}` + `state {reason:"seed.escortComplete:refused"}`; việc vẫn `active`, không mất lượt.
+- Ngưỡng: cách 162 px → từ chối; cách 38 px → `ack {ok:true, toast:"+2 Dược Công"}` + `state {reason:"seed.escortComplete"}`; +25 Linh Thạch (1465 → 1490), +2 Dược Công (34 → 36), việc hết `active`. Ngưỡng chính xác giữa 38 và 162 px: chưa xác minh (dùng ≤ 40 px như các NPC khác).
+- Đường: `move-to {mapId:"tan_vien"}` từ `duoc_vien` mất ~17 s qua `thanh_truc_lam`, đáp xuống điểm xuất hiện `(240,927)` rồi đi bộ tới Thầy Ông Nội ~4 s.
+- Chưa xác minh: giới hạn 3 lượt/ngày phía server, hủy giữa chừng (`seed.cancel` với escort), quái trên đường đi ở `thanh_truc_lam` (lần đo này không gặp thương tích), đổi khu giữa chừng.
+- Ghi chú triển khai: **đã triển khai `ho_tong_chau`** offline; máy trạng thái ngắn hơn các việc khác — đi tới Đại Phu → `seed.start` → `beginWalkToMapIfNeeded('tan_vien')` → đi bộ tới `su_phu` (đọc từ map đã tải, prop thường dùng công thức đáy ô) → `seed.escortComplete` (chờ `ack`).

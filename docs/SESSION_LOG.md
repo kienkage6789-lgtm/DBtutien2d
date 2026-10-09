@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — Triển khai offline việc hộ tống Dược Công `ho_tong_chau`
+
+Thay đổi: mở rộng `DailyQuests`/`VendorRunner` để hỗ trợ đủ năm việc, thêm `DailyClient.completeEscortSeedQuest()` gọi hàm client chính thức và state machine hộ tống: nhận ở Đại Phu → đi theo map tới `tan_vien` → đọc `su_phu` từ map đã tải → giao bằng `seed.escortComplete` và chờ ACK đúng `cmd`. Việc hộ tống không có tiến độ vật phẩm (`activeRequired: 0`, không bịa `progress`), thưởng mặc định +25 Linh Thạch/+2 Dược Công, lặp nhiều lượt phải quay lại Dược Cốc nhận việc.
+
+ACK `ok:false` với lý do không đứng cạnh Thầy Ông Nội chỉ cho phép đi sát lại một lần; lần hai chuyển `failed` và giữ `why`. Timeout không retry mù; Auto/gục/reconnect/stop/hủy vẫn dừng walk và dọn waiter. Hủy escort không tự gọi `seed.cancel` để giữ khả năng tiếp tục việc đang dở. Cập nhật API docs, ghi chú dashboard, probe `seed.escortComplete` được giữ nguyên và test fake/vendor tọa độ `su_phu`.
+
+Lệnh đã chạy: `git diff --check` pass; `typescript.transpileModule` cho 5 file TS/TSX thay đổi pass cú pháp. Lệnh trực tiếp `npx tsx --test ...` ban đầu bị chặn bởi `uv_os_get_passwd returned ENOMEM`; với preload test tạm chỉ thay `os.userInfo` để vượt lỗi môi trường, `daily-quests.test.ts` pass 35/35, `vendor-runner.test.ts` pass 19/19 và `daily.contract.test.ts` pass 1/1. `pnpm build` và `pnpm --filter @tutien2d/web test` bị chặn vì `pnpm` không có trên PATH; `tsc --noEmit`/Vitest trực tiếp bị `EPERM` khi đọc package dưới `.pnpm`. Chưa chạm game thật, không mở mạng, không đọc `data/`/`.env*`, không sửa `vendor/` hoặc `auto-supervisor.ts`, không commit.
+
+Chưa xác minh live: ngưỡng khoảng cách chính xác tới NPC, giới hạn 3 lượt/ngày phía server, hủy giữa chừng với escort, quái trên đường, đổi khu giữa chừng và `dai_hoi`.
+
+**Chạy thử live qua dashboard (2026-10-09):** bấm "Làm" `ho_tong_chau` với 2 lượt, bot bắt đầu ở `tan_vien`. Đi `tan_vien → thanh_truc_lam → duoc_vien` nhận việc, về `duoc_vien → thanh_truc_lam → tan_vien` giao Thầy Ông Nội, rồi lặp lượt 2. Kết quả `done`, tổng +50 Linh Thạch (1490 → 1540), +4 Dược Công (36 → 40), ~46 s mỗi lượt (gồm đi nhiều map), `hurtCount` tăng 0, lượt hôm nay `ho_tong_chau` 3/3. Đã xác minh: nhiều lượt, bắt đầu từ map khác. Chưa xác minh: server từ chối lượt thứ 4, hủy giữa chừng, quái trên đường.
+
 ## 2026-10-09 — `cau_ca` trong nhiệm vụ hằng ngày: triển khai, nghiệm thu, chạy thử live qua dashboard
 
 Codex triển khai `cau_ca` theo `docs/PROMPT_DAILY_CAU_CA.md` (dùng cá có sẵn trong túi nếu đủ 3, thiếu thì ra hồ `ho_bich_thuy_cong` câu lặp có giới hạn ~20 lần/150 s, chờ `ack` của `fishing.catch`, xử lý hụt/được, áp sát hơn một lần khi bị "không đứng cạnh mặt nước", dọn trạng thái câu khi hủy/Auto/gục/reconnect/stop, tìm điểm câu trong `interactables` và công thức toạ độ tâm ô).

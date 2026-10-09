@@ -31,7 +31,7 @@ Cập nhật: 2026-10-08. API này là control-plane nội bộ của dashboard,
 | `POST` | `/api/accounts/:id/move-to/cancel` | Hủy thao tác đi tay theo `operationId` |
 | `GET` | `/api/accounts/:id/daily` | Đọc ngày, điểm danh, lượt seed và nhiệm vụ hiện tại |
 | `POST` | `/api/accounts/:id/daily/checkin` | Bắt đầu điểm danh; body rỗng hoặc `{}` |
-| `POST` | `/api/accounts/:id/daily/seed` | Bắt đầu `duoc_moc`, `linh_chi`, `truc_gia` hoặc `cau_ca`: `{taskId,runs?,abortOnHurt?,maxHurt?}` |
+| `POST` | `/api/accounts/:id/daily/seed` | Bắt đầu `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca` hoặc `ho_tong_chau`: `{taskId,runs?,abortOnHurt?,maxHurt?}` |
 | `POST` | `/api/accounts/:id/daily/cancel` | Hủy nhiệm vụ theo `{operationId}` |
 | `POST` | `/api/orchestrator/start-all` | Start tuần tự mọi account |
 | `POST` | `/api/orchestrator/stop-all` | Stop mọi vendor session |
@@ -64,15 +64,17 @@ Khi gói `map` cùng `mapId` nhưng `khu` đổi đến từ bất kỳ nguồn 
 
 ## Nhiệm vụ hằng ngày bản 1
 
-`POST /api/accounts/:id/daily/seed` hiện hỗ trợ `taskId: "cau_ca"` cùng `duoc_moc`, `linh_chi` và `truc_gia`; `runs` vẫn nằm trong khoảng 1–3 và phản hồi trả `runsLeft` trong `GET /daily`.
+`POST /api/accounts/:id/daily/seed` hiện hỗ trợ `taskId: "ho_tong_chau"` cùng `duoc_moc`, `linh_chi`, `truc_gia` và `cau_ca`; `runs` vẫn nằm trong khoảng 1–3 và phản hồi trả `runsLeft` trong `GET /daily`.
 
-`GET /daily` trả `DailyStatus` cùng `current`. `POST /daily/checkin` và `/daily/seed` trả HTTP 202 với `DailyOperation`; `/daily/cancel` trả operation đã `cancelled`. Hiện hỗ trợ `duoc_moc`, `linh_chi`, `truc_gia` và `cau_ca`; các seed task khác vẫn được đọc và hiển thị nhưng trả `TASK_NOT_SUPPORTED` (422). Lỗi gate dùng envelope `{success:false,error,errorCode,retryable}`: map chưa sẵn sàng có `retryable:true`; các gate runtime là 409, `STAGE_TOO_LOW`/`TASK_NOT_SUPPORTED` là 422, body sai là 400 và operation không tồn tại là 404.
+`GET /daily` trả `DailyStatus` cùng `current`. `POST /daily/checkin` và `/daily/seed` trả HTTP 202 với `DailyOperation`; `/daily/cancel` trả operation đã `cancelled`. Hiện hỗ trợ `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca` và `ho_tong_chau`; các seed task khác vẫn được đọc và hiển thị nhưng trả `TASK_NOT_SUPPORTED` (422). Lỗi gate dùng envelope `{success:false,error,errorCode,retryable}`: map chưa sẵn sàng có `retryable:true`; các gate runtime là 409, `STAGE_TOO_LOW`/`TASK_NOT_SUPPORTED` là 422, body sai là 400 và operation không tồn tại là 404.
 
 `DailyStatus.fishInBag` là tổng `Inventory.count('ca_song') + Inventory.count('linh_ngu')`, hoặc `null` khi client chưa cung cấp; operation `cau_ca` dùng progress `{itemId:"ca",collected,required:3}`.
 
 Runner lấy prop `manh_shopt1`, `dai_phu`, `co_thu_linh_moc` từ `MapData`/`SceneWorld.map` lúc chạy. Với `duoc_moc`, nó gọi `Quest.startSeedQuest`, đặt `SceneWorld.chopping = { prop, swing: 0, t: 10 }` theo `ea()` đã đo, để client tự nhặt cành và phát `seed.collect`, rồi gọi `Quest.completeSeedQuest`. ACK được ghép theo `cmd` (`diemdanh`, `seed.start`, `seed.collect`, `seed.complete`) trước khi chờ tối đa 5 giây; `state ...:refused` chỉ để client đồng bộ và `ack.why` được giữ trong operation, không retry mù. Với `linh_chi`, runner đọc các prop `ling_chi_prop` hiện có ở `tan_vien`, đi tới gần nhất, gọi `Gateway.cmd("resource.harvest", {propId})` và dùng `Inventory.count('nam_linh_chi')`/`ack.du` để biết đã đủ 3 nấm. Prop trả `chưa mọc lại` được đánh dấu hồi theo `retryAfter`; chỉ khi không còn prop dùng được mới chờ, tối đa 15 giây mỗi lượt chờ.
 
 Với `cau_ca`, runner gọi `Quest.startSeedQuest` ở Đại Phu, đọc `fishInBag`; nếu thiếu 3 thì đi theo map tới `duoc_vien`, dùng `ho_bich_thuy_cong` trong `interactables`, gọi `startFishing` và chờ ACK `fishing.catch` theo `cmd` trong thời gian bounded. ACK `itemId` tăng tiến độ, `missed` tiếp tục lượt kế; lỗi đứng xa mặt nước chỉ cho phép một lần đi sát lại. `DailyStatus` trả `fishInBag`; cancel/stop/reconnect/Auto xóa trạng thái câu.
+
+Với `ho_tong_chau`, runner nhận việc ở Đại Phu, đi theo map tới `tan_vien`, đọc NPC `su_phu` từ map đã tải rồi gọi `Quest.completeEscortSeedQuest`; kết quả chờ ACK `seed.escortComplete` theo `cmd`. Việc không có tiến độ vật phẩm (`activeRequired: 0`, operation không bịa `progress`); nếu server từ chối vì chưa đứng cạnh Thầy Ông Nội, runner chỉ đi sát lại một lần rồi giữ `why` khi thất bại.
 
 Thao tác daily giữ quyền lái với `walkTo`/đổi khu/Auto; gục, reconnect, stop và Auto bật sẽ hủy. Mặc định `abortOnHurt=false` theo yêu cầu; có thể bật ở request seed. `DailyStatus` có thêm `namLinhChi`; operation linh chi có thể có `progress {itemId,collected,required}`. Chưa xác minh live lại trong bản triển khai: ngưỡng NPC/prop chính xác, khi mọi prop cùng hồi, giới hạn lượt server, các task còn lại và hành vi rời việc giữa chừng.
 
