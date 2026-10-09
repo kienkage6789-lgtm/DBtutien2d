@@ -38,15 +38,29 @@ function resolveEncryptionSecret(): string {
 const isLoopback = (host: string) => ['127.0.0.1', '::1', 'localhost'].includes(host);
 const HOST = process.env.HOST || '127.0.0.1';
 const API_TOKEN = (process.env.API_TOKEN || '').trim();
+const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').trim();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
+const ALLOW_LEGACY_API_TOKEN = process.env.ALLOW_LEGACY_API_TOKEN === '1';
 
 if (!isLoopback(HOST) && API_TOKEN.length < 32) {
   throw new Error('HOST không phải loopback thì bắt buộc đặt API_TOKEN >= 32 ký tự.');
+}
+if (!isLoopback(HOST) && !TRUST_PROXY) {
+  throw new Error('HOST ngoài loopback phải chạy sau reverse proxy HTTPS và đặt TRUST_PROXY=1.');
+}
+if (!ADMIN_USERNAME || ADMIN_USERNAME.length > 64 || ADMIN_PASSWORD.length < 6) {
+  throw new Error('ADMIN_USERNAME không rỗng/tối đa 64 ký tự và ADMIN_PASSWORD phải có ít nhất 6 ký tự.');
 }
 
 export const CONFIG = {
   PORT: parseInt(process.env.PORT || '4000', 10),
   HOST,
   API_TOKEN,
+  ADMIN_USERNAME,
+  ADMIN_PASSWORD,
+  TRUST_PROXY,
+  ALLOW_LEGACY_API_TOKEN,
   ALLOWED_ORIGINS: (process.env.ALLOWED_ORIGINS
     || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000')
     .split(',').map((s) => s.trim()).filter(Boolean),

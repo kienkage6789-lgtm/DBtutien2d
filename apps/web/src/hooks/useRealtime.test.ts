@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeMoveTo } from './useRealtime';
+import { mergeAccountRuntime, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -123,5 +123,12 @@ describe('mergeAccountRuntime vitals freshness', () => {
     expect(sanitizeDailyStatus({ ...status, seedTasks: [{ ...status.seedTasks[0], runsLeft: '2' }] })).toBeUndefined();
     expect(sanitizeDailyStatus({ ...status, namLinhChi: '2' })).toBeUndefined();
     expect(sanitizeDailyStatus({ ...status, fishInBag: '2' })).toBeUndefined();
+  });
+
+  it('returns undefined for malformed realtime log payloads', () => {
+    expect(sanitizeLog({ id: 'log-1', accountId: 'account-test', timestamp: 1, level: 'info', module: 'test', message: 'ok' })).toEqual({
+      id: 'log-1', accountId: 'account-test', timestamp: 1, level: 'info', module: 'test', message: 'ok',
+    });
+    expect(sanitizeLog({ id: 'log-1', accountId: 'account-test', timestamp: '1', level: 'info', module: 'test', message: 'bad' })).toBeUndefined();
   });
 });

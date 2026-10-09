@@ -1,3 +1,13 @@
+export interface AuthUser {
+  id: string;
+  username: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'disabled';
+  expiresAt: number | null;
+  maxBots: number;
+  mustChangePassword: boolean;
+}
+
 export type MoveToStatus = 'accepted' | 'running' | 'arrived' | 'blocked' | 'failed' | 'cancelled';
 export type MoveToLegPhase = 'walking_to_gate' | 'on_gate' | 'waiting_map' | 'walking_to_target';
 

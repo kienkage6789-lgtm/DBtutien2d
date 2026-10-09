@@ -188,6 +188,15 @@ export function sanitizeDailyStatus(value: unknown): DailyStatus | undefined {
   };
 }
 
+export function sanitizeLog(value: unknown): LogEntry | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== 'string' || !item.id || typeof item.accountId !== 'string' || !item.accountId
+    || !isFiniteNumber(item.timestamp) || (item.level !== 'info' && item.level !== 'warn' && item.level !== 'error' && item.level !== 'success')
+    || typeof item.module !== 'string' || typeof item.message !== 'string') return undefined;
+  return { id: item.id, accountId: item.accountId, timestamp: item.timestamp, level: item.level, module: item.module, message: item.message };
+}
+
 const WORLD_NUMBER_FIELDS = new Set<string>(['khu', 'x', 'y', 'soKhu']);
 const WORLD_STRING_FIELDS = new Set<string>(['mapId']);
 
@@ -347,8 +356,17 @@ export function useRealtime() {
 
   // Initial fetch
   useEffect(() => {
-    mergeFetchedAccounts().catch(console.error);
-    fetchLogs().then(setLogs).catch(console.error);
+    const reload = () => {
+      if (!getToken()) {
+        setAccounts([]);
+        setLogs([]);
+        return;
+      }
+      mergeFetchedAccounts().catch(console.error);
+      fetchLogs().then((items) => setLogs(items.flatMap((item) => sanitizeLog(item) ? [sanitizeLog(item)!] : []))).catch(console.error);
+    };
+    reload();
+    return onAuthChanged(reload);
   }, []);
 
   // WebSocket connection
@@ -359,7 +377,7 @@ export function useRealtime() {
     let reconnectRequested = false;
 
     function connect() {
-      if (!shouldReconnect) return;
+      if (!shouldReconnect || !getToken()) { setIsConnected(false); return; }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws`;
 
@@ -387,8 +405,11 @@ export function useRealtime() {
               // Re-fetch full runtime data to refresh the authoritative snapshot.
               setAccounts((prev) => mergeAccountList(prev, msg.data?.accounts));
               mergeFetchedAccounts().catch(console.error);
-              if (msg.data.logs) {
-                setLogs(msg.data.logs);
+              if (Array.isArray(msg.data?.logs)) {
+                setLogs(msg.data.logs.flatMap((item: unknown) => {
+                  const log = sanitizeLog(item);
+                  return log ? [log] : [];
+                }));
               }
               break;
 
@@ -405,7 +426,8 @@ export function useRealtime() {
             }
 
             case 'bot_activity': {
-              const { accountId, activity } = msg.data;
+              if (!msg.data || typeof msg.data !== 'object' || typeof msg.data.accountId !== 'string' || typeof msg.data.activity !== 'string') break;
+              const { accountId, activity } = msg.data as { accountId: string; activity: string };
               setAccounts((prev) =>
                 prev.map((a) => (a.id === accountId ? { ...a, activity } : a))
               );
@@ -413,8 +435,8 @@ export function useRealtime() {
             }
 
             case 'account_log': {
-              const newLog = msg.data as LogEntry;
-              setLogs((prev) => [...prev.slice(-300), newLog]);
+              const newLog = sanitizeLog(msg.data);
+              if (newLog) setLogs((prev) => [...prev.slice(-300), newLog]);
               break;
             }
           }

@@ -1,21 +1,42 @@
 # TuTien2D Control-plane API
 
-Cập nhật: 2026-10-08. API này là control-plane nội bộ của dashboard, không phải API game.
+Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard, không phải API game.
 
 ## Bảo mật
 
 - Mặc định bind `127.0.0.1`.
-- Bind ngoài loopback bắt buộc `API_TOKEN` tối thiểu 32 ký tự.
-- REST đi qua auth middleware; WS dùng subprotocol `bearer` và kiểm tra Origin allowlist.
+- Bind ngoài loopback bắt buộc `API_TOKEN` tối thiểu 32 ký tự và `TRUST_PROXY=1` sau reverse proxy HTTPS.
+- `/health` và `POST /api/auth/login` là hai route công khai duy nhất. Mọi `/api/**` khác cần `Authorization: Bearer <session-token>`.
+- Session token ngẫu nhiên 32 byte chỉ lưu SHA-256 trong SQLite, hạn 7 ngày trượt theo lần dùng, tối đa 5 session/người.
+- WS dùng subprotocol `bearer, <session-token>`, kiểm tra Origin allowlist và đóng khi session bị thu hồi/hết hạn/user bị khóa.
+- `API_TOKEN` cũ chỉ được chấp nhận như admin đặc biệt khi request đến từ loopback và server bind loopback; bind ngoài loopback chỉ bật thêm khi đặt `ALLOW_LEGACY_API_TOKEN=1`. Không có `API_TOKEN` thì không có đường vào không auth.
 - Không đưa credential vào query string hoặc response/log public.
+
+## Xác thực và người dùng
+
+| Method | Path | Ý nghĩa |
+|---|---|---|
+| `POST` | `/api/auth/login` | `{username,password}` → session token và user public; sai quá 5 lần/15 phút theo IP hoặc username trả `429 TOO_MANY_ATTEMPTS` và `Retry-After`. |
+| `POST` | `/api/auth/logout` | Thu hồi session hiện tại. |
+| `GET` | `/api/auth/me` | Đọc user public và hạn session hiện tại. |
+| `POST` | `/api/auth/password` | Đổi mật khẩu của chính mình; giữ session hiện tại và thu hồi các session khác. |
+| `GET` | `/api/admin/users` | Admin xem danh sách user không có hash/token. |
+| `POST` | `/api/admin/users` | Admin tạo user `{username,password,maxBots?}`. |
+| `PATCH` | `/api/admin/users/:id` | Admin cập nhật `status` (`active`/`disabled`) hoặc `maxBots`. Khóa user dừng runner và thu hồi session. |
+| `POST` | `/api/admin/users/:id/password` | Admin đặt lại mật khẩu, thu hồi session và buộc đổi mật khẩu lần sau. |
+| `DELETE` | `/api/admin/users/:id` | Dừng runner rồi xóa user cùng game account/config/log/session; không xóa chính mình hoặc admin cuối. |
+
+User thường chỉ thấy và điều khiển game account có `owner_id` của mình. Account của user khác trả `404 ACCOUNT_NOT_FOUND`, kể cả các route con dưới `/api/accounts/:id/**`; gọi `/api/admin/**` trả `403 FORBIDDEN`. `GET /api/orchestrator/start-all|stop-all`, `/api/logs` và `/api/system/status` cũng được giới hạn theo owner; admin vẫn thấy toàn hệ thống.
+
+SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi có `tutien_db.json` mà chưa có dữ liệu SQLite, server nhập account/config/log vào owner admin trong transaction rồi đổi tên file cũ thành `.migrated`; nếu nhập lỗi file cũ được giữ nguyên. Password game, refresh token, token cũ và proxy URL vẫn mã hóa AES-256-GCM; response public không chứa chúng.
 
 ## Endpoint đang giữ
 
 | Method | Path | Ý nghĩa |
 |---|---|---|
 | `GET` | `/health` | Health check |
-| `GET` | `/api/system/status` | Uptime, memory, số account/running |
-| `GET` | `/api/accounts` | Runtime snapshot của mọi account |
+| `GET` | `/api/system/status` | Admin nhận uptime/memory/số account/running; user thường chỉ nhận số liệu account của mình |
+| `GET` | `/api/accounts` | Runtime snapshot theo owner; admin nhận mọi account |
 | `GET` | `/api/accounts/:id` | Runtime snapshot một account |
 | `POST` | `/api/accounts` | Verify và tạo account |
 | `PUT` | `/api/accounts/:id/password` | Verify và cập nhật password |

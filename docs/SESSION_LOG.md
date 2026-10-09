@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — BƯỚC 1 multi-user: SQLite, đăng nhập/phiên và ownership REST/WS (offline)
+
+Thay đổi: chuyển `DatabaseService` sang `node:sqlite` tại `DATA_DIR/tutien_db.sqlite`, bật WAL/foreign keys, thêm users/sessions/game_accounts/bot_configs/logs/audit_log, migration một lần từ `tutien_db.json` sang owner admin và giữ file cũ `.migrated` khi thành công. Bổ sung scrypt password hash, chuẩn hóa username, admin đầu tiên với `must_change_password`, session bearer 32 byte chỉ lưu SHA-256, sliding TTL 7 ngày, tối đa 5 session và rate-limit login theo IP + username. `/health` và login là route công khai duy nhất; API_TOKEN cũ chỉ còn compatibility loopback theo `ALLOW_LEGACY_API_TOKEN`.
+
+API có login/logout/me/đổi mật khẩu, admin tạo/sửa/đặt lại/xóa user; xóa/khóa user dừng runner trước, thu hồi session và ghi audit. Account routes dùng middleware ownership trả `ACCOUNT_NOT_FOUND` 404 cho user khác; list/log/orchestrator/status lọc theo owner. WS gắn principal mỗi kết nối, lọc initial/broadcast theo owner, chỉ admin nhận `system_alert`, kiểm tra session định kỳ và đóng khi bị thu hồi/hết hạn/khóa.
+
+Dashboard đổi `ApiTokenPanel` thành login username/mật khẩu, hiển thị user/role/logout/quản lý tài khoản, modal đổi mật khẩu và banner bắt buộc đổi mật khẩu; realtime không tự kết nối khi chưa có session và sanitize log/activity sai kiểu.
+
+Lệnh đã chạy: Node `v24.16.0`; smoke `node:sqlite` có `DatabaseSync`; smoke `password.ts` xác nhận đúng/sai và chuẩn hóa chuỗi điều khiển; TypeScript `transpileModule` cho các file server/web thay đổi không có diagnostic; `git diff --check` pass (chỉ cảnh báo LF/CRLF); ba test mới pass (password 2/2, database 1/1, auth 1/1) và ba contract test cũ pass (daily 1/1, khu 1/1, vendor-auto/move-to 2/2) bằng `node ... tsx` với preload tạm cho lỗi môi trường `uv_os_get_passwd`. `pnpm build` và `pnpm --filter @tutien2d/web test` bị chặn vì `pnpm` không có PATH; compiler binary/Vitest trực tiếp bị `EPERM` khi đọc package dưới `.pnpm`. Không đọc `data/`/`.env*`, không mở mạng, không chạm game thật, không sửa `vendor/`/`headless/`, không commit.
+
+Chưa xác minh: WAL sau crash, migration trên file JSON thực tế, build Linux, đóng WS khi session hết hạn trên server thật, hiệu năng lọc broadcast nhiều account và toàn bộ ma trận contract REST/WS trong môi trường toolchain đầy đủ.
+
 ## 2026-10-09 — Triển khai offline việc hộ tống Dược Công `ho_tong_chau`
 
 Thay đổi: mở rộng `DailyQuests`/`VendorRunner` để hỗ trợ đủ năm việc, thêm `DailyClient.completeEscortSeedQuest()` gọi hàm client chính thức và state machine hộ tống: nhận ở Đại Phu → đi theo map tới `tan_vien` → đọc `su_phu` từ map đã tải → giao bằng `seed.escortComplete` và chờ ACK đúng `cmd`. Việc hộ tống không có tiến độ vật phẩm (`activeRequired: 0`, không bịa `progress`), thưởng mặc định +25 Linh Thạch/+2 Dược Công, lặp nhiều lượt phải quay lại Dược Cốc nhận việc.

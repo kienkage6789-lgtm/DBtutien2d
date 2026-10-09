@@ -1,5 +1,6 @@
 import React from 'react';
-import { Play, Square, Plus, RefreshCw, Radio } from 'lucide-react';
+import { Play, Square, Plus, RefreshCw, Radio, LogOut, Settings } from 'lucide-react';
+import type { AuthUser } from '../types';
 
 interface NavbarProps {
   isConnected: boolean;
@@ -9,6 +10,9 @@ interface NavbarProps {
   onStopAll: () => void;
   onRefresh: () => void;
   onOpenAddModal: () => void;
+  user: AuthUser;
+  onLogout: () => void;
+  onOpenAccount: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -19,17 +23,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   onStopAll,
   onRefresh,
   onOpenAddModal,
+  user,
+  onLogout,
+  onOpenAccount,
 }) => {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-[#0a0d14]/85 backdrop-blur-md px-4 lg:px-8 py-3.5 transition-all">
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="mx-auto flex min-w-0 max-w-7xl flex-col items-center justify-between gap-4 md:flex-row">
         {/* Logo & Brand */}
-        <div className="flex items-center gap-3.5">
+        <div className="flex min-w-0 items-center gap-3.5">
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 via-teal-500/10 to-indigo-500/20 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
             <span className="text-xl">⚔️</span>
             <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping opacity-75"></div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold tracking-wider text-slate-100 font-title">
                 TuTien<span className="text-emerald-400">2D</span>
@@ -38,12 +45,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 v1.0 Pro
               </span>
             </div>
-            <p className="text-xs text-slate-400">Bảng Điều Khiển Đa Tài Khoản & Tự Động Hóa</p>
+            <p className="truncate text-xs text-slate-400">Bảng Điều Khiển Đa Tài Khoản & Tự Động Hóa</p>
           </div>
         </div>
 
         {/* Status indicator */}
-        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+          <div className="flex max-w-full items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-300">
+            <span className="max-w-24 truncate font-semibold text-slate-100">{user.username}</span>
+            <span className="text-slate-500">·</span>
+            <span className="text-emerald-400">{user.role === 'admin' ? 'quản trị' : 'người dùng'}</span>
+          </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-xs">
             <Radio className={`w-3.5 h-3.5 ${isConnected ? 'text-emerald-400 animate-pulse' : 'text-rose-500'}`} />
             <span className={isConnected ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
@@ -94,6 +106,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
               <span>Thêm Tài Khoản</span>
             </button>
+            <button onClick={onOpenAccount} title="Quản lý tài khoản" className="rounded-lg border border-slate-700 bg-slate-800/60 p-1.5 text-slate-300 hover:bg-slate-700"><Settings className="h-4 w-4" /></button>
+            <button onClick={onLogout} title="Đăng xuất" className="rounded-lg border border-slate-700 bg-slate-800/60 p-1.5 text-slate-300 hover:bg-slate-700"><LogOut className="h-4 w-4" /></button>
           </div>
         </div>
       </div>

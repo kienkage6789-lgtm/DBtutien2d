@@ -1450,3 +1450,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 3. [x] API docs/dashboard/research/session log cập nhật; route `quest-probe` và `khu-probe`, vendor client và `auto-supervisor.ts` không đổi.
 4. [x] Test source bao phủ map walk trước NPC, tiếp tục từ hai map, nhiều lượt, ACK từ chối/timeout, hủy và Auto; với preload chỉ xử lý lỗi môi trường `os.userInfo`, `daily-quests` 35/35, `vendor-runner` 19/19 và contract 1/1 pass. `pnpm build`/Vitest chưa chạy được vì toolchain sandbox (`pnpm` thiếu PATH, package `.pnpm` bị EPERM).
 5. [ ] Chưa xác minh live ngưỡng khoảng cách chính xác, giới hạn 3 lượt/ngày phía server, hủy escort giữa chừng, quái trên đường/đổi khu và `dai_hoi`.
+
+## X. Bước 1 multi-user — SQLite/auth/ownership (2026-10-09)
+
+1. [x] Thêm SQLite `node:sqlite` với WAL, foreign keys, users/sessions/game_accounts/bot_configs/logs/audit_log; giữ facade DatabaseService và mã hóa AES-256-GCM cho bí mật.
+2. [x] Thêm scrypt password hash, admin đầu tiên, session bearer trượt 7 ngày/tối đa 5, rate-limit login theo IP + username, logout/đổi mật khẩu/thu hồi session.
+3. [x] Gắn ownership cho REST account/log/orchestrator/status và lọc WS initial/broadcast; user khác nhận 404, admin route của user thường nhận 403.
+4. [x] Dashboard có login, user/role, logout, đổi mật khẩu và banner `mustChangePassword`; WS dùng session token.
+5. [~] Smoke password hash, migration/auth/session test mới và kiểm tra Node 24 `node:sqlite` đã pass; `pnpm build`/Vitest chưa chạy được vì `pnpm` không có PATH và package TypeScript/Vitest dưới `.pnpm` trả `EPERM` (test server liên quan đã chạy bằng binary tsx trực tiếp với preload môi trường).
+6. [ ] Chưa xác minh độ bền WAL khi crash, hành vi Linux, đóng WS khi session hết hạn trên server thật và hiệu năng broadcast nhiều account; chưa chạm game thật/mạng.

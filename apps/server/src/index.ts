@@ -10,13 +10,13 @@ import { apiRouter } from './api/routes.js';
 import { wsHub } from './ws/hub.js';
 import { workerPool } from './orchestrator/worker-pool.js';
 import { db } from './db/database.js';
-import { requireAuth } from './security/auth.js';
 import { errorHandler } from './security/errors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', CONFIG.TRUST_PROXY);
 
 app.use(cors({
   origin: (origin, callback) => callback(null, !origin || CONFIG.ALLOWED_ORIGINS.includes(origin)),
@@ -48,7 +48,7 @@ app.use((_req, res, next) => {
 });
 
 // API router
-app.use('/api', requireAuth, apiRouter);
+app.use('/api', apiRouter);
 
 // Health check
 app.get('/health', (req, res) => {

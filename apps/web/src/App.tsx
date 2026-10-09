@@ -6,24 +6,48 @@ import { AccountCard } from './components/AccountCard';
 import { AddAccountModal } from './components/AddAccountModal';
 import { DialogHost } from './components/DialogHost';
 import { UpdatePasswordModal } from './components/UpdatePasswordModal';
-import { ApiTokenPanel } from './components/ApiTokenPanel';
+import { UserPasswordModal } from './components/UserPasswordModal';
+import { LoginPanel } from './components/LoginPanel';
 import { LogTerminal } from './components/LogTerminal';
 import type { AccountRuntime, MoveToOperation } from './types';
-import { cancelMoveTo, fetchMapCatalog, fetchMapGeometry, moveTo, startBot, stopBot, startVendorAuto, stopVendorAuto, startAllBots, stopAllBots, deleteAccount } from './lib/api';
+import { cancelMoveTo, fetchCurrentUser, fetchMapCatalog, fetchMapGeometry, logout, moveTo, startBot, stopBot, startVendorAuto, stopVendorAuto, startAllBots, stopAllBots, deleteAccount } from './lib/api';
 import type { MapCatalogItem } from './lib/api';
 import type { WorldBounds } from './lib/minimap';
 import { resolveMapContext } from './lib/context';
 import { confirmAction, notify } from './lib/dialogs';
+import { clearToken, getToken, onAuthRequired } from './lib/auth';
+import type { AuthUser } from './types';
 
 export const App: React.FC = () => {
   const { accounts, logs, isConnected, refreshAccounts, setLogs } = useRealtime();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(() => !!getToken());
   const [mapGeometryById, setMapGeometryById] = useState<Record<string, WorldBounds>>({});
   const [mapCatalog, setMapCatalog] = useState<MapCatalogItem[]>([]);
   const geometryRequestsRef = useRef(new Set<string>());
   const geometryFailedAtRef = useRef(new Map<string, number>());
   const [activePasswordAccount, setActivePasswordAccount] = useState<AccountRuntime | null>(null);
+  const [isUserPasswordOpen, setIsUserPasswordOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const runningCount = accounts.filter((account) => account.status === 'running').length;
+
+  useEffect(() => {
+    let mounted = true;
+    const handleAuthRequired = () => {
+      clearToken();
+      if (mounted) { setUser(null); setAuthLoading(false); }
+    };
+    const unsubscribe = onAuthRequired(handleAuthRequired);
+    if (!getToken()) {
+      setAuthLoading(false);
+    } else {
+      fetchCurrentUser()
+        .then((result) => { if (mounted) setUser(result.user); })
+        .catch(() => { if (mounted) handleAuthRequired(); })
+        .finally(() => { if (mounted) setAuthLoading(false); });
+    }
+    return () => { mounted = false; unsubscribe(); };
+  }, []);
 
   useEffect(() => {
     void fetchMapCatalog().then(setMapCatalog).catch(() => setMapCatalog([]));
@@ -96,9 +120,18 @@ export const App: React.FC = () => {
   const handleStopAll = async () => { try { await stopAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleRefresh = async () => { await refreshAccounts(); };
 
+  const handleLogout = async () => {
+    try { await logout(); } catch { /* local token is cleared even when the server session is already gone */ }
+    clearToken();
+    setUser(null);
+  };
+
+  if (authLoading) return <div className="flex min-h-screen items-center justify-center bg-[#07090e] text-sm text-slate-400">Đang kiểm tra phiên đăng nhập…</div>;
+  if (!user) return <LoginPanel onLoggedIn={setUser} />;
+
   return <div className="min-h-screen flex flex-col bg-[#07090e] text-slate-100">
-    <Navbar isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} />
-    <ApiTokenPanel onTokenChanged={() => { void refreshAccounts(); }} />
+    <Navbar user={user} onLogout={handleLogout} onOpenAccount={() => setIsUserPasswordOpen(true)} isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} />
+    {user.mustChangePassword && <div className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">Bạn đang dùng mật khẩu mặc định. Hãy đổi mật khẩu (nút Quản lý tài khoản) trước khi mở ra internet.</div>}
     <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-6 space-y-6">
       <StatsBar accounts={accounts} />
       <section>
@@ -111,6 +144,7 @@ export const App: React.FC = () => {
     </main>
     <footer className="border-t border-slate-900 bg-black/40 py-4 px-4 text-center text-xs text-slate-600">TuTien2D Automation · client chính thức headless</footer>
     <UpdatePasswordModal account={activePasswordAccount} onClose={() => setActivePasswordAccount(null)} onUpdated={refreshAccounts} />
+    <UserPasswordModal user={isUserPasswordOpen ? user : null} onClose={() => setIsUserPasswordOpen(false)} onUpdated={setUser} />
     <DialogHost />
     <AddAccountModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onCreated={refreshAccounts} />
   </div>;

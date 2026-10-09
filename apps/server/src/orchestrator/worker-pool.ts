@@ -254,9 +254,9 @@ export class WorkerPool {
       return false;
     }
 
-    this.activeVendors.delete(accountId);
     try {
       await active.runner.stop();
+      this.activeVendors.delete(accountId);
       if (!opts.keepStatus) db.updateAccount(accountId, { status: 'stopped' });
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
       return true;
@@ -273,9 +273,9 @@ export class WorkerPool {
     return this.startAccount(accountId);
   }
 
-  public async startAll(): Promise<void> {
+  public async startAll(ownerId?: string): Promise<void> {
     let first = true;
-    for (const account of db.getAccounts()) {
+    for (const account of db.getAccounts(ownerId)) {
       if (this.activeVendors.has(account.id)) continue;
       try {
         if (!first) {
@@ -290,8 +290,17 @@ export class WorkerPool {
     }
   }
 
-  public async stopAll(): Promise<void> {
-    for (const id of this.activeVendors.keys()) await this.stopAccount(id);
+  public async stopAll(ownerId?: string): Promise<void> {
+    const ids = Array.from(this.activeVendors.keys()).filter((id) => !ownerId || db.getOwnerId(id) === ownerId);
+    for (const id of ids) await this.stopAccount(id);
+  }
+
+  public async stopAccountsForOwner(ownerId: string): Promise<boolean> {
+    const accountIds = db.getAccounts(ownerId).map((account) => account.id);
+    for (const accountId of accountIds) {
+      if (this.activeVendors.has(accountId) && !(await this.stopAccount(accountId))) return false;
+    }
+    return accountIds.every((accountId) => !this.activeVendors.has(accountId));
   }
 
   public getActiveEngine(accountId: string): RuntimeEngine | null {
@@ -565,8 +574,8 @@ export class WorkerPool {
     };
   }
 
-  public getAllRuntimes(): AccountRuntimeInfo[] {
-    return db.getAccounts().map((account) => this.getRuntimeInfo(account.id));
+  public getAllRuntimes(ownerId?: string): AccountRuntimeInfo[] {
+    return db.getAccounts(ownerId).map((account) => this.getRuntimeInfo(account.id));
   }
 
   public getObservedMaps(): ObservedMap[] {

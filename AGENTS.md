@@ -38,7 +38,8 @@ Test JS/TS của core-client, automation-engine, server nằm cạnh package (xe
 - Khi chạy live, theo dõi `hurtCount`/`lastHurtAt` trong runtime (server không log gói `hurt`). Quái có thể tấn công bot kể cả khi đứng yên; `hurtCount` tăng thì dừng bot ngay (`POST /api/accounts/:id/stop`). Không để bot đứng chờ ở map có quái khi chưa cần.
 
 ### Bảo mật control-plane
-- Server mặc định bind `127.0.0.1`. Bind ngoài loopback bắt buộc `API_TOKEN` >= 32 ký tự. Không nới allowlist origin (`ALLOWED_ORIGINS`), không dùng `*`, không tắt auth.
+- Server mặc định bind `127.0.0.1`. Bind ngoài loopback bắt buộc `API_TOKEN` >= 32 ký tự và reverse proxy HTTPS với `TRUST_PROXY=1`. Không nới allowlist origin (`ALLOWED_ORIGINS`), không dùng `*`, không tắt auth.
+- `/health` và login là route công khai duy nhất; các API còn lại dùng session bearer (REST) hoặc subprotocol bearer (WS). `API_TOKEN` cũ chỉ là đường tương thích loopback; bind ngoài loopback chỉ bật khi có `ALLOW_LEGACY_API_TOKEN=1`, không dùng token qua query string.
 - Không đưa token vào query string; WebSocket dashboard dùng subprotocol `bearer`.
 
 ### Quy tắc dữ liệu game (đã xác minh)

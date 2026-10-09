@@ -1,10 +1,22 @@
-import type { AccountRuntime, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
-import { getToken, notifyAuthRequired } from './auth';
+import { getToken, notifyAuthRequired, setToken } from './auth';
 
 const API_BASE = '/api';
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+export class ApiRequestError extends Error {
+  public constructor(
+    message: string,
+    public readonly status: number,
+    public readonly errorCode?: string,
+    public readonly retryAfterSec?: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
 
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -13,6 +25,84 @@ export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {})
   const response = await fetch(input, { ...init, headers });
   if (response.status === 401) notifyAuthRequired();
   return response;
+}
+
+function parseApiUser(value: unknown): AuthUser | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const user = value as Record<string, unknown>;
+  if (typeof user.id !== 'string' || typeof user.username !== 'string'
+    || (user.role !== 'admin' && user.role !== 'user')
+    || (user.status !== 'active' && user.status !== 'disabled')
+    || (user.expiresAt !== null && !isFiniteNumber(user.expiresAt))
+    || !Number.isInteger(user.maxBots) || Number(user.maxBots) < 1
+    || typeof user.mustChangePassword !== 'boolean') return undefined;
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    status: user.status,
+    expiresAt: user.expiresAt as number | null,
+    maxBots: Number(user.maxBots),
+    mustChangePassword: user.mustChangePassword,
+  };
+}
+
+export async function login(username: string, password: string): Promise<{ user: AuthUser; sessionExpiresAt: number | null }> {
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const user = parseApiUser(json?.user);
+  const token = typeof json?.token === 'string' ? json.token : '';
+  if (!response.ok || json?.success !== true || !user || !token) {
+    const retryAfterSec = response.status === 429
+      ? Number(response.headers.get('Retry-After') ?? 0) || undefined : undefined;
+    throw new ApiRequestError(
+      typeof json?.error === 'string' ? json.error : 'Đăng nhập thất bại.',
+      response.status,
+      typeof json?.errorCode === 'string' ? json.errorCode : undefined,
+      retryAfterSec,
+    );
+  }
+  setToken(token);
+  return {
+    user,
+    sessionExpiresAt: typeof json.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null,
+  };
+}
+
+export async function fetchCurrentUser(): Promise<{ user: AuthUser; sessionExpiresAt: number | null }> {
+  const response = await apiFetch(`${API_BASE}/auth/me`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const user = parseApiUser(json?.user);
+  if (!response.ok || json?.success !== true || !user) {
+    throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Phiên đăng nhập không hợp lệ.', response.status, typeof json?.errorCode === 'string' ? json.errorCode : undefined);
+  }
+  return { user, sessionExpiresAt: typeof json.sessionExpiresAt === 'number' ? json.sessionExpiresAt : null };
+}
+
+export async function logout(): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  if (!response.ok && response.status !== 401) {
+    const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+    throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Không thể đăng xuất.', response.status);
+  }
+}
+
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<AuthUser> {
+  const response = await apiFetch(`${API_BASE}/auth/password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const user = parseApiUser(json?.user);
+  if (!response.ok || json?.success !== true || !user) {
+    throw new ApiRequestError(typeof json?.error === 'string' ? json.error : 'Không thể đổi mật khẩu.', response.status, typeof json?.errorCode === 'string' ? json.errorCode : undefined);
+  }
+  return user;
 }
 
 const parseMapPortals = (value: unknown): NonNullable<WorldBounds['portals']> | undefined => {
