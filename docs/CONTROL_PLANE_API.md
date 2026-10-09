@@ -11,6 +11,9 @@ Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard,
 - WS dùng subprotocol `bearer, <session-token>`, kiểm tra Origin allowlist và đóng khi session bị thu hồi/hết hạn/user bị khóa.
 - `API_TOKEN` cũ chỉ được chấp nhận như admin đặc biệt khi request đến từ loopback và server bind loopback; bind ngoài loopback chỉ bật thêm khi đặt `ALLOW_LEGACY_API_TOKEN=1`. Không có `API_TOKEN` thì không có đường vào không auth.
 - Không đưa credential vào query string hoặc response/log public.
+- Server gửi `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy` hạn chế và `Cross-Origin-Opener-Policy: same-origin`; HTML build có CSP, còn `/api/**` dùng `Cache-Control: no-store`.
+- `Strict-Transport-Security: max-age=15552000` chỉ xuất hiện khi `TRUST_PROXY=1` và request đã được reverse proxy đánh dấu HTTPS. `trust proxy` dùng đúng 1 hop, không dùng `true`.
+- `PUBLIC_ORIGIN` được tự thêm vào allowlist Origin REST/WS. Không dùng `*`. Tài nguyên `assets/` được cache immutable; `index.html` không cache.
 
 ## Xác thực và người dùng
 
@@ -60,6 +63,7 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `GET` | `/api/system/status` | Admin nhận uptime/memory/số account/running; user thường chỉ nhận số liệu account của mình |
+| `GET` | `/api/admin/health` | Admin xem uptime, Node, RSS/heap, load average, RAM khả dụng, runner/cap, kích thước SQLite, số user/account và backup gần nhất; không trả path/env/secret |
 | `GET` | `/api/accounts` | Runtime snapshot theo owner; admin nhận mọi account |
 | `GET` | `/api/accounts/:id` | Runtime snapshot một account |
 | `POST` | `/api/accounts` | Verify và tạo account |
@@ -86,6 +90,14 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 | `GET` | `/api/maps/:id/geometry` | Bounds/grid/portal marker cho MiniMap |
 
 `POST /auto/start` nhận `{}` hoặc `{ "anchor": { "mapId", "khu?", "x", "y" } }`. Runner vẫn kiểm tra in-game, vitals, downed và map anchor; lỗi trả envelope `{success:false,error,errorCode,retryable}`.
+
+API đã xác thực có rate-limit trong bộ nhớ theo IP và user: mặc định `1200` request/phút/IP và `600` request/phút/user, trả `429 RATE_LIMITED` cùng `Retry-After`. `/health`, login và tài nguyên tĩnh không dùng limiter này; login vẫn có limiter dò mật khẩu riêng. Có thể chỉnh bằng `API_RATE_LIMIT_IP_PER_MIN` và `API_RATE_LIMIT_USER_PER_MIN`.
+
+WebSocket `/ws` giới hạn mặc định 10 kết nối/user, 500 kết nối toàn máy và 60 message/client/phút; payload tối đa 64 KiB. Hub ping/pong mỗi 30 giây, dọn kết nối không phản hồi và đóng khi vượt giới hạn. Biến tương ứng: `WS_MAX_CONNECTIONS_PER_USER`, `WS_MAX_CONNECTIONS_TOTAL`, `WS_MAX_MESSAGES_PER_MIN`.
+
+Gate start/restart/auto/start-all kiểm tra `MAX_TOTAL_RUNNERS` và `MIN_FREE_MEM_MB` (mặc định 300 MB khả dụng; `0` tắt). Thiếu RAM trả `503 SERVER_CAPACITY` với `retryable:true`, không dừng runner đang chạy.
+
+Biến triển khai chính: `HOST`, `PORT`, `DATA_DIR`, `BACKUP_DIR`, `TRUST_PROXY`, `PUBLIC_ORIGIN`, `MAX_TOTAL_RUNNERS`, `MIN_FREE_MEM_MB`, `BACKUP_KEEP`, các biến rate-limit/WS ở trên. `BACKUP_DIR` mặc định là `DATA_DIR/backups`.
 
 Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters và packet/error/memory telemetry. `ownerId`/`ownerUsername` chỉ xuất hiện trong phạm vi account mà principal được phép xem; user thường chỉ nhận account của mình. Dữ liệu chưa biết là `null`, không thay bằng 0.
 

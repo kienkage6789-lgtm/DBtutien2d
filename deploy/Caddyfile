@@ -1,0 +1,5 @@
+# Replace bot.example.com with the real PUBLIC_ORIGIN host.
+bot.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:4000
+}

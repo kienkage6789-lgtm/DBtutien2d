@@ -35,3 +35,19 @@ test('JSON migration is one-time, owner-assigned, and public accounts redact sec
   db.close();
   await fs.rm(dataDir, { recursive: true, force: true });
 });
+
+test('startup resets persisted running accounts without auto-starting them', async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tutien2d-reset-'));
+  const { DatabaseService } = await import('./database.js');
+  const first = new DatabaseService(dataDir);
+  const admin = first.getUsers().find((user) => user.role === 'admin');
+  assert.ok(admin);
+  const account = first.createAccount('reset-fixture', { password: 'pw' }, null, admin.id);
+  first.updateAccount(account.id, { status: 'running' });
+  first.close();
+
+  const restarted = new DatabaseService(dataDir);
+  assert.equal(restarted.getAccountById(account.id)?.status, 'stopped');
+  restarted.close();
+  await fs.rm(dataDir, { recursive: true, force: true });
+});

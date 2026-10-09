@@ -104,3 +104,7 @@ Bước 2 đã triển khai offline trong repo: tính/cộng dồn grant, bảng
 ## Trạng thái bước 4 (2026-10-09)
 
 Bước 4 đã triển khai offline trong repo: giao diện admin gồm Người dùng, Tài khoản toàn hệ thống và Nhật ký kiểm toán; API admin có usage/phiên, dừng bot, thu hồi phiên và audit phân trang; runtime có owner để admin xem đúng phạm vi. Proxy vẫn còn ở bước 3 và chưa có tab/route proxy. Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit với nhiều dòng.
+
+## Trạng thái bước 5 (2026-10-09)
+
+Bước 5 đã triển khai offline trong repo: header/CSP/cache/rate-limit HTTP, giới hạn và heartbeat WebSocket, gate RAM, admin health, shutdown/reset trạng thái an toàn, kiểm tra tương thích Linux, preflight VPS, backup/restore SQLite, systemd và mẫu Caddy/Nginx/tài liệu deploy. Chưa chạy trên Linux/VPS thật; chưa xác minh vendor soak/RAM Linux, systemd/reverse proxy thật, hiệu năng rate-limit, CSP trên mọi màn hình và restore trên máy khác.

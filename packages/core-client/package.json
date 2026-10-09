@@ -1,6 +1,9 @@
 {
   "name": "@tutien2d/core-client",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=24"
+  },
   "type": "module",
   "description": "Authentication and vendor-derived TuTien2D data",
   "main": "dist/index.js",

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily TuTien2D SQLite backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+Unit=tutien2d-backup.service
+
+[Install]
+WantedBy=timers.target

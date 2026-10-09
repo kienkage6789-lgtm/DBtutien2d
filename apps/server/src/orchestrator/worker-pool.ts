@@ -10,6 +10,7 @@ import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import { entitlement } from '../security/entitlement.js';
+import { hasRunnerMemoryCapacity } from './capacity.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
 
@@ -191,6 +192,9 @@ export class WorkerPool {
     if (CONFIG.MAX_TOTAL_RUNNERS > 0 && this.activeVendors.size >= CONFIG.MAX_TOTAL_RUNNERS) {
       throw new Error('SERVER_CAPACITY');
     }
+    if (!hasRunnerMemoryCapacity()) {
+      throw new Error('SERVER_CAPACITY_MEMORY');
+    }
   }
 
   private async startVendorAccount(
@@ -336,9 +340,25 @@ export class WorkerPool {
     }
   }
 
-  public async stopAll(ownerId?: string): Promise<void> {
+  public async stopAll(ownerId?: string, options: { timeoutMs?: number } = {}): Promise<void> {
     const ids = Array.from(this.activeVendors.keys()).filter((id) => !ownerId || db.getOwnerId(id) === ownerId);
-    for (const id of ids) await this.stopAccount(id);
+    const timeoutMs = options.timeoutMs ?? Number.POSITIVE_INFINITY;
+    const deadline = Date.now() + timeoutMs;
+    for (const id of ids) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      if (!Number.isFinite(timeoutMs)) {
+        await this.stopAccount(id);
+      } else {
+        await Promise.race([
+          this.stopAccount(id),
+          new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => resolve(false), remaining);
+            timer.unref?.();
+          }),
+        ]);
+      }
+    }
   }
 
   public async stopAccountsForOwner(ownerId: string): Promise<boolean> {

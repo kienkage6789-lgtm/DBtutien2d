@@ -16,12 +16,19 @@ import { khuErrorResponse } from './khu-errors.js';
 import { dailyErrorResponse } from './daily-errors.js';
 import { entitlement } from '../security/entitlement.js';
 import { entitlementWatcher } from '../orchestrator/entitlement-runtime.js';
+import { hasRunnerMemoryCapacity } from '../orchestrator/capacity.js';
+import { ApiRateLimiter } from '../security/http-hardening.js';
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { availableMemoryMb, readAvailableMemoryBytes } from '../system/memory.js';
 
 export const apiRouter: Router = Router();
 
 const principalUserId = (req: Request): string | undefined => req.principal?.userId ?? undefined;
 const isAdmin = (req: Request): boolean => req.principal?.role === 'admin';
 const ownerScope = (req: Request): string | undefined => isAdmin(req) ? undefined : principalUserId(req) ?? '__invalid_principal__';
+const apiRateLimiter = new ApiRateLimiter();
 
 function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!isAdmin(req)) {
@@ -66,13 +73,16 @@ export function requireEntitlement(req: Request, res: Response, next: NextFuncti
 
 function requireStartCapacity(req: Request, res: Response, next: NextFunction): void {
   const accountId = typeof req.params.id === 'string' ? req.params.id : undefined;
-  if (accountId && workerPool.getRunningAccountIdsForOwner(principalUserId(req) ?? '').includes(accountId)) { next(); return; }
+  const isRestart = req.originalUrl.includes('/restart');
   const ownerId = principalUserId(req);
   const account = accountId ? db.getAccountById(accountId) : undefined;
   const owner = ownerId ? db.getUserById(ownerId) : undefined;
+  const activeOwnerIds = account ? workerPool.getRunningAccountIdsForOwner(account.ownerId) : [];
+  const accountIsActive = !!accountId && activeOwnerIds.includes(accountId);
+  if (accountIsActive && !isRestart) { next(); return; }
   const allRunning = new Set(db.getAccounts().flatMap((item) => workerPool.getRunningAccountIdsForOwner(item.ownerId).includes(item.id) ? [item.id] : []));
   const candidates = (ownerId ? db.getAccounts(ownerId) : db.getAccounts()).filter((item) => !allRunning.has(item.id));
-  if (owner?.role === 'user') {
+  if (owner?.role === 'user' && !accountIsActive) {
     const running = workerPool.getRunningAccountIdsForOwner(owner.id).length;
     const quotaReached = running >= owner.maxBots && (!accountId || candidates.length > 0 || !!account);
     if (quotaReached) {
@@ -80,9 +90,14 @@ function requireStartCapacity(req: Request, res: Response, next: NextFunction): 
       return;
     }
   }
-  const needsRunner = accountId ? !!account && !workerPool.getRunningAccountIdsForOwner(account.ownerId).includes(accountId) : candidates.length > 0;
-  if (needsRunner && CONFIG.MAX_TOTAL_RUNNERS > 0 && workerPool.getActiveAccountCount() >= CONFIG.MAX_TOTAL_RUNNERS) {
+  const needsRunner = accountId ? !!account && (!accountIsActive || isRestart) : candidates.length > 0;
+  const activeAfterRestart = workerPool.getActiveAccountCount() - (isRestart && accountIsActive ? 1 : 0);
+  if (needsRunner && CONFIG.MAX_TOTAL_RUNNERS > 0 && activeAfterRestart >= CONFIG.MAX_TOTAL_RUNNERS) {
     sendError(res, 503, 'SERVER_CAPACITY', 'Máy chủ đã đạt số runner tối đa, hãy thử lại sau.', { retryable: true });
+    return;
+  }
+  if (needsRunner && !hasRunnerMemoryCapacity()) {
+    sendError(res, 503, 'SERVER_CAPACITY', 'RAM máy chủ thấp, hãy thử lại sau.', { retryable: true });
     return;
   }
   next();
@@ -97,10 +112,11 @@ function sendControlError(res: Response, error: unknown): void {
     USER_DISABLED: { status: 403, message: 'Tài khoản người dùng đã bị khóa.' },
     BOT_LIMIT_REACHED: { status: 409, message: 'Đã đạt giới hạn bot của người dùng.' },
     SERVER_CAPACITY: { status: 503, message: 'Máy chủ đã đạt số runner tối đa, hãy thử lại sau.', retryable: true },
+    SERVER_CAPACITY_MEMORY: { status: 503, message: 'RAM máy chủ thấp, hãy thử lại sau.', retryable: true },
   };
   const response = known[code];
   if (response) {
-    sendError(res, response.status, code, response.message, { retryable: response.retryable });
+    sendError(res, response.status, code === 'SERVER_CAPACITY_MEMORY' ? 'SERVER_CAPACITY' : code, response.message, { retryable: response.retryable });
     return;
   }
   sendError(res, 500, 'INTERNAL_ERROR', 'Không thể thực hiện thao tác bot.');
@@ -221,6 +237,21 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
 apiRouter.use(authenticate);
 
+apiRouter.use((req: Request, res: Response, next: NextFunction) => {
+  const ip = requestIp(req);
+  const userKey = req.principal?.userId ? `user:${req.principal.userId}` : 'user:legacy-admin';
+  const decision = apiRateLimiter.check(
+    [`ip:${ip}`, userKey],
+    [CONFIG.API_RATE_LIMIT_IP_PER_MIN, CONFIG.API_RATE_LIMIT_USER_PER_MIN],
+  );
+  if (!decision.allowed) {
+    res.setHeader('Retry-After', String(decision.retryAfterSec));
+    sendError(res, 429, 'RATE_LIMITED', 'Quá nhiều yêu cầu, hãy thử lại sau.', { retryable: true });
+    return;
+  }
+  next();
+});
+
 apiRouter.post('/auth/logout', (req: Request, res: Response) => {
   if (req.session) {
     db.deleteSession(req.session.id);
@@ -278,6 +309,48 @@ apiRouter.use('/orchestrator/start-all', requireEntitlement, requireStartCapacit
 
 apiRouter.get('/admin/users', requireAdmin, (_req: Request, res: Response) => {
   res.json({ success: true, data: publicUserList() });
+});
+
+function latestBackupAt(backupDir: string): string | null {
+  try {
+    const entries = fs.readdirSync(backupDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d{8}-\d{6}(?:-\d+)?$/.test(entry.name));
+    let latest: { at: number; iso: string } | null = null;
+    for (const entry of entries) {
+      const stat = fs.statSync(path.join(backupDir, entry.name));
+      if (!latest || stat.mtimeMs > latest.at) latest = { at: stat.mtimeMs, iso: stat.mtime.toISOString() };
+    }
+    return latest?.iso ?? null;
+  } catch {
+    return null;
+  }
+}
+
+apiRouter.get('/admin/health', requireAdmin, (_req: Request, res: Response) => {
+  const memory = process.memoryUsage();
+  const runtimes = workerPool.getAllRuntimes();
+  const availableBytes = readAvailableMemoryBytes();
+  res.json({
+    success: true,
+    data: {
+      uptimeSec: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      memory: {
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+        heapTotalBytes: memory.heapTotal,
+      },
+      loadAverage: os.loadavg(),
+      memoryAvailableMb: availableMemoryMb(availableBytes),
+      runningRunners: runtimes.filter((runtime) => runtime.status === 'running').length,
+      runnerLimit: CONFIG.MAX_TOTAL_RUNNERS,
+      databaseBytes: db.getDatabaseSizeBytes(),
+      users: db.getUserCount(),
+      accounts: db.getAccountCount(),
+      latestBackupAt: latestBackupAt(CONFIG.BACKUP_DIR),
+      timestamp: Date.now(),
+    },
+  });
 });
 
 apiRouter.post('/admin/users', requireAdmin, (req: Request, res: Response) => {

@@ -23,3 +23,14 @@ Server production chạy ở cổng 4000 sau khi build; dev dashboard chạy ở
 ## An toàn
 
 Mặc định control-plane chỉ bind loopback. Khi bind ngoài loopback phải đặt `API_TOKEN` đủ mạnh và giữ Origin allowlist/bearer auth. Không đưa token vào query string. Mỗi tài khoản chỉ có một vendor session; không chạy live hoặc gửi lệnh game ngoài nhiệm vụ đã được phê duyệt.
+
+## VPS offline/preflight
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+node scripts/check-linux-compat.mjs
+node scripts/vps-preflight.mjs --smoke --vendor-boot
+```
+
+Triển khai systemd, reverse proxy HTTPS và backup/restore theo [DEPLOY_VPS.md](docs/DEPLOY_VPS.md). Không mở port 4000 ra Internet; không đặt `API_TOKEN` trên VPS.

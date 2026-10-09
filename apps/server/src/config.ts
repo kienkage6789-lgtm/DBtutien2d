@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 dotenv.config();
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(DATA_DIR, 'backups');
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../');
 
 /**
@@ -22,12 +23,14 @@ function resolveEncryptionSecret(): string {
   const secretPath = path.join(DATA_DIR, '.secret');
   fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(secretPath)) {
+    try { fs.chmodSync(secretPath, 0o600); } catch { /* Windows does not enforce Unix modes. */ }
     const existing = fs.readFileSync(secretPath, 'utf8').trim();
     if (existing.length >= 32) return existing;
   }
 
   const generated = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(secretPath, generated, { encoding: 'utf8', mode: 0o600 });
+  try { fs.chmodSync(secretPath, 0o600); } catch { /* Windows does not enforce Unix modes. */ }
   console.warn(
     `[TuTien2D Server] ENCRYPTION_SECRET chưa được đặt — đã tạo khóa ngẫu nhiên tại ${secretPath}. ` +
       'Hãy sao lưu file này (mất khóa = không giải mã được mật khẩu đã lưu).'
@@ -47,7 +50,37 @@ const parseNonNegativeInt = (value: string | undefined, fallback: number): numbe
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 };
 const MAX_TOTAL_RUNNERS = parseNonNegativeInt(process.env.MAX_TOTAL_RUNNERS, 0);
+const MIN_FREE_MEM_MB = parseNonNegativeInt(process.env.MIN_FREE_MEM_MB, 300);
 const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
+const API_RATE_LIMIT_USER_PER_MIN = parseNonNegativeInt(process.env.API_RATE_LIMIT_USER_PER_MIN, 600);
+const API_RATE_LIMIT_IP_PER_MIN = parseNonNegativeInt(process.env.API_RATE_LIMIT_IP_PER_MIN, 1200);
+const WS_MAX_CONNECTIONS_PER_USER = Math.max(1, parseNonNegativeInt(process.env.WS_MAX_CONNECTIONS_PER_USER, 10));
+const WS_MAX_CONNECTIONS_TOTAL = Math.max(1, parseNonNegativeInt(process.env.WS_MAX_CONNECTIONS_TOTAL, 500));
+const WS_MAX_MESSAGES_PER_MIN = Math.max(1, parseNonNegativeInt(process.env.WS_MAX_MESSAGES_PER_MIN, 60));
+
+const cleanEnvText = (value: string): string => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
+const normalizeOrigin = (value: string): string => {
+  const cleaned = cleanEnvText(value);
+  if (!cleaned || cleaned === '*') return cleaned;
+  try {
+    const parsed = new URL(cleaned);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return cleaned;
+    return parsed.origin;
+  } catch {
+    return cleaned;
+  }
+};
+const PUBLIC_ORIGIN = normalizeOrigin(process.env.PUBLIC_ORIGIN || '');
+const configuredOrigins = (process.env.ALLOWED_ORIGINS
+  || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000')
+  .split(',').map(normalizeOrigin).filter(Boolean);
+if (configuredOrigins.includes('*') || PUBLIC_ORIGIN === '*') {
+  throw new Error('ALLOWED_ORIGINS/PUBLIC_ORIGIN không được dùng wildcard *.');
+}
+const ALLOWED_ORIGINS = Array.from(new Set([
+  ...configuredOrigins,
+  ...(PUBLIC_ORIGIN ? [PUBLIC_ORIGIN] : []),
+]));
 
 if (!isLoopback(HOST) && API_TOKEN.length < 32) {
   throw new Error('HOST không phải loopback thì bắt buộc đặt API_TOKEN >= 32 ký tự.');
@@ -68,11 +101,17 @@ export const CONFIG = {
   TRUST_PROXY,
   ALLOW_LEGACY_API_TOKEN,
   MAX_TOTAL_RUNNERS,
+  MIN_FREE_MEM_MB,
   ENTITLEMENT_SWEEP_MS,
-  ALLOWED_ORIGINS: (process.env.ALLOWED_ORIGINS
-    || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:4000,http://127.0.0.1:4000')
-    .split(',').map((s) => s.trim()).filter(Boolean),
+  API_RATE_LIMIT_USER_PER_MIN,
+  API_RATE_LIMIT_IP_PER_MIN,
+  WS_MAX_CONNECTIONS_PER_USER,
+  WS_MAX_CONNECTIONS_TOTAL,
+  WS_MAX_MESSAGES_PER_MIN,
+  PUBLIC_ORIGIN,
+  ALLOWED_ORIGINS,
   DATA_DIR,
+  BACKUP_DIR,
   ENCRYPTION_SECRET: resolveEncryptionSecret(),
   GAME_SERVER_URL: process.env.GAME_SERVER_URL || 'wss://game.tutien2d.online/',
   VENDOR_CLIENT_DIR: process.env.VENDOR_CLIENT_DIR || path.join(REPO_ROOT, 'vendor/tutien2d-public-client/2026-10-06'),

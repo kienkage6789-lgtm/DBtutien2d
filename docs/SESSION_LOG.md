@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — BƯỚC 5 multi-user: gia cố VPS và triển khai offline
+
+Thay đổi: thêm security headers/CSP/cache policy, `PUBLIC_ORIGIN`, trust-proxy một hop, rate-limit API theo IP/user và giới hạn/heartbeat/message guard cho WebSocket. Thêm `MIN_FREE_MEM_MB` gate cho start/restart/auto/start-all, `/api/admin/health`, shutdown có timeout/uncaught handler, đóng WS và giữ reset `running -> stopped` khi mở DB.
+
+Thêm Node 24 engines/`.nvmrc`, `scripts/check-linux-compat.mjs` + test cây giả, `scripts/vps-preflight.mjs` + test logic thuần, `scripts/backup.mjs`, `scripts/restore.mjs` + test backup/restore, systemd service/timer, `deploy/env.example`, Caddy/Nginx mẫu và `docs/DEPLOY_VPS.md`. Backup dùng `VACUUM INTO`, manifest kích thước/băm/schema, integrity check và snapshot `pre-restore-*`; không in secret/token.
+
+Tài liệu cập nhật: `CONTROL_PLANE_API.md`, `SPEC_MULTI_USER.md`, `AGENTS.md`, `README.md`, checklist bước 5 ở `FIX_GUIDE.md`.
+
+Lệnh đã chạy: `node --test scripts/check-linux-compat.test.mjs scripts/vps-preflight.test.mjs scripts/backup-restore.test.mjs` pass 5/5; `node scripts/check-linux-compat.mjs` pass; esbuild transform cú pháp 13 file TypeScript pass; `git diff --check` pass nội dung. `pnpm build` bị chặn vì `pnpm` không có PATH; `apps/server/node_modules/.bin/tsc.cmd -p apps/server/tsconfig.json --noEmit` bị `EPERM` khi đọc `.pnpm`; `tsx` bị `uv_os_get_passwd returned ENOMEM`; preflight smoke server trong sandbox cũng dừng vì `EPERM` khi đọc dependency Express. Chưa tuyên bố build/Vitest/test server chính thức pass. Người giao việc cần chạy `pnpm build`, Vitest và từng test server; chủ dự án chạy `node scripts/vps-preflight.mjs --smoke --vendor-boot` trên VPS.
+
+Chưa xác minh: build/typecheck/Vitest chính thức trong sandbox, Linux/VPS thật, systemd/Caddy/Nginx thật, vendor soak/RAM Linux, hiệu năng rate-limit/WS, CSP trên mọi màn hình và restore trên máy khác. Không chạm game thật, không mở mạng ngoài, không đọc `data/`/`.env*`, không sửa `vendor/`/`headless/`, không commit.
+
 ## 2026-10-09 — BƯỚC 4 multi-user: giao diện quản trị (offline)
 
 Thay đổi: bổ sung API `GET /api/admin/users` với `createdAt`/`lastLoginAt`/`createdBy`/`usage`/`activeSessions`; thêm `stop-bots`, `revoke-sessions` (admin tự thu hồi giữ phiên hiện tại) và `GET /api/admin/audit` phân trang/làm sạch. Ghi audit cho hành động admin còn thiếu và đăng nhập admin thành công/thất bại có giới hạn tần suất; không ghi mật khẩu/hash/token. Runtime REST/WS thêm `ownerId`/`ownerUsername` trong phạm vi được phép.

@@ -156,9 +156,11 @@ export class DatabaseService {
   constructor(dataDir: string = CONFIG.DATA_DIR) {
     this.dataDir = dataDir;
     fs.mkdirSync(this.dataDir, { recursive: true });
+    try { fs.chmodSync(this.dataDir, 0o700); } catch { /* Windows does not enforce Unix modes. */ }
     this.dbPath = path.join(this.dataDir, 'tutien_db.sqlite');
     this.legacyPath = path.join(this.dataDir, 'tutien_db.json');
     this.sqlite = new DatabaseSync(this.dbPath);
+    try { fs.chmodSync(this.dbPath, 0o600); } catch { /* Windows does not enforce Unix modes. */ }
     this.sqlite.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     this.createSchema();
     this.ensureInitialAdmin();
@@ -429,6 +431,19 @@ export class DatabaseService {
   /** Test/process hook; normal shutdown uses `flush()` and lets the process close SQLite. */
   public close(): void {
     this.sqlite.close();
+  }
+
+  /** Safe operational metrics; never returns the database path or stored values. */
+  public getDatabaseSizeBytes(): number {
+    try { return fs.statSync(this.dbPath).size; } catch { return 0; }
+  }
+
+  public getUserCount(): number {
+    return Number(this.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM users')?.count ?? 0);
+  }
+
+  public getAccountCount(): number {
+    return Number(this.queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM game_accounts')?.count ?? 0);
   }
 
   // --- USERS / SESSIONS ---

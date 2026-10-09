@@ -1,0 +1,25 @@
+[Unit]
+Description=TuTien2D control-plane
+After=network.target
+
+[Service]
+Type=simple
+User=tutien2d
+Group=tutien2d
+WorkingDirectory=/opt/tutien2d
+EnvironmentFile=/etc/tutien2d/env
+# Replace /usr/bin/node with the absolute Node 24 path from `command -v node`.
+ExecStart=/usr/bin/node /opt/tutien2d/apps/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tutien2d
+MemoryMax=2G
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

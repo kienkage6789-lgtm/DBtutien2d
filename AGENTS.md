@@ -41,6 +41,8 @@ Test JS/TS của core-client, automation-engine, server nằm cạnh package (xe
 - Server mặc định bind `127.0.0.1`. Bind ngoài loopback bắt buộc `API_TOKEN` >= 32 ký tự và reverse proxy HTTPS với `TRUST_PROXY=1`. Không nới allowlist origin (`ALLOWED_ORIGINS`), không dùng `*`, không tắt auth.
 - `/health` và login là route công khai duy nhất; các API còn lại dùng session bearer (REST) hoặc subprotocol bearer (WS). `API_TOKEN` cũ chỉ là đường tương thích loopback; bind ngoài loopback chỉ bật khi có `ALLOW_LEGACY_API_TOKEN=1`, không dùng token qua query string.
 - Không đưa token vào query string; WebSocket dashboard dùng subprotocol `bearer`.
+- Khi triển khai VPS: Node chỉ bind `127.0.0.1`, reverse proxy HTTPS giữ `TRUST_PROXY=1` (một hop cố định), `PUBLIC_ORIGIN`/`ALLOWED_ORIGINS` đúng hostname và không dùng `*`; không mở port 4000 ra Internet. Chạy `node scripts/vps-preflight.mjs --smoke --vendor-boot` trước khi bật systemd.
+- Header/CSP/rate-limit/WS limit, backup SQLite và khôi phục có kiểm tra được mô tả ở `docs/DEPLOY_VPS.md`; chưa coi là đã xác minh cho tới khi chủ dự án chạy trên Linux thật.
 
 ### Quy tắc dữ liệu game (đã xác minh)
 - `maxHp/maxMp` không có trên wire; chỉ là giá trị SUY RA (`derivedMax`) từ `state.save.realm` + `state.save.equipment`. Không ghi vào `VitalSnapshot`.

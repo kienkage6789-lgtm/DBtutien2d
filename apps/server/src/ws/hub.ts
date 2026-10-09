@@ -3,6 +3,7 @@ import { Server as HttpServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { db, type DbLog } from '../db/database.js';
 import { resolveToken, verifyWsUpgrade, type Principal } from '../security/auth.js';
+import { CONFIG } from '../config.js';
 
 export interface WsMessage {
   type: 'initial_state' | 'account_updated' | 'account_log' | 'bot_activity' | 'system_alert';
@@ -19,6 +20,8 @@ export class WebSocketHub {
   private wss: WebSocketServer | null = null;
   private readonly clients = new Map<WebSocket, ClientContext>();
   private sessionCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly messageWindows = new Map<WebSocket, number[]>();
 
   public init(httpServer: HttpServer, getRuntimeAccounts: () => unknown[]): void {
     this.wss = new WebSocketServer({
@@ -28,8 +31,16 @@ export class WebSocketHub {
       handleProtocols: (protocols) => protocols.has('bearer') ? 'bearer' : false,
       verifyClient: (info, done) => {
         const verdict = verifyWsUpgrade(info.req);
-        if (verdict.ok) done(true);
-        else done(false, verdict.code, verdict.reason);
+        if (!verdict.ok) { done(false, verdict.code, verdict.reason); return; }
+        if (this.clients.size >= CONFIG.WS_MAX_CONNECTIONS_TOTAL) {
+          done(false, 503, 'WebSocket connection limit reached');
+          return;
+        }
+        if (verdict.principal.userId && this.countUserConnections(verdict.principal.userId) >= CONFIG.WS_MAX_CONNECTIONS_PER_USER) {
+          done(false, 503, 'Per-user WebSocket connection limit reached');
+          return;
+        }
+        done(true);
       },
     });
 
@@ -39,8 +50,17 @@ export class WebSocketHub {
         ws.close(4001, 'Unauthorized');
         return;
       }
+      if (this.clients.size >= CONFIG.WS_MAX_CONNECTIONS_TOTAL) {
+        ws.close(1013, 'WebSocket connection limit reached');
+        return;
+      }
+      if (verdict.principal.userId && this.countUserConnections(verdict.principal.userId) >= CONFIG.WS_MAX_CONNECTIONS_PER_USER) {
+        ws.close(1013, 'Per-user WebSocket connection limit reached');
+        return;
+      }
       const context: ClientContext = { principal: verdict.principal, token: verdict.token, request };
       this.clients.set(ws, context);
+      this.messageWindows.set(ws, []);
       this.sendToClient(ws, {
         type: 'initial_state',
         data: {
@@ -52,13 +72,68 @@ export class WebSocketHub {
 
       ws.on('close', () => {
         this.clients.delete(ws);
+        this.messageWindows.delete(ws);
         this.stopSessionCheckIfIdle();
+        this.stopHeartbeatIfIdle();
       });
       ws.on('error', () => {
         this.clients.delete(ws);
+        this.messageWindows.delete(ws);
         this.stopSessionCheckIfIdle();
+        this.stopHeartbeatIfIdle();
       });
+      ws.on('pong', () => { (ws as WebSocket & { isAlive?: boolean }).isAlive = true; });
+      ws.on('message', (data) => {
+        const bytes = typeof data === 'string'
+          ? Buffer.byteLength(data)
+          : Array.isArray(data) ? data.reduce((total, part) => total + part.byteLength, 0) : data.byteLength;
+        if (bytes > 64 * 1024 || !this.allowMessage(ws)) {
+          ws.close(1008, 'WebSocket message rate limit exceeded');
+        }
+      });
+      (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
+      this.ensureHeartbeat();
     });
+  }
+
+  private countUserConnections(userId: string): number {
+    let count = 0;
+    for (const context of this.clients.values()) if (context.principal.userId === userId) count += 1;
+    return count;
+  }
+
+  private allowMessage(ws: WebSocket): boolean {
+    const now = Date.now();
+    const window = (this.messageWindows.get(ws) ?? []).filter((at) => at > now - 60_000);
+    if (window.length >= CONFIG.WS_MAX_MESSAGES_PER_MIN) {
+      this.messageWindows.set(ws, window);
+      return false;
+    }
+    window.push(now);
+    this.messageWindows.set(ws, window);
+    return true;
+  }
+
+  private ensureHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => {
+      for (const client of this.clients.keys()) {
+        const socket = client as WebSocket & { isAlive?: boolean };
+        if (socket.isAlive === false) {
+          client.terminate();
+          continue;
+        }
+        socket.isAlive = false;
+        client.ping();
+      }
+    }, 30_000);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeatIfIdle(): void {
+    if (this.clients.size > 0 || !this.heartbeatTimer) return;
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
   }
 
   private ensureSessionCheck(): void {
@@ -163,6 +238,15 @@ export class WebSocketHub {
         client.close(4001, 'Session revoked');
       }
     }
+  }
+
+  public closeAll(): void {
+    for (const client of this.clients.keys()) client.terminate();
+    this.clients.clear();
+    this.messageWindows.clear();
+    this.stopSessionCheckIfIdle();
+    this.stopHeartbeatIfIdle();
+    this.wss?.close();
   }
 }
 

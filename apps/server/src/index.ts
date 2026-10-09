@@ -12,12 +12,17 @@ import { workerPool } from './orchestrator/worker-pool.js';
 import { db } from './db/database.js';
 import { errorHandler } from './security/errors.js';
 import { entitlementWatcher } from './orchestrator/entitlement-runtime.js';
+import { createSecurityHeaders, STATIC_CACHE_CONTROL, HTML_CACHE_CONTROL } from './security/http-hardening.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.set('trust proxy', CONFIG.TRUST_PROXY);
+app.disable('x-powered-by');
+// Trust one known reverse-proxy hop only. `true` would accept an arbitrary
+// forwarded-header chain and make IP rate limiting unsafe.
+app.set('trust proxy', CONFIG.TRUST_PROXY ? 1 : false);
+app.use(createSecurityHeaders({ trustProxy: CONFIG.TRUST_PROXY }));
 
 app.use(cors({
   origin: (origin, callback) => callback(null, !origin || CONFIG.ALLOWED_ORIGINS.includes(origin)),
@@ -59,9 +64,15 @@ app.get('/health', (req, res) => {
 // Serve frontend build if exists
 const webDistPath = path.resolve(__dirname, '../../web/dist');
 if (fs.existsSync(webDistPath)) {
-  app.use(express.static(webDistPath));
+  app.use(express.static(webDistPath, {
+    setHeaders: (res, filePath) => {
+      if (path.basename(filePath) === 'index.html') res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
+      else if (filePath.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', STATIC_CACHE_CONTROL);
+    },
+  }));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
     res.sendFile(path.join(webDistPath, 'index.html'));
   });
 }
@@ -82,16 +93,45 @@ server.listen(CONFIG.PORT, CONFIG.HOST, () => {
 });
 
 // Graceful shutdown
-async function handleShutdown() {
+let shuttingDown = false;
+const SHUTDOWN_TIMEOUT_MS = 20_000;
+
+async function handleShutdown(exitCode = 0): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\n[TuTien2D Server] Shutting down, stopping all active bots...');
-  entitlementWatcher.stop();
-  await workerPool.stopAll();
-  db.flush();
-  server.close(() => {
-    console.log('[TuTien2D Server] Server closed cleanly.');
-    process.exit(0);
+  const httpClosed = new Promise<void>((resolve) => {
+    if (!server.listening) { resolve(); return; }
+    server.close(() => resolve());
   });
+  wsHub.closeAll();
+  entitlementWatcher.stop();
+  try {
+    await workerPool.stopAll(undefined, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+    await Promise.race([
+      httpClosed,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+  } catch {
+    console.error(JSON.stringify({ event: 'shutdown_error' }));
+  } finally {
+    db.flush();
+    db.close();
+    console.log('[TuTien2D Server] Server closed cleanly.');
+    process.exit(exitCode);
+  }
 }
 
-process.on('SIGINT', handleShutdown);
-process.on('SIGTERM', handleShutdown);
+process.on('SIGINT', () => { void handleShutdown(0); });
+process.on('SIGTERM', () => { void handleShutdown(0); });
+process.on('uncaughtException', (error) => {
+  console.error(JSON.stringify({ event: 'uncaught_exception', error: error instanceof Error ? error.name : 'unknown' }));
+  void handleShutdown(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(JSON.stringify({ event: 'unhandled_rejection', error: reason instanceof Error ? reason.name : 'unknown' }));
+  void handleShutdown(1);
+});

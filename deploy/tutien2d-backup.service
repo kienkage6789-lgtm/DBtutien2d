@@ -1,0 +1,17 @@
+[Unit]
+Description=TuTien2D SQLite backup
+After=tutien2d.service
+
+[Service]
+Type=oneshot
+User=tutien2d
+Group=tutien2d
+WorkingDirectory=/opt/tutien2d
+EnvironmentFile=/etc/tutien2d/env
+# Replace /usr/bin/node with the absolute Node 24 path from `command -v node`.
+ExecStart=/usr/bin/node /opt/tutien2d/scripts/backup.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tutien2d

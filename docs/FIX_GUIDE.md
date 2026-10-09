@@ -1479,3 +1479,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 5. [x] Thêm helper/test source cho hạn dùng, policy hành động, lọc audit/user, nhãn action, mật khẩu ngẫu nhiên và sanitizer admin/runtime.
 6. [~] `git diff --check` và transform cú pháp esbuild cho file thay đổi pass; `pnpm build`/Vitest bị chặn vì `pnpm` không có PATH, TypeScript trực tiếp bị `EPERM` khi đọc package `.pnpm`.
 7. [ ] Chưa xác minh bằng trình duyệt thật ở 334 px/màn hình rộng, hiệu năng danh sách lớn và phân trang audit nhiều dòng; không chạm game thật/mạng.
+
+## AA. Bước 5 multi-user — hardening VPS offline (2026-10-09)
+
+1. [x] Header bảo mật/CSP/cache, `PUBLIC_ORIGIN`, trust-proxy một hop, API rate-limit theo IP/user và WebSocket limit/heartbeat/message guard.
+2. [x] `MIN_FREE_MEM_MB` gate cho start/restart/auto/start-all; admin health; shutdown có timeout, đóng WS và log sạch cho uncaught exception/rejection.
+3. [x] Node 24 engines/`.nvmrc`; `check-linux-compat` kiểm import hoa-thường/đường dẫn Windows/Node metadata và có test cây giả; `vps-preflight` có logic quyền/phiên bản/SQLite/port/RAM và smoke/vendor boot offline.
+4. [x] Backup/restore SQLite dùng `VACUUM INTO`, `.secret`, manifest/hash/schema, retention, integrity check, checksum rejection và `pre-restore-*`; có systemd service/timer.
+5. [x] Có `deploy/env.example`, systemd hardening, Caddy/Nginx mẫu và `docs/DEPLOY_VPS.md`; cập nhật API/spec/README/AGENTS.
+6. [~] Chưa chạy `pnpm build`, Vitest và toàn bộ test server chính thức trong sandbox; chưa xác minh Linux/VPS thật, reverse proxy/systemd, CSP mọi màn hình, soak/RAM Linux, hiệu năng rate-limit/WS và restore trên máy khác.

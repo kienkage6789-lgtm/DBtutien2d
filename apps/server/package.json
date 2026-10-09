@@ -2,6 +2,9 @@
   "name": "@tutien2d/server",
   "version": "1.0.0",
   "description": "Backend API, Worker Orchestrator & WebSocket Hub for TuTien2D",
+  "engines": {
+    "node": ">=24"
+  },
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

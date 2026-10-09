@@ -31,7 +31,7 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     let body: any = null; try { body = await r.json(); } catch { /* không phải JSON */ }
     return { s: r.status, b: body };
   };
-  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '' };
+  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '', MIN_FREE_MEM_MB: '0', WS_MAX_CONNECTIONS_PER_USER: '1' };
   const srv = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   srv.stdout.on('data', (d) => { log += d; });
@@ -40,6 +40,10 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     let up = false;
     for (let i = 0; i < 120 && !up; i += 1) { try { up = (await fetch(B + '/health')).ok; } catch { /* chưa lên */ } if (!up) await sleep(250); }
     assert.ok(up, 'máy chủ không khởi động: ' + log.slice(0, 400));
+    const healthHeaders = await fetch(B + '/health');
+    check(healthHeaders.headers.get('x-content-type-options') === 'nosniff', 'security nosniff');
+    check(healthHeaders.headers.get('x-frame-options') === 'DENY', 'security frame');
+    check(healthHeaders.headers.get('x-powered-by') === null, 'x-powered-by disabled');
     // 1. không token
     check((await j('/api/accounts')).s === 401, 'no token 401');
     check((await j('/api/accounts', 'GET', null, 'bogus')).s === 401, 'bad token 401');
@@ -69,13 +73,17 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(JSON.stringify(adminUsers.b).toLowerCase().indexOf('password_hash') < 0 && JSON.stringify(adminUsers.b).toLowerCase().indexOf('token_hash') < 0, 'admin users no hashes');
     const tokAl = (await j('/api/auth/login', 'POST', { username: 'alice', password: 'alice1' })).b.token;
     const tokBo = (await j('/api/auth/login', 'POST', { username: 'bob', password: 'bob123' })).b.token;
+    const adminHealth = await j('/api/admin/health', 'GET', null, tokA);
+    check(adminHealth.s === 200 && typeof adminHealth.b.data?.nodeVersion === 'string', 'admin health available');
+    check(JSON.stringify(adminHealth.b).includes('DATA_DIR') === false && JSON.stringify(adminHealth.b).includes('ENCRYPTION_SECRET') === false, 'admin health no secret config');
+    check((await j('/api/admin/health', 'GET', null, tokAl)).s === 403, 'user admin health 403');
     check(alice && alice.maxBots === 3 && bob.maxBots === 5, 'maxBots default/override ' + (alice && alice.maxBots));
     // 5. user thường vào admin
     check((await j('/api/admin/users', 'GET', null, tokAl)).s === 403, 'user admin 403');
     check((await j('/api/admin/users', 'POST', { username: 'x', password: 'xxxxxx' }, tokAl)).s === 403, 'user create 403');
     // 6. seed accounts bằng tiến trình khác (cùng SQLite)
     const seed = spawn(process.execPath, ['--import', 'tsx', '-e', `
-      import('./src/db/database.ts').then(({db})=>{
+      import('file://' + process.cwd().replace(/\\\\/g, '/') + '/src/db/database.ts').then(({db})=>{
         const a=db.createAccount('acc_alice',{password:'pw'},null,${JSON.stringify(alice.id)}); const b=db.createAccount('acc_bob',{password:'pw'},null,${JSON.stringify(bob.id)});
         console.log(JSON.stringify([a.id,b.id])); setTimeout(()=>process.exit(0),300);});
     `], { cwd: SERVER_DIR, env: { ...process.env, DATA_DIR: DATA } });
@@ -154,6 +162,25 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const wa = await wsMsgs(tokAl);
     const snap = wa.got.find((g) => g.type === 'initial_state');
     check(snap && snap.data.accounts.every((a: any) => a.id === idA) && snap.data.accounts.length === 1, 'ws alice only own: ' + JSON.stringify(snap && snap.data.accounts.map((a: any) => a.id)));
+    await sleep(100);
+    const held = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, ['bearer', tokAl], { origin: 'http://localhost:4000' });
+    const heldReady = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 1_000);
+      held.once('open', () => { clearTimeout(timer); resolve(true); });
+      held.once('error', () => { clearTimeout(timer); resolve(false); });
+    });
+    if (heldReady) {
+      const limited = await new Promise<{ code?: number; error?: boolean }>((resolve) => {
+        const second = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, ['bearer', tokAl], { origin: 'http://localhost:4000' });
+        const timer = setTimeout(() => { second.close(); resolve({}); }, 1_000);
+        second.once('unexpected-response', (_request, response) => { clearTimeout(timer); resolve({ code: response.statusCode }); });
+        second.once('error', () => { clearTimeout(timer); resolve({ error: true }); });
+      });
+      check(limited.code === 503 || limited.error === true, 'ws per-user limit');
+      held.close();
+    } else {
+      check(false, 'ws limit fixture connection failed');
+    }
     const wn = await wsMsgs('bogus'); check(wn.code === 401 || wn.err, 'ws bad token rejected ' + wn.code);
     const wadm = await wsMsgs(tokA); const sn2 = wadm.got.find((g) => g.type === 'initial_state'); check(sn2 && sn2.data.accounts.length === 2, 'ws admin sees 2');
     // 9. đổi mật khẩu thu hồi phiên khác
