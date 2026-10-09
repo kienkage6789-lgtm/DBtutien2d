@@ -43,7 +43,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Status indicator */}
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-xs">
             <Radio className={`w-3.5 h-3.5 ${isConnected ? 'text-emerald-400 animate-pulse' : 'text-rose-500'}`} />
             <span className={isConnected ? 'text-emerald-400 font-medium' : 'text-rose-400 font-medium'}>
@@ -59,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               hidden
               onClick={onStartAll}
