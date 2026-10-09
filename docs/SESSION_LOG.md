@@ -1,5 +1,13 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — Chạy live proxy thật (bước 3 hệ thống người dùng)
+
+Proxy SOCKS5 có xác thực (HTTP thử trước và thất bại; thông tin xác thực không ghi vào repo, lưu mã hóa trong DB). Kiểm tra qua proxy: Supabase + bắt tay WebSocket game `ok`, ~3,8 s. Sửa bộ kiểm tra: `/auth/v1/health` thật trả 401 khi thiếu khóa nên chỉ coi 5xx là hỏng.
+
+Chạy bot thật qua proxy (tài khoản của chủ dự án, ~28 s, chốt tự dừng khi `hurtCount` tăng): `start` 200, `IN_GAME` ở `tan_vien` sau ~8,9 s, `hurtCount` 0, dừng sạch; vitals/HP chưa nhận trong cửa sổ ngắn này (chưa kết luận). Fail-closed thật: proxy tắt → `409 PROXY_DISABLED`; proxy trỏ cổng đóng → `503 PROXY_UNAVAILABLE` sau ~3 s, tài khoản vẫn `stopped/DISCONNECTED`. Sau thử: proxy bật lại, KHÔNG gán cho tài khoản nào, bot dừng.
+
+Chưa xác minh: chạy lâu/nhiều tài khoản qua proxy, độ trễ ảnh hưởng nhịp bot (`latencyMs` báo 0 = chưa đo), game có để ý đổi IP, SOCKS5 của `undici` còn ở mức thử nghiệm.
+
 ## 2026-10-09 — BƯỚC 3 multi-user: proxy theo account, fail-closed (offline)
 
 Đã đọc `docs/PROMPT_MULTI_USER_STEP3.md` và triển khai trong phạm vi offline: thêm bảng `proxies` và `game_accounts.proxy_id`; URL proxy mã hóa AES-256-GCM, không đọc/ghi đường legacy; parser hỗ trợ HTTP/HTTPS/SOCKS5/SOCKS5h, bắt buộc port, chặn control/độ dài/private-host mặc định và redaction. Thêm transport dùng undici cho fetch, agent cho WebSocket, stable proxy error codes và đóng transport; SupabaseAuth nhận fetch injectable; VendorRunner truyền transport cho auth và mọi reconnect socket, đóng khi stop.
