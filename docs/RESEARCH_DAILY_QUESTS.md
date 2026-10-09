@@ -175,3 +175,24 @@ Bài học áp dụng: đích đi bộ tới cây là `(prop.x, prop.y + 16)` (s
 Chưa đo: khi cây bị người khác chặt (`hidden`), ngưỡng khoảng cách chính xác, giới hạn 3 lượt/ngày ở server.
 
 Triển khai offline 2026-10-09: `daily-quests.ts` và `vendor-runner.ts` đã hỗ trợ `truc_gia` theo kết quả đo trên; không xem dòng này là xác minh live mới. `duoc_moc` và `linh_chi` giữ nguyên hành vi đã triển khai.
+
+---
+
+## 12. KẾT QUẢ ĐO LIVE — việc `cau_ca` (2026-10-09, `duoc_vien`)
+
+Đo qua `quest-probe` (thêm `fish`, `props` tìm cả `interactables`, `status` có `ca`/`fishing`). Hurt 0.
+
+Định nghĩa client: `cau_ca` loại `fishing`, `need` 3, `itemIds` `ca_song` và `linh_ngu` (cá bất kỳ), thưởng 4 Dược Công + 30 Linh Thạch. `seedQuestComplete()` cho việc câu cá là "số cá trong túi (`ca_song` + `linh_ngu`) ≥ 3"; `completeSeedQuest` lấy cá theo thứ tự `itemIds` (cá thường trước).
+
+| Bước | Điều kiện | Kết quả (gói server) |
+|---|---|---|
+| `seed.start cau_ca` | cách Đại Phu 41 px | `ack {ok:true, toast:"Đã nhận việc của Đại Phu"}` + `state`; `daily.cau_ca = {day, n:1}` |
+| `seed.complete` với cá CÓ SẴN trong túi (28 con từ các ngày trước), không câu | cách Đại Phu ~41 px | `ack {ok:true, toast:"Đã báo công việc vặt — nhận Dược Công"}` + `state`; Linh Thạch 1405 → 1435 (+30), Dược Công 26 → 30 (+4), cá 28 → 25 (tiêu 3 cá thường) |
+| Câu thử từ xa | cách hồ ~240 px | sau 4,5 s chờ phía client: `ack {ok:false, why:"không đứng cạnh mặt nước"}` + `state {reason:"fishing.catch:refused"}` |
+| Câu ở bờ hồ | đứng cách prop hồ 19 px (581,512), ô nước trong ±3 ô | mỗi lần: client chờ 3–6 s (`Fishing.waitTime`) rồi tự gửi `fishing.catch`; `ack {ok:true, itemId}` (bắt được cá, kho +1) hoặc `ack {ok:true, missed:true}` ("cá rỉa mất mồi", kho không đổi) + `state {reason:"fishing.catch"}`; 5 lần câu: 3 được, 2 hụt (tỉ lệ server ≈ 60% mẫu nhỏ, không phải 0,8 của client) |
+
+Điểm câu ở `duoc_vien` (cùng map với Đại Phu): `interactables` `ho_bich_thuy_cong` ("Hồ Bích Thuỷ", prop (592,528), `r` 50) và `suoi_duoc_coc` ("Suối Dẫn Thuỷ", (1040,400), `r` 44, chưa đo); client bật câu bằng `SceneWorld.fishing = { t: 0, duration, bobX, bobY, waterName, prop, auto }` (hàm `In(prop)` không xuất ra ngoài; đã bắt chước trong `quest-probe` `fish`: dừng nhân vật, `Player.stand`, phao ở ô `water` gần nhất trong ±3 ô quanh nhân vật, nếu không có thì dưới chân).
+
+Kết luận: việc `cau_ca` KHÔNG bắt buộc phải câu nếu túi đã có ≥ 3 cá (tiêu 3 cá thường mỗi lượt); khi túi thiếu cá phải tới bờ hồ (≤ ~19 px đã đo là được; xa 240 px bị từ chối) và câu lặp tới đủ, kết quả mỗi lần do server quyết (có thể hụt).
+
+Chưa đo: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, giới hạn 3 lượt/ngày ở server, hành vi khi túi đầy.

@@ -1,5 +1,21 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-09 — Đo live việc `cau_ca` (câu cá) và chuẩn bị triển khai
+
+Chưa có mã triển khai `cau_ca` trong commit này: chỉ có phần đo, thăm dò và tài liệu; phần triển khai đã giao Codex (`docs/PROMPT_DAILY_CAU_CA.md`), sẽ nghiệm thu và commit riêng.
+
+Đo live (`quest-probe`; kết quả đầy đủ ở docs/RESEARCH_DAILY_QUESTS.md mục 12), hurt 0:
+- `seed.start cau_ca` ở 41 px thành công (`n = 1`).
+- Túi đã có 28 cá (`ca_song` + `linh_ngu`) từ các ngày trước nên `seed.complete` thành công NGAY, không cần câu: +30 Linh Thạch, +4 Dược Công, tiêu 3 cá thường (28 → 25). Việc câu cá chỉ cần khi túi thiếu cá.
+- Câu thử từ xa (~240 px): `ack {ok:false, why:"không đứng cạnh mặt nước"}` + `state {reason:"fishing.catch:refused"}`. Câu ở bờ hồ (cách prop `ho_bich_thuy_cong` 19 px): 5 lần, mỗi lần client chờ 3–6 s rồi tự gửi `fishing.catch`; 3 lần `ack {ok:true, itemId}` (được cá), 2 lần `ack {ok:true, missed:true}` (cá rỉa mất mồi); cá 25 → 28.
+- Điểm câu `ho_bich_thuy_cong` (prop (592,528)) và `suoi_duoc_coc` ((1040,400), chưa đo) đều ở `duoc_vien`, nằm trong `interactables` của map (không nằm trong `props`); toạ độ suy từ `MapData` cho interactables là tâm ô (`y = ty*TILE + TILE/2`), khác prop thường (`y = (ty+1)*TILE`).
+
+Thay đổi mã trong commit: chỉ phần thăm dò `quest-probe` (`vendor-runner.ts`): `fish` (bắt chước `In(prop)` của client: đặt `SceneWorld.fishing`), `status` thêm `ca`/`fishing`, `props` tìm cả `interactables` và hai điểm câu.
+
+Trạng thái hôm nay (2026-10-09): đã dùng `linh_chi` 1/3, `truc_gia` 2/3, `cau_ca` 1/3 lượt; `duoc_moc` 0/3; điểm danh chưa làm. Cá trong túi 28.
+
+Chưa xác minh: ngưỡng khoảng cách chính xác tới mặt nước, `suoi_duoc_coc`, `linh_ngu`, túi đầy, giới hạn 3 lượt/ngày ở server; `ho_tong_chau` và `dai_hoi` chưa đo.
+
 ## 2026-10-09 — `truc_gia` trong nhiệm vụ hằng ngày: đo live, triển khai, chạy thử live qua dashboard
 
 Đo live chu trình `truc_gia` (docs/RESEARCH_DAILY_QUESTS.md mục 11) rồi giao Codex triển khai (đi theo map trước, liệt kê trúc từ map đã tải, chặt từng cây bằng `startChopping(prop, mapId)`, theo dõi `activeCollectedIds`, áp sát lại tối đa 3 lần rồi `CHOP_NO_PROGRESS`, tiếp tục việc dở). Nghiệm thu: build 3 package pass; test web 33; `daily-quests` 24 (có 1 test Codex fail do fixture: fake `completeSeedQuest` cấp thưởng `duoc_moc` 20/3 cho mọi việc không phải `linh_chi`; thưởng thật của `truc_gia` là 15 Linh Thạch + 1 Dược Công đã đo, kỳ vọng của test đúng, đã sửa fake), `vendor-runner` 19 (6 lần chạy ổn định), các test khác pass.

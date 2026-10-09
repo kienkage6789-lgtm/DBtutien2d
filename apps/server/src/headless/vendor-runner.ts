@@ -1439,6 +1439,8 @@ export class VendorRunner {
         duocCong: typeof P.Progress?.duocCong === 'number' ? P.Progress.duocCong : null,
         namLinhChi: typeof P.Inventory?.count === 'function' ? P.Inventory.count('nam_linh_chi') : null,
         canhKho: typeof P.Inventory?.count === 'function' ? P.Inventory.count('canh_kho') : null,
+        ca: typeof P.Inventory?.count === 'function' ? P.Inventory.count('ca_song') + P.Inventory.count('linh_ngu') : null,
+        fishing: !!P.SceneWorld?.fishing,
         chopping: !!P.SceneWorld?.chopping,
         drops: Array.isArray(P.SceneWorld?.drops)
           ? P.SceneWorld.drops.slice(0, 12).map((drop: Record<string, unknown>) => ({
@@ -1477,10 +1479,10 @@ export class VendorRunner {
       case 'harvest': P.Gateway.cmd('resource.harvest', { propId: safeId(params.propId) }, cb('resource.harvest')); result = { sent: true }; break;
       case 'props': {
         const map = P.SceneWorld?.map;
-        const all = [...(map?.props ?? []), ...(map?.flatProps ?? [])];
-        result = all.filter((prop: Record<string, unknown>) => prop.chopTask || prop.seedTask || prop.type === 'khu_board' || prop.type === 'npc' || prop.type === 'ling_chi_prop')
+        const all = [...(map?.props ?? []), ...(map?.flatProps ?? []), ...(map?.interactables ?? [])];
+        result = all.filter((prop: Record<string, unknown>) => prop.chopTask || prop.seedTask || prop.type === 'khu_board' || prop.type === 'npc' || prop.type === 'ling_chi_prop' || prop.id === 'ho_bich_thuy_cong' || prop.id === 'suoi_duoc_coc')
           .slice(0, 120).map((prop: Record<string, unknown>) => ({
-            id: prop.id, type: prop.type, task: prop.chopTask ?? prop.seedTask ?? null, hidden: !!prop.hidden,
+            id: prop.id, type: prop.type, title: prop.title ?? null, task: prop.chopTask ?? prop.seedTask ?? null, hidden: !!prop.hidden,
             x: Number.isFinite(prop.x) ? Math.round(Number(prop.x)) : null, y: Number.isFinite(prop.y) ? Math.round(Number(prop.y)) : null, r: prop.r ?? null,
           }));
         break;
@@ -1493,6 +1495,39 @@ export class VendorRunner {
         if (!prop) { result = { started: false, why: 'prop_not_found' }; break; }
         if (!P.SceneWorld.chopping || P.SceneWorld.chopping.prop !== prop) P.SceneWorld.chopping = { prop, swing: 0, t: 10 };
         result = { started: true };
+        break;
+      }
+      case 'fish': {
+        // Giống In(prop) của client: dừng nhân vật, tìm ô nước gần nhất (±3 ô) làm phao, đặt SceneWorld.fishing; vòng cập nhật của client
+        // lo chờ 3-6 s, gửi fishing.catch và xử lý kết quả.
+        const id = safeId(params.propId);
+        const world = P.SceneWorld;
+        const map = world?.map;
+        const prop = [...(map?.props ?? []), ...(map?.flatProps ?? []), ...(map?.interactables ?? [])].find((candidate: Record<string, unknown>) => candidate.id === id);
+        if (!prop || !P.Fishing) { result = { started: false, why: 'prop_not_found' }; break; }
+        if (world.fishing) { result = { started: false, why: 'already_fishing' }; break; }
+        player.stop?.();
+        P.Player?.stand?.(player);
+        player.state = 'idle';
+        const tile = Number(P.CONFIG?.TILE) || 32;
+        let bob: { x: number; y: number } | null = null;
+        let best = Infinity;
+        if (map?.groundName) {
+          const cx = Math.floor(player.x / tile);
+          const cy = Math.floor(player.y / tile);
+          for (let ty = Math.max(0, cy - 3); ty <= Math.min(map.height - 1, cy + 3); ty += 1) {
+            for (let tx = Math.max(0, cx - 3); tx <= Math.min(map.width - 1, cx + 3); tx += 1) {
+              if (map.groundName[ty * map.width + tx] !== 'water') continue;
+              const gx = tx * tile + tile / 2;
+              const gy = ty * tile + tile / 2;
+              const d = Math.hypot(Number(prop.x) - gx, Number(prop.y) - gy) + 0.25 * Math.hypot(player.x - gx, player.y - gy);
+              if (d < best) { best = d; bob = { x: gx, y: gy }; }
+            }
+          }
+        }
+        const duration = P.Fishing.waitTime();
+        world.fishing = { t: 0, duration, bobX: bob?.x ?? player.x, bobY: bob?.y ?? player.y, waterName: String(prop.title ?? prop.name ?? 'Bờ Nước'), prop, auto: false };
+        result = { started: true, duration: Math.round(duration * 10) / 10, waterNear: bob !== null };
         break;
       }
       case 'seed.collect': {
