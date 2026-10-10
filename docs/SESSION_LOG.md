@@ -1,5 +1,27 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-10 — ARCHITECTURE_V2 Bước 0a: số liệu hiệu năng theo bot
+
+Thay đổi: thêm `FrameMetrics` thuần với đồng hồ `performance.now()` tiêm được, vòng đệm cố định 600 khung, EMA, p95/max, tỷ lệ chiếm vòng lặp và reset theo vòng đời `VendorRunner`. Bọc callback khung bằng `try/finally`, không đổi nhịp hoặc logic khung. Thêm `ProcessMetrics` dùng `monitorEventLoopDelay` (20 ms), RSS/heap và số runner; bật khi server khởi chạy, tắt khi shutdown. Runtime account thêm `metrics` (runner dừng: `null`); `GET /api/admin/health` thêm `data.process`. Web sanitizer chuyển dữ liệu thiếu/sai kiểu thành `null`; thẻ admin hiển thị thời gian EMA, p95 và chiếm vòng lặp hoặc “chưa biết”. Cập nhật `CONTROL_PLANE_API.md`.
+
+Kiểm tra: lệnh gốc `corepack pnpm build` đầu tiên thất bại với `'pnpm' is not recognized as an internal or external command` do script con gọi `pnpm` không có trong PATH. Build toàn workspace sau đó pass khi dùng shim `pnpm.cmd` tạm và tạm thêm `--configLoader runner` vào script web để vượt lỗi sandbox `Cannot read directory ... Access is denied`; đã hoàn nguyên/xóa cả hai thay đổi tạm. Các build package riêng `@tutien2d/server`, `@tutien2d/core-client`, web `tsc` và Vite với `--configLoader runner` cũng pass. `corepack pnpm --filter @tutien2d/web test` lỗi quyền đọc config; Vitest chạy với `--configLoader runner` pass 48/48 (10 files). Test server chuẩn bị PowerShell từ chối `npx.ps1` do execution policy, còn `npx.cmd` lỗi Node `uv_os_get_passwd returned ENOMEM`; chạy `npx.cmd tsx --test` với preload tạm chỉ thay `os.userInfo` thì collector/process metrics pass 6/6, `vendor-runner.test.ts` pass 20/20 (có kiểm tra metrics tăng và lỗi frame vẫn được ném nguyên trạng) và `multi-user.e2e.test.ts` pass 1/1. Preload đã xóa.
+
+API e2e khởi động server test với `DATA_DIR` tạm, cổng động loopback, đăng nhập fixture admin và gọi `/api/admin/health`; khối `process` nhận được (không chứa định danh hay cấu hình): `{"eventLoopDelay":{"p50Ms":35.684351,"p99Ms":69.599231,"maxMs":69.599231},"rssBytes":94261248,"heapUsedBytes":25104784,"runningRunners":0}`. Cùng test xác nhận user thường nhận 403 cho health admin, account khác nhận 404, account đã dừng có `metrics:null`. Fault injection đổi chuyển đổi ns→ms từ chia 1.000.000 thành chia 1.000; test bắt lỗi với `p50Ms` 2000 thay vì 2. Đã khôi phục; test process pass lại 2/2. `git diff --check` pass.
+
+Lỗi đo đã kiểm chứng: histogram thô cộng chu kỳ lấy mẫu 20 ms nên Node rảnh vẫn báo p50 khoảng 31 ms, min khoảng 26 ms.
+Sửa `ProcessMetrics` trừ cùng `resolutionMs` khỏi p50/p99/max, kẹp tối thiểu 0; test giả xác nhận trừ/clamp, ns→ms và `null` khi chưa có mẫu.
+Kiểm tra phần sửa: process-metrics 3/3, `multi-user.e2e.test.ts` 1/1, `vendor-runner.test.ts` 20/20; fault injection bỏ phép trừ làm 2 test fail rồi đã khôi phục. `node_modules/.bin/tsc.cmd -p apps/server/tsconfig.json --noEmit` pass; `pnpm build`/`corepack pnpm build` không chạy hết vì `pnpm` không có PATH trong script lồng; test dùng preload tạm do `uv_os_get_passwd ... ENOMEM`, preload đã xóa.
+
+Chưa xác minh: chưa đo bot thật trên TV box (thuộc Bước 0b); event-loop/CPU/RAM từ e2e là một lần đo server test, không phải benchmark phần cứng. Không chạm game thật, không mở mạng ngoài, không đọc data/env secrets, không sửa vendor/auto-supervisor, không commit.
+
+## 2026-10-10 — Sắp xếp form thêm proxy theo màn hình hẹp
+
+Trong `ProxyTab`, chia form thành hai hàng: loại proxy + ô dán, rồi sức chứa có nhãn nhìn thấy được + nhãn tuỳ chọn + nút thêm. Ở màn hình dưới breakpoint `sm`, các trường xếp dọc; thêm chú thích định dạng nhận được và ưu tiên `scheme://`. Giữ nguyên API, `parseProxyLine`, màu sắc và trạng thái disabled của nút khi `working`.
+
+Lệnh/kiểm tra: `corepack pnpm build` không chạy hết vì script lồng nhau gọi `pnpm` không có trong PATH. `corepack pnpm --filter @tutien2d/web build` chạy được TypeScript (`tsc`) nhưng Vite mặc định bị `Access is denied` khi đọc đường dẫn ngoài workspace; build web hoàn tất với `corepack pnpm --filter @tutien2d/web exec vite build --configLoader runner`. `corepack pnpm --filter @tutien2d/web exec vitest run --configLoader runner` pass 46/46; build package `core-client` và `server` riêng pass. Server tạm dùng `DATA_DIR` trong `%TEMP%`, cổng 43127 và thông tin admin chỉ dành cho test; đăng nhập cục bộ và tạo hai proxy giả qua API đều trả 201, response chỉ có endpoint đã che thông tin xác thực và `hasAuth=true`. Không chạy checker/bot/game. Đã dừng server.
+
+Chưa xác minh: CUA không có browser nào khả dụng (`apps=[]`, `browsers=[]`; `iab` unavailable), nên không thể chụp/kiểm tra trực quan ở 1024, 768, 334 px hoặc gửi form qua UI. Thư mục dữ liệu tạm còn trên máy sau khi lệnh dọn bị policy chặn; server đã dừng. Không commit.
+
 ## 2026-10-10 — Sửa proxy SOCKS5 cho WebSocket và form nhập proxy
 
 Cài dependencies (`corepack pnpm install --frozen-lockfile`) rồi chạy được build/test thật. Kiểm tra 2 proxy SOCKS5 có xác thực của chủ dự án bằng `ProxyChecker`: cả hai `down` (`PROXY_CONNECT_FAILED`) dù TCP + xác thực + CONNECT tới host game qua SOCKS5 thủ công đều OK. Nguyên nhân: máy local phân giải `game.tutien2d.online` ra IPv6 Cloudflare trước; với `socks5://` agent WebSocket (`socks-proxy-agent`) gửi IP đó cho proxy, proxy không ra được IPv6 nên reset (`ECONNRESET` trước TLS). `socks5h://` (proxy tự phân giải) mở WebSocket được. Sửa trong `proxy-transport.ts`: agent WebSocket đổi `socks5://` thành `socks5h://` (fetch qua undici không bị lỗi này). Sau sửa cả hai proxy `ok`, ~3,7 s.

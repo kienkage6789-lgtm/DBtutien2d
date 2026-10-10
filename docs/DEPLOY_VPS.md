@@ -36,7 +36,7 @@ sudo install -o tutien2d -g tutien2d -m 0600 deploy/env.example /etc/tutien2d/en
 sudoedit /etc/tutien2d/env
 ```
 
-Đặt `HOST=127.0.0.1`, `TRUST_PROXY=1`, `PUBLIC_ORIGIN=https://...` đúng hostname thật và `ALLOWED_ORIGINS` không có `*`. Chọn `MAX_TOTAL_RUNNERS` sau khi soak; `0` chỉ có nghĩa là không đặt trần cứng. `MIN_FREE_MEM_MB=300` là cổng RAM tối thiểu cho runner mới, không dừng runner đang chạy.
+Đặt `HOST=127.0.0.1`, `TRUST_PROXY=<số hop proxy thật, 1..10; Nginx một mình = 1, Cloudflare + Nginx = 2>`, `PUBLIC_ORIGIN=https://...` đúng hostname thật và `ALLOWED_ORIGINS` không có `*`. Chọn `MAX_TOTAL_RUNNERS` sau khi soak; `0` chỉ có nghĩa là không đặt trần cứng. `MIN_FREE_MEM_MB=300` là cổng RAM tối thiểu cho runner mới, không dừng runner đang chạy.
 
 `AUTO_ASSIGN_PROXY=1` là mặc định để account mới được gán proxy enabled có tải thấp nhất; bật `REQUIRE_PROXY=1` nếu mọi account bắt buộc phải có proxy. `PROXY_CHECK_INTERVAL_MS=300000` và `PROXY_CHECK_TIMEOUT_MS=8000` điều khiển checker. `ALLOW_PRIVATE_PROXY=0` phải giữ nguyên trên VPS; chỉ bật tạm thời cho test local. Proxy được nhập và kiểm tra trong tab quản trị, URL có credential chỉ lưu mã hóa và không xuất hiện trong response/log.
 
@@ -79,7 +79,7 @@ sudo ufw deny 4000/tcp
 sudo ufw enable
 ```
 
-Sau HTTPS, kiểm tra `PUBLIC_ORIGIN`, Origin WebSocket và HSTS. HSTS chỉ xuất hiện khi `TRUST_PROXY=1` và request tới Node có `X-Forwarded-Proto: https`; HTTP thuần không nhận HSTS.
+Sau HTTPS, kiểm tra `PUBLIC_ORIGIN`, Origin WebSocket và HSTS. HSTS chỉ xuất hiện khi `TRUST_PROXY` ≥ 1 và request tới Node có `X-Forwarded-Proto: https`; HTTP thuần không nhận HSTS.
 
 ## 7. Theo dõi và cập nhật
 

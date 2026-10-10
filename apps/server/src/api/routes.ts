@@ -16,6 +16,7 @@ import { khuErrorResponse } from './khu-errors.js';
 import { dailyErrorResponse } from './daily-errors.js';
 import { entitlement } from '../security/entitlement.js';
 import { entitlementWatcher } from '../orchestrator/entitlement-runtime.js';
+import { processMetrics } from '../orchestrator/process-metrics.js';
 import { hasRunnerMemoryCapacity } from '../orchestrator/capacity.js';
 import { ApiRateLimiter } from '../security/http-hardening.js';
 import os from 'node:os';
@@ -403,6 +404,7 @@ apiRouter.get('/admin/health', requireAdmin, (_req: Request, res: Response) => {
       loadAverage: os.loadavg(),
       memoryAvailableMb: availableMemoryMb(availableBytes),
       runningRunners: runtimes.filter((runtime) => runtime.status === 'running').length,
+      process: processMetrics.snapshot(runtimes.filter((runtime) => runtime.status === 'running').length),
       runnerLimit: CONFIG.MAX_TOTAL_RUNNERS,
       databaseBytes: db.getDatabaseSizeBytes(),
       users: db.getUserCount(),

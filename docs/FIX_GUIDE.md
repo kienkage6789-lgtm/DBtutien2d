@@ -1506,3 +1506,21 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 2. [x] Form tab Proxy: droplist loại, ô dán nhiều dòng, nhận `host:port[:user:pass]`/`user:pass@host:port`/`scheme://`; có test `parseProxyLine`.
 3. [x] `pnpm build` pass, Vitest web 46/46, test proxy server pass.
 4. [ ] Chưa xác minh form trên trình duyệt thật và chạy bot lâu/nhiều tài khoản qua hai proxy này.
+
+## AD. Bố cục form thêm proxy responsive (2026-10-10)
+
+1. [x] `ProxyTab` xếp form hai hàng ở màn hình rộng, xếp dọc dưới breakpoint `sm`; sức chứa có nhãn nhìn thấy được, nhãn tuỳ chọn và nút không đè/cắt nhau theo bố cục.
+2. [x] Có chú thích bền dưới ô dán cho `host:port`, `host:port:user:pass`, `user:pass@host:port`, `scheme://...`, mỗi dòng một proxy và ưu tiên scheme rõ ràng; giữ nút disabled khi đang gửi.
+3. [x] TypeScript web, Vite build (dùng `--configLoader runner`), Vitest 46/46, build `core-client` và `server` riêng pass; API local tạm tạo 2 proxy giả trả 201, không lộ thông tin xác thực.
+4. [~] `corepack pnpm build` không chạy hết do script con gọi `pnpm` không có PATH; browser CUA không khả dụng nên chưa chụp/kiểm tra trực quan viewport 1024/768/334 px hoặc submit bằng UI. Server test đã dừng; thư mục dữ liệu tạm còn lại vì lệnh dọn bị policy chặn.
+
+## AE. ARCHITECTURE_V2 Bước 0a — metrics hiệu năng runtime (2026-10-10)
+
+1. [x] Collector frame dùng đồng hồ tiêm, vòng đệm 600 mẫu, EMA/p95/max/tỷ lệ chiếm vòng lặp; reset khi runner start/stop và `finally` đóng khung.
+2. [x] Process metrics đo event-loop p50/p99/max, RSS/heap và runner count; bật khi server chạy, tắt khi shutdown.
+3. [x] Runtime account có `metrics` theo quyền owner/admin; runner dừng trả `null`; admin health thêm `process`; e2e xác nhận health 403 với user thường và account người khác 404.
+4. [x] Web type/sanitizer và admin card hiển thị ms/khung, p95, phần trăm chiếm; dữ liệu thiếu/sai kiểu hiển thị “chưa biết”.
+5. [x] Unit/e2e: collector/process 6/6, `vendor-runner.test.ts` 20/20 (metrics tăng; `finally` vẫn đóng khung và giữ nguyên lỗi), `multi-user.e2e.test.ts` 1/1; web Vitest 48/48. Fault injection đơn vị ns→ms bị test bắt và đã khôi phục.
+6. [~] Build toàn workspace pass khi dùng shim `pnpm.cmd` và `--configLoader runner` tạm do PATH/quyền sandbox; các thay đổi tạm đã hoàn nguyên. Web Vitest pass với cùng loader; test server cần preload tạm vì `uv_os_get_passwd ... ENOMEM`. Lệnh gốc không qua được hạn chế môi trường, xem `SESSION_LOG.md`.
+7. [ ] Chưa đo bot thật trên TV box (Bước 0b); số liệu smoke server cục bộ không phải benchmark phần cứng.
+8. [x] Hiệu chỉnh `eventLoopDelay` trừ `resolutionMs` khỏi p50/p99/max và clamp 0; test histogram giả kiểm tra trừ, clamp, ns→ms, `null` khi chưa có mẫu. Fault injection bỏ phép trừ làm 2 test fail; đã phục hồi.

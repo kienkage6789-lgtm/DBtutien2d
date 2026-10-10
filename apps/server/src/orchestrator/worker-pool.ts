@@ -14,6 +14,7 @@ import { hasRunnerMemoryCapacity } from './capacity.js';
 import { createProxyTransport, type ProxyTransport } from '../network/proxy-transport.js';
 import { ProxyChecker } from '../network/proxy-checker.js';
 import { parseProxyUrl } from '../network/proxy-url.js';
+import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 
 export type { RuntimeEngine } from '../headless/engine-selection.js';
 
@@ -83,6 +84,7 @@ export interface AccountRuntimeInfo {
   dailyStatus: DailyStatus | null;
   latencyMs: number;
   activity: string;
+  metrics: FrameMetricsSnapshot | null;
   soKhu: number | null;
   khuList: VendorRunnerSnapshot['khuList'];
   mapContext: MapDataContext;
@@ -657,6 +659,7 @@ export class WorkerPool {
       dailyStatus: null,
       latencyMs: 0,
       activity: 'idle',
+      metrics: null,
       soKhu: null,
       khuList: null,
       mapContext: emptyMapContext(),
@@ -750,6 +753,7 @@ export class WorkerPool {
       dailyStatus: snapshot.dailyStatus,
       latencyMs: 0,
       activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
+      metrics: runner.getFrameMetrics(),
       soKhu: snapshot.soKhu,
       khuList: snapshot.khuList,
       mapContext,

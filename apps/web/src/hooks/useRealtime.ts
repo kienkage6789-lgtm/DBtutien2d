@@ -33,6 +33,22 @@ export function sanitizeAccountOwner(value: unknown): { ownerId?: string | null;
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+export function sanitizeFrameMetrics(value: unknown): NonNullable<AccountRuntime['metrics']> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (!Number.isInteger(item.frames) || Number(item.frames) < 0) return null;
+  const nullableMetric = (candidate: unknown): number | null =>
+    candidate === null || isFiniteNumber(candidate) && candidate >= 0 ? candidate as number | null : null;
+  return {
+    frames: Number(item.frames),
+    avgMs: nullableMetric(item.avgMs),
+    p95Ms: nullableMetric(item.p95Ms),
+    maxMs: nullableMetric(item.maxMs),
+    busyRatio: nullableMetric(item.busyRatio),
+    windowMs: nullableMetric(item.windowMs),
+  };
+}
+
 type EntityRow = { id: string; x: number; y: number; [key: string]: unknown };
 function sanitizeEntities(value: unknown): EntityRow[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -232,6 +248,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   if (!previous && (typeof payload.status !== 'string' || !ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status']))) return null;
 
   const next = { ...(previous ?? {} as AccountRuntime), id: payload.id } as AccountRuntime;
+  next.metrics = sanitizeFrameMetrics(payload.metrics);
   if (!previous) next.hasProxy = payload.hasProxy === true;
   const owner = sanitizeAccountOwner(payload);
   if (owner) {

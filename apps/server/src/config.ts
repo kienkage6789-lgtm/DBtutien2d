@@ -43,7 +43,10 @@ const HOST = process.env.HOST || '127.0.0.1';
 const API_TOKEN = (process.env.API_TOKEN || '').trim();
 const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
+// Số hop reverse proxy tin cậy (1..10). `true` = 1 hop; 0/trống/giá trị khác = tắt. Chỉ đặt đúng số hop thật (vd Cloudflare + Nginx = 2).
+const TRUST_PROXY_RAW = (process.env.TRUST_PROXY || '').trim().toLowerCase();
+const TRUST_PROXY_HOPS = TRUST_PROXY_RAW === 'true' ? 1 : /^\d+$/.test(TRUST_PROXY_RAW) && Number(TRUST_PROXY_RAW) >= 1 && Number(TRUST_PROXY_RAW) <= 10 ? Number(TRUST_PROXY_RAW) : 0;
+const TRUST_PROXY = TRUST_PROXY_HOPS > 0;
 const ALLOW_LEGACY_API_TOKEN = process.env.ALLOW_LEGACY_API_TOKEN === '1';
 const parseNonNegativeInt = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
@@ -93,7 +96,7 @@ if (!isLoopback(HOST) && API_TOKEN.length < 32) {
   throw new Error('HOST không phải loopback thì bắt buộc đặt API_TOKEN >= 32 ký tự.');
 }
 if (!isLoopback(HOST) && !TRUST_PROXY) {
-  throw new Error('HOST ngoài loopback phải chạy sau reverse proxy HTTPS và đặt TRUST_PROXY=1.');
+  throw new Error('HOST ngoài loopback phải chạy sau reverse proxy HTTPS và đặt TRUST_PROXY=<số hop proxy>.');
 }
 if (!ADMIN_USERNAME || ADMIN_USERNAME.length > 64 || ADMIN_PASSWORD.length < 6) {
   throw new Error('ADMIN_USERNAME không rỗng/tối đa 64 ký tự và ADMIN_PASSWORD phải có ít nhất 6 ký tự.');
@@ -106,6 +109,7 @@ export const CONFIG = {
   ADMIN_USERNAME,
   ADMIN_PASSWORD,
   TRUST_PROXY,
+  TRUST_PROXY_HOPS,
   ALLOW_LEGACY_API_TOKEN,
   MAX_TOTAL_RUNNERS,
   MIN_FREE_MEM_MB,

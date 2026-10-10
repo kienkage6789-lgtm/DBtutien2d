@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AdminUser } from '../types';
-import { auditActionLabel, filterAdminUsers, filterAuditLogs, formatAdminExpiry, generateRandomPassword, getAdminActionPolicy } from './admin';
+import { auditActionLabel, filterAdminUsers, filterAuditLogs, formatAdminExpiry, formatFrameMetrics, generateRandomPassword, getAdminActionPolicy } from './admin';
 
 const user = (overrides: Partial<AdminUser> = {}): AdminUser => ({
   id: 'user-1', username: 'alice', role: 'user', status: 'active', expiresAt: 10_000,
@@ -10,6 +10,11 @@ const user = (overrides: Partial<AdminUser> = {}): AdminUser => ({
 });
 
 describe('admin dashboard helpers', () => {
+  it('formats frame metrics and shows unknown when any displayed value is missing', () => {
+    expect(formatFrameMetrics({ frames: 10, avgMs: 1.24, p95Ms: 2.34, maxMs: 3, busyRatio: 0.125, windowMs: 100 })).toBe('Khung: 1.2 ms (p95 2.3) · chiếm 12.5%');
+    expect(formatFrameMetrics(null)).toBe('Khung: chưa biết');
+    expect(formatFrameMetrics({ frames: 10, avgMs: null, p95Ms: 2, maxMs: 3, busyRatio: 0.2, windowMs: 100 })).toBe('Khung: chưa biết');
+  });
   it('formats admin, missing and expired entitlement without inventing a date', () => {
     expect(formatAdminExpiry(user({ role: 'admin', expiresAt: null })).label).toBe('Admin — không hết hạn');
     expect(formatAdminExpiry(user({ expiresAt: null, entitlement: { state: 'none', expiresAt: null, remainingMs: null } })).label).toBe('Chưa cấp');

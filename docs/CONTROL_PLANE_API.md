@@ -80,7 +80,7 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `GET` | `/api/system/status` | Admin nhận uptime/memory/số account/running; user thường chỉ nhận số liệu account của mình |
-| `GET` | `/api/admin/health` | Admin xem uptime, Node, RSS/heap, load average, RAM khả dụng, runner/cap, kích thước SQLite, số user/account và backup gần nhất; không trả path/env/secret |
+| `GET` | `/api/admin/health` | Admin xem uptime, Node, RSS/heap, load average, RAM khả dụng, runner/cap, kích thước SQLite, số user/account và backup gần nhất; `process` bổ sung độ trễ vòng lặp, RSS/heap bytes và runner đang chạy; không trả path/env/secret |
 | `GET` | `/api/accounts` | Runtime snapshot theo owner; admin nhận mọi account |
 | `GET` | `/api/accounts/:id` | Runtime snapshot một account |
 | `POST` | `/api/accounts` | Verify và tạo account |
@@ -116,7 +116,9 @@ Gate start/restart/auto/start-all kiểm tra `MAX_TOTAL_RUNNERS` và `MIN_FREE_M
 
 Biến triển khai chính: `HOST`, `PORT`, `DATA_DIR`, `BACKUP_DIR`, `TRUST_PROXY`, `PUBLIC_ORIGIN`, `MAX_TOTAL_RUNNERS`, `MIN_FREE_MEM_MB`, `BACKUP_KEEP`, các biến rate-limit/WS ở trên. `BACKUP_DIR` mặc định là `DATA_DIR/backups`.
 
-Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters và packet/error/memory telemetry. `ownerId`/`ownerUsername` chỉ xuất hiện trong phạm vi account mà principal được phép xem; user thường chỉ nhận account của mình. Dữ liệu chưa biết là `null`, không thay bằng 0.
+Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters, packet/error/memory telemetry và `metrics` theo từng account. `metrics` có `frames`, `avgMs` (EMA), `p95Ms`, `maxMs`, `busyRatio` và `windowMs`; khi runner chưa chạy toàn trường này là `null`, còn các trị số trong lúc chưa có mẫu cũng không được thay bằng 0. `busyRatio` là tổng thời gian xử lý khung chia cho thời gian thực của cửa sổ trượt; giá trị 0.25 tương ứng khoảng 25% một lõi trong cửa sổ đó. Đây là số liệu runtime, không đo CPU hệ điều hành theo từng bot.
+
+`GET /api/admin/health` thêm `data.process`: `eventLoopDelay` gồm `p50Ms`, `p99Ms`, `maxMs` từ `monitorEventLoopDelay`, đã trừ chu kỳ lấy mẫu 20 ms và kẹp tối thiểu 0; sàn đo còn cộng độ phân giải bộ định thời của hệ điều hành nên tiến trình rảnh vẫn có thể báo vài ms. `rssBytes`, `heapUsedBytes` là bộ nhớ toàn tiến trình; `runningRunners` là số runner hiện chạy. Độ trễ trả `null` trước khi histogram có mẫu. Cùng xem số liệu tiến trình và từng bot để phân biệt tải tổng với thời gian chiếm vòng lặp của mỗi runner; không suy ra số bot tối đa chỉ từ một cửa sổ ngắn. API account và WS chỉ đưa metrics cho account mà principal được phép xem (chủ sở hữu hoặc admin); `/api/admin/health` vẫn chỉ admin.
 
 ## Danh sách và đổi khu
 

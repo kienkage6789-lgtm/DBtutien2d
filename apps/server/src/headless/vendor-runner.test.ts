@@ -188,6 +188,18 @@ function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRun
   });
 }
 
+test('VendorRunner closes a measured frame in finally and preserves a frame exception', async () => {
+  const runner = createKhuRunner();
+  const internals = runner as unknown as { frame: () => void; runMeasuredFrame: () => void };
+  internals.frame = () => {};
+  assert.equal(internals.runMeasuredFrame(), undefined);
+  const expected = new Error('fixture frame error');
+  internals.frame = () => { throw expected; };
+  assert.throws(() => internals.runMeasuredFrame(), (error) => error === expected);
+  assert.equal(runner.getFrameMetrics().frames, 2, 'normal and throwing frames are both closed');
+  await runner.stop();
+});
+
 test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, and stops cleanly', async () => {
   FakeSocket.instances = [];
   FakeSocket.moves = [];
@@ -214,6 +226,9 @@ test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, a
     assert.ok(started.packets.incoming.state >= 1);
     assert.ok(started.packets.outgoing.hello >= 1);
     assert.ok(started.frames > 0);
+    const measured = runner.getFrameMetrics();
+    assert.ok(measured.frames > 0, 'frame metrics must advance while runner is active');
+    assert.ok(measured.avgMs !== null && measured.p95Ms !== null && measured.maxMs !== null);
 
     const first = FakeSocket.instances[0];
     assert.ok(first);
@@ -229,6 +244,7 @@ test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, a
     const stopped = runner.getSnapshot();
     assert.equal(stopped.lifecycle, 'stopped');
     assert.equal(stopped.autoRequested, false, 'stop must clear the Auto request');
+    assert.equal(runner.getFrameMetrics().avgMs, null, 'stop resets frame metrics');
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(runner.getSnapshot().frames, beforeStop, 'stop must clear the frame timer');
   } finally {

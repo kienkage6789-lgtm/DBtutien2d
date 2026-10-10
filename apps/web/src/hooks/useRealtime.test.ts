@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeAccountOwner, sanitizeDaily, sanitizeDailyStatus, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
+import { mergeAccountRuntime, sanitizeAccountOwner, sanitizeDaily, sanitizeDailyStatus, sanitizeFrameMetrics, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -143,5 +143,17 @@ describe('account ownership sanitizer', () => {
     expect(sanitizeAccountOwner({ ownerId: 'user-1', ownerUsername: 'alice' })).toEqual({ ownerId: 'user-1', ownerUsername: 'alice' });
     expect(sanitizeAccountOwner({ ownerId: 42 })).toBeUndefined();
     expect(sanitizeAccountOwner({ ownerUsername: '' })).toBeUndefined();
+  });
+});
+
+describe('frame metrics sanitizer', () => {
+  it('normalizes missing or malformed values to null and rejects malformed envelopes', () => {
+    expect(sanitizeFrameMetrics({ frames: 3, avgMs: 1.5, p95Ms: '2', maxMs: -1, busyRatio: 0.5, windowMs: null })).toEqual({
+      frames: 3, avgMs: 1.5, p95Ms: null, maxMs: null, busyRatio: 0.5, windowMs: null,
+    });
+    expect(sanitizeFrameMetrics(undefined)).toBeNull();
+    expect(sanitizeFrameMetrics({ frames: '3', avgMs: 1 })).toBeNull();
+    expect(mergeAccountRuntime(undefined, { ...base, metrics: { frames: 1, avgMs: 1, p95Ms: 1, maxMs: 1, busyRatio: 0.5, windowMs: 2 } })?.metrics?.frames).toBe(1);
+    expect(mergeAccountRuntime(undefined, { ...base })?.metrics).toBeNull();
   });
 });

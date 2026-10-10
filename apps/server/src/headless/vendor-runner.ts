@@ -25,6 +25,7 @@ import {
   type DailyStatus,
 } from './daily-quests.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
+import { FrameMetrics, type FrameMetricsSnapshot } from './frame-metrics.js';
 import {
   cooldownSecondsFromToast,
   KHU_CHANGE_TIMEOUT_MS,
@@ -295,6 +296,7 @@ export class VendorRunner {
   private readonly dailyQuests: DailyQuests;
   private supervisorUnsubscribe: (() => void) | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly frameMetrics = new FrameMetrics(() => performance.now());
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFrameAt = 0;
   private startedAt = 0;
@@ -370,9 +372,11 @@ export class VendorRunner {
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
+  public getFrameMetrics(): FrameMetricsSnapshot { return this.frameMetrics.snapshot(); }
 
   public async start(): Promise<void> {
     if (this.lifecycle !== 'stopped' && this.lifecycle !== 'error') return;
+    this.frameMetrics.reset();
     this.stopRequested = false;
     this.transportClosed = false;
     this.lifecycle = 'starting';
@@ -1237,8 +1241,17 @@ export class VendorRunner {
   private startLoop(): void {
     if (this.loopTimer) return;
     this.lastFrameAt = Date.now();
-    this.loopTimer = setInterval(() => this.frame(), this.options.loopIntervalMs);
+    this.loopTimer = setInterval(() => this.runMeasuredFrame(), this.options.loopIntervalMs);
     (this.loopTimer as NodeJS.Timeout).unref?.();
+  }
+
+  private runMeasuredFrame(): void {
+    this.frameMetrics.begin();
+    try {
+      this.frame();
+    } finally {
+      this.frameMetrics.end();
+    }
   }
 
   private frame(): void {
@@ -1866,6 +1879,7 @@ export class VendorRunner {
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     if (this.loopTimer) clearInterval(this.loopTimer);
     this.loopTimer = null;
+    this.frameMetrics.reset();
     this.clearReconnectTimer();
     this.disconnectTransportOnly();
     this.env?.dispose();

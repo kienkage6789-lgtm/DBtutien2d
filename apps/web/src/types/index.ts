@@ -164,6 +164,15 @@ export interface KhuInfo {
   list: KhuList | null;
 }
 
+export interface FrameMetricsSnapshot {
+  frames: number;
+  avgMs: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+  busyRatio: number | null;
+  windowMs: number | null;
+}
+
 export interface AccountRuntime {
   id: string;
   ownerId: string | null;
@@ -171,6 +180,7 @@ export interface AccountRuntime {
   accountName: string;
   engine: 'vendor';
   vendor?: VendorRuntimeSnapshot;
+  metrics?: FrameMetricsSnapshot | null;
   status: 'running' | 'stopped' | 'error';
   connection: string;
   authError: string | null;

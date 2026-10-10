@@ -214,7 +214,8 @@ export async function runPreflight({ rootDirectory = REPO_ROOT, smoke = false, v
 
   const host = process.env.HOST || '127.0.0.1';
   results.push(result(isLoopbackHost(host) ? 'PASS' : 'FAIL', 'HOST', isLoopbackHost(host) ? 'loopback' : 'phải là loopback'));
-  results.push(result(process.env.TRUST_PROXY === '1' ? 'PASS' : 'FAIL', 'TRUST_PROXY', process.env.TRUST_PROXY === '1' ? 'đã bật hop 1' : 'phải đặt 1'));
+  const trustHops = /^\d+$/.test(process.env.TRUST_PROXY || '') ? Number(process.env.TRUST_PROXY) : (process.env.TRUST_PROXY === 'true' ? 1 : 0);
+  results.push(result(trustHops >= 1 && trustHops <= 10 ? 'PASS' : 'FAIL', 'TRUST_PROXY', trustHops >= 1 && trustHops <= 10 ? `đã bật ${trustHops} hop` : 'phải đặt số hop proxy thật (1..10)'));
   let publicOrigin = false;
   try { publicOrigin = ['http:', 'https:'].includes(new URL(process.env.PUBLIC_ORIGIN || '').protocol); } catch { publicOrigin = false; }
   results.push(result(publicOrigin ? 'PASS' : 'FAIL', 'PUBLIC_ORIGIN', publicOrigin ? 'đã đặt' : 'phải là origin http/https'));

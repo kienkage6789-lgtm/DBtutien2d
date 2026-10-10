@@ -75,6 +75,11 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const tokBo = (await j('/api/auth/login', 'POST', { username: 'bob', password: 'bob123' })).b.token;
     const adminHealth = await j('/api/admin/health', 'GET', null, tokA);
     check(adminHealth.s === 200 && typeof adminHealth.b.data?.nodeVersion === 'string', 'admin health available');
+    check(adminHealth.s === 200 && typeof adminHealth.b.data?.process?.rssBytes === 'number'
+      && typeof adminHealth.b.data?.process?.heapUsedBytes === 'number'
+      && typeof adminHealth.b.data?.process?.runningRunners === 'number'
+      && Object.prototype.hasOwnProperty.call(adminHealth.b.data?.process?.eventLoopDelay ?? {}, 'p50Ms'), 'admin health process metrics');
+    console.log(`admin health process metrics: ${JSON.stringify(adminHealth.b.data.process)}`);
     check(JSON.stringify(adminHealth.b).includes('DATA_DIR') === false && JSON.stringify(adminHealth.b).includes('ENCRYPTION_SECRET') === false, 'admin health no secret config');
     check((await j('/api/admin/health', 'GET', null, tokAl)).s === 403, 'user admin health 403');
     check(alice && alice.maxBots === 3 && bob.maxBots === 5, 'maxBots default/override ' + (alice && alice.maxBots));
@@ -173,6 +178,7 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const aliceRuntime = adminRuntime.find((item: any) => item.id === idA);
     const aliceOwnRuntime = (await j('/api/accounts', 'GET', null, tokAl)).b.data[0];
     check(aliceRuntime?.ownerUsername === 'alice' && aliceOwnRuntime?.ownerUsername === 'alice', 'runtime owner username scope');
+    check(aliceRuntime?.metrics === null && aliceOwnRuntime?.metrics === null, 'stopped account frame metrics are null for admin and owner');
     const routes: Array<[string, string, unknown?]> = [['GET', ''], ['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['POST', '/auto/start', {}], ['POST', '/auto/stop'], ['GET', '/khu'], ['POST', '/khu', { khu: 1 }], ['POST', '/move-to', { x: 1, y: 1 }], ['POST', '/move-to/cancel', { operationId: 'x' }], ['GET', '/reachable-maps'], ['GET', '/daily'], ['POST', '/daily/checkin', {}], ['POST', '/daily/seed', { taskId: 'duoc_moc' }], ['POST', '/daily/cancel', { operationId: 'x' }], ['GET', '/logs'], ['PUT', '/password', { password: 'abcdef' }], ['DELETE', ''], ['POST', '/quest-probe', { act: 'status' }], ['GET', '/khu-probe'], ['POST', '/khu-probe', { action: 'xem' }]];
     let leaks = 0;
     for (const [mth, suf, body] of routes) {
@@ -182,6 +188,7 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(leaks === 0, 'cross-account leaks=' + leaks);
     check((await j(`/api/accounts/${idA}/quest-probe`, 'POST', { act: 'status' }, tokAl)).s === 403, 'probe admin only for own account');
     check((await j(`/api/accounts/${idA}`, 'GET', null, tokAl)).s === 200, 'own account readable');
+    check((await j(`/api/accounts/${idB}`, 'GET', null, tokAl)).s === 404, 'other account metrics stay hidden');
     check((await j('/api/logs', 'GET', null, tokAl)).s === 200, 'logs ok');
     const st = await j('/api/system/status', 'GET', null, tokAl);
     check(st.s === 200 && JSON.stringify(st.b).indexOf('heap') < 0 && JSON.stringify(st.b).indexOf('rss') < 0, 'status no sys detail: ' + JSON.stringify(st.b).slice(0, 160));

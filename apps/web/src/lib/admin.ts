@@ -1,4 +1,4 @@
-import type { AdminUser, AuditLogEntry } from '../types';
+import type { AdminUser, AuditLogEntry, FrameMetricsSnapshot } from '../types';
 
 export type AdminAction = 'grant' | 'expiry' | 'lock' | 'delete' | 'maxBots' | 'resetPassword' | 'stopBots' | 'revokeSessions';
 
@@ -21,6 +21,11 @@ const PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz2345678
 export function cleanAdminText(value: unknown, maxLength = 240): string {
   const raw = typeof value === 'string' ? value : String(value ?? '');
   return raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+export function formatFrameMetrics(metrics: FrameMetricsSnapshot | null | undefined): string {
+  if (!metrics || metrics.avgMs === null || metrics.p95Ms === null || metrics.busyRatio === null) return 'Khung: chưa biết';
+  return `Khung: ${metrics.avgMs.toFixed(1)} ms (p95 ${metrics.p95Ms.toFixed(1)}) · chiếm ${(metrics.busyRatio * 100).toFixed(1)}%`;
 }
 
 export function formatCountdown(remainingMs: number | null): string {

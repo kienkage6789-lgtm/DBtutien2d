@@ -12,6 +12,7 @@ import { workerPool } from './orchestrator/worker-pool.js';
 import { db } from './db/database.js';
 import { errorHandler } from './security/errors.js';
 import { entitlementWatcher } from './orchestrator/entitlement-runtime.js';
+import { processMetrics } from './orchestrator/process-metrics.js';
 import { createSecurityHeaders, STATIC_CACHE_CONTROL, HTML_CACHE_CONTROL } from './security/http-hardening.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +22,7 @@ const app = express();
 app.disable('x-powered-by');
 // Trust one known reverse-proxy hop only. `true` would accept an arbitrary
 // forwarded-header chain and make IP rate limiting unsafe.
-app.set('trust proxy', CONFIG.TRUST_PROXY ? 1 : false);
+app.set('trust proxy', CONFIG.TRUST_PROXY ? CONFIG.TRUST_PROXY_HOPS : false);
 app.use(createSecurityHeaders({ trustProxy: CONFIG.TRUST_PROXY }));
 
 app.use(cors({
@@ -83,6 +84,7 @@ app.use(errorHandler);
 // Initialize WebSocket Hub on same HTTP server
 wsHub.init(server, () => workerPool.getAllRuntimes());
 entitlementWatcher.start();
+processMetrics.start();
 workerPool.startProxyChecks();
 
 server.listen(CONFIG.PORT, CONFIG.HOST, () => {
@@ -107,6 +109,7 @@ async function handleShutdown(exitCode = 0): Promise<void> {
   });
   wsHub.closeAll();
   entitlementWatcher.stop();
+  processMetrics.stop();
   workerPool.stopProxyChecks();
   try {
     await workerPool.stopAll(undefined, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
