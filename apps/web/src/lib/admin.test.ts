@@ -46,3 +46,19 @@ describe('admin dashboard helpers', () => {
     expect(password).toMatch(/^[A-Za-z0-9!@#$%^&*]+$/);
   });
 });
+
+import { parseProxyLine } from './admin';
+
+describe('parseProxyLine', () => {
+  it('đọc host:port:user:pass theo droplist', () => {
+    expect(parseProxyLine('23.95.45.30:12581:abc:d:ef', 'socks5')).toEqual({ url: 'socks5://abc:d%3Aef@23.95.45.30:12581', label: '23.95.45.30:12581' });
+  });
+  it('đọc user:pass@host:port, host:port và URL đầy đủ', () => {
+    expect(parseProxyLine('u:p@1.2.3.4:80', 'http')?.url).toBe('http://u:p@1.2.3.4:80');
+    expect(parseProxyLine('1.2.3.4:80', 'http')?.url).toBe('http://1.2.3.4:80');
+    expect(parseProxyLine('socks5h://u:p@1.2.3.4:80', 'http')?.url).toBe('socks5h://u:p@1.2.3.4:80');
+  });
+  it('từ chối định dạng sai', () => {
+    for (const bad of ['', 'abc', '1.2.3.4', '1.2.3.4:99999', '1.2.3.4:80:u', 'ftp://1.2.3.4:80']) expect(parseProxyLine(bad, 'http')).toBeNull();
+  });
+});

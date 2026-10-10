@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-10 — Sửa proxy SOCKS5 cho WebSocket và form nhập proxy
+
+Cài dependencies (`corepack pnpm install --frozen-lockfile`) rồi chạy được build/test thật. Kiểm tra 2 proxy SOCKS5 có xác thực của chủ dự án bằng `ProxyChecker`: cả hai `down` (`PROXY_CONNECT_FAILED`) dù TCP + xác thực + CONNECT tới host game qua SOCKS5 thủ công đều OK. Nguyên nhân: máy local phân giải `game.tutien2d.online` ra IPv6 Cloudflare trước; với `socks5://` agent WebSocket (`socks-proxy-agent`) gửi IP đó cho proxy, proxy không ra được IPv6 nên reset (`ECONNRESET` trước TLS). `socks5h://` (proxy tự phân giải) mở WebSocket được. Sửa trong `proxy-transport.ts`: agent WebSocket đổi `socks5://` thành `socks5h://` (fetch qua undici không bị lỗi này). Sau sửa cả hai proxy `ok`, ~3,7 s.
+
+Form nhập proxy (`AdminPanel.tsx` + `lib/admin.ts`): droplist `http|https|socks5|socks5h`, ô dán nhiều dòng, nhận `host:port`, `host:port:user:pass`, `user:pass@host:port`, `scheme://...` (scheme trong dòng ưu tiên hơn droplist); user/pass được mã hóa URL, nhãn mặc định `host:port`; thêm hàng loạt báo riêng dòng lỗi. Thêm test `parseProxyLine`.
+
+Lệnh đã chạy: `pnpm install --frozen-lockfile` pass; `pnpm build` pass 3 package; Vitest web 46/46; test server proxy: `proxy-url` 2/2, `proxy-transport` 2/2, `proxy-checker` 2/2, `proxy-fail-closed` 9/9, `database.proxy` 1/1, `multi-user.e2e` 1/1 (chưa chạy toàn bộ test server). `pnpm` không có PATH nên chạy qua shim `corepack pnpm`.
+
+Chưa xác minh: form nhập proxy trên trình duyệt thật, chạy bot thật/lâu/nhiều tài khoản qua hai proxy này (IP datacenter, game có thể chặn). Thông tin đăng nhập proxy không ghi vào repo/DB.
+
 ## 2026-10-09 — Chạy live proxy thật (bước 3 hệ thống người dùng)
 
 Proxy SOCKS5 có xác thực (HTTP thử trước và thất bại; thông tin xác thực không ghi vào repo, lưu mã hóa trong DB). Kiểm tra qua proxy: Supabase + bắt tay WebSocket game `ok`, ~3,8 s. Sửa bộ kiểm tra: `/auth/v1/health` thật trả 401 khi thiếu khóa nên chỉ coi 5xx là hỏng.

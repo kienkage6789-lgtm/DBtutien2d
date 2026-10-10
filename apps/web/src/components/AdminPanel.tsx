@@ -9,7 +9,7 @@ import {
 import { confirmAction, notify } from '../lib/dialogs';
 import {
   auditActionLabel, filterAdminUsers, filterAuditLogs, formatAdminExpiry,
-  generateRandomPassword, getAdminActionPolicy,
+  generateRandomPassword, getAdminActionPolicy, parseProxyLine, PROXY_KINDS, type ProxyKind,
 } from '../lib/admin';
 
 type AdminTab = 'users' | 'accounts' | 'proxies' | 'audit';
@@ -111,6 +111,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUserId, accounts,
 function ProxyTab({ proxies, loading, onRefresh }: { proxies: AdminProxy[]; loading: boolean; onRefresh: () => Promise<void> }) {
   const [label, setLabel] = useState('');
   const [url, setUrl] = useState('');
+  const [kind, setKind] = useState<ProxyKind>('socks5');
   const [maxAccounts, setMaxAccounts] = useState('1');
   const [working, setWorking] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
@@ -121,10 +122,21 @@ function ProxyTab({ proxies, loading, onRefresh }: { proxies: AdminProxy[]; load
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const capacity = Number(maxAccounts);
-    if (!label.trim() || !url.trim() || !Number.isInteger(capacity) || capacity < 1 || capacity > 1000) { notify('Nhập nhãn, URL proxy và sức chứa 1..1000.'); return; }
+    const lines = url.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length || !Number.isInteger(capacity) || capacity < 1 || capacity > 1000) { notify('Dán ít nhất một proxy và nhập sức chứa 1..1000.'); return; }
+    const parsed = lines.map((line) => ({ line, item: parseProxyLine(line, kind) }));
+    const bad = parsed.filter((entry) => !entry.item);
+    if (bad.length) { notify(`Sai định dạng ở dòng ${parsed.findIndex((entry) => !entry.item) + 1}. Dùng host:port, host:port:user:pass, user:pass@host:port hoặc scheme://...`); return; }
     setWorking('create');
-    try { await createAdminProxy({ label: label.trim(), url: url.trim(), maxAccounts: capacity }); setLabel(''); setUrl(''); setMaxAccounts('1'); await onRefresh(); }
-    catch (error) { notify(error); } finally { setWorking(''); }
+    const failed: string[] = [];
+    for (const { item } of parsed) {
+      try { await createAdminProxy({ label: (lines.length === 1 && label.trim()) || item!.label, url: item!.url, maxAccounts: capacity }); }
+      catch (error) { failed.push(`${item!.label}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    if (failed.length) notify(`Không thêm được ${failed.length}/${lines.length} proxy:\n${failed.join('\n')}`);
+    else { setLabel(''); setUrl(''); setMaxAccounts('1'); }
+    await onRefresh();
+    setWorking('');
   };
   const startEdit = (proxy: AdminProxy) => { setEditing(proxy.id); setEditLabel(proxy.label); setEditUrl(''); setEditMax(String(proxy.maxAccounts)); setEditEnabled(proxy.enabled); };
   const saveEdit = async (proxy: AdminProxy) => {
@@ -140,10 +152,10 @@ function ProxyTab({ proxies, loading, onRefresh }: { proxies: AdminProxy[]; load
     try { await deleteAdminProxy(proxy.id); await onRefresh(); } catch (error) { notify(error); } finally { setWorking(''); }
   };
   return <div className="space-y-4">
-    <form onSubmit={(event) => void submit(event)} className="grid min-w-0 gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3 md:grid-cols-[1fr_2fr_8rem_auto]">
-      <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Nhãn proxy" className={inputClass} />
-      <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="http://user:pass@host:port hoặc socks5://..." className={`${inputClass} min-w-0`} autoComplete="off" />
-      <input value={maxAccounts} onChange={(event) => setMaxAccounts(event.target.value)} type="number" min="1" max="1000" className={inputClass} />
+    <form onSubmit={(event) => void submit(event)} className="grid min-w-0 gap-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3 md:grid-cols-[8rem_1fr_8rem_auto]">
+      <select value={kind} onChange={(event) => setKind(event.target.value as ProxyKind)} className={inputClass} aria-label="Loại proxy">{PROXY_KINDS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+      <textarea value={url} onChange={(event) => setUrl(event.target.value)} rows={3} placeholder={'Mỗi dòng một proxy: host:port:user:pass\nhoặc user:pass@host:port, host:port, scheme://...'} className={`${inputClass} min-w-0 font-mono`} autoComplete="off" spellCheck={false} />
+      <div className="grid gap-2"><input value={maxAccounts} onChange={(event) => setMaxAccounts(event.target.value)} type="number" min="1" max="1000" className={inputClass} aria-label="Sức chứa" title="Sức chứa (số tài khoản)" /><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Nhãn (tuỳ chọn)" className={inputClass} /></div>
       <button type="submit" disabled={!!working} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"><Plus className="mr-1 inline h-3.5 w-3.5" />Thêm proxy</button>
     </form>
     <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">

@@ -1499,3 +1499,10 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 6. [x] Test source offline cho parser và fake HTTP/SOCKS5/WebSocket local; cập nhật API/spec/deploy/env/session log.
 7. [~] `git diff --check`/build/typecheck/Vitest chưa hoàn tất trong sandbox: `pnpm` không có PATH, Corepack bị chặn registry, tsx trực tiếp lỗi `uv_os_get_passwd returned ENOMEM`. Cần chạy toàn bộ build/test trong môi trường đầy đủ.
 8. [ ] Chưa xác minh proxy thật, HTTPS proxy TLS, SOCKS5h remote DNS, Supabase/game handshake thật, failover dài, checker tải lớn và UI trình duyệt thật; không chạm game thật.
+
+## AC. Sửa proxy SOCKS5 WebSocket + form nhập proxy (2026-10-10)
+
+1. [x] Agent WebSocket dùng `socks5h://` (proxy tự phân giải DNS) vì `socks5://` làm gửi IPv6 local mà proxy không ra được; 2 proxy SOCKS5 thật kiểm tra `ok` sau sửa.
+2. [x] Form tab Proxy: droplist loại, ô dán nhiều dòng, nhận `host:port[:user:pass]`/`user:pass@host:port`/`scheme://`; có test `parseProxyLine`.
+3. [x] `pnpm build` pass, Vitest web 46/46, test proxy server pass.
+4. [ ] Chưa xác minh form trên trình duyệt thật và chạy bot lâu/nhiều tài khoản qua hai proxy này.

@@ -112,3 +112,49 @@ export function generateRandomPassword(length: number = 16): string {
   globalThis.crypto.getRandomValues(values);
   return Array.from(values, (value) => PASSWORD_CHARS[value % PASSWORD_CHARS.length]).join('');
 }
+
+export type ProxyKind = 'http' | 'https' | 'socks5' | 'socks5h';
+export const PROXY_KINDS: ProxyKind[] = ['http', 'https', 'socks5', 'socks5h'];
+
+export interface ParsedProxyLine { url: string; label: string }
+
+/**
+ * Chấp nhận một dòng proxy ở các dạng: `host:port`, `host:port:user:pass`, `user:pass@host:port`,
+ * hoặc URL đầy đủ `scheme://...`. Nếu dòng có scheme thì dùng scheme đó, ngược lại dùng `kind` từ droplist.
+ * Trả null khi không nhận ra định dạng.
+ */
+export function parseProxyLine(raw: string, kind: ProxyKind): ParsedProxyLine | null {
+  let text = raw.trim();
+  if (!text) return null;
+  let scheme: ProxyKind = kind;
+  const explicit = /^([a-z0-9]+):\/\//i.exec(text);
+  if (explicit) {
+    const found = explicit[1].toLowerCase();
+    if (!PROXY_KINDS.includes(found as ProxyKind)) return null;
+    scheme = found as ProxyKind;
+    text = text.slice(explicit[0].length);
+  }
+  let host = '';
+  let port = '';
+  let user = '';
+  let pass = '';
+  const at = text.lastIndexOf('@');
+  if (at >= 0) {
+    const cred = text.slice(0, at);
+    const colon = cred.indexOf(':');
+    user = colon >= 0 ? cred.slice(0, colon) : cred;
+    pass = colon >= 0 ? cred.slice(colon + 1) : '';
+    const hp = text.slice(at + 1).split(':');
+    if (hp.length !== 2) return null;
+    [host, port] = hp;
+  } else {
+    const parts = text.split(':');
+    if (parts.length === 2) [host, port] = parts;
+    else if (parts.length >= 4) { host = parts[0]; port = parts[1]; user = parts[2]; pass = parts.slice(3).join(':'); }
+    else return null;
+  }
+  if (!host || !/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) return null;
+  if (/[\s/?#]/.test(host)) return null;
+  const auth = user ? `${encodeURIComponent(user)}${pass ? `:${encodeURIComponent(pass)}` : ''}@` : '';
+  return { url: `${scheme}://${auth}${host}:${port}`, label: `${host}:${port}` };
+}

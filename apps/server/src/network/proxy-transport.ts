@@ -69,7 +69,8 @@ export function createProxyTransport(proxyUrl: string): ProxyTransport {
     ? new Socks5ProxyAgent(proxyUrl)
     : new ProxyAgent({ uri: proxyUrl });
   const wsAgent = parsed.scheme === 'socks5'
-    ? new SocksProxyAgent(proxyUrl)
+    // socks5h: để proxy tự phân giải DNS; socks5 làm agent gửi IP phân giải ở máy local (thường IPv6 Cloudflare) mà proxy không ra được.
+    ? new SocksProxyAgent(proxyUrl.replace(/^socks5:\/\//i, 'socks5h://'))
     : new HttpsProxyAgent(proxyUrl);
   let closed = false;
 
