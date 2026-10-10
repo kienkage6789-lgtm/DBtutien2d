@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-10 — ARCHITECTURE_V2 Bước 1: củng cố hợp đồng GameGateway
+
+Thay đổi: mở rộng `game-gateway.contract.ts` để mọi bất biến chạy trên gateway đã start với fixture offline cho `FakeGateway` và `VendorGateway`. Bảy test riêng cho từng implementation kiểm tra stop đóng socket/hủy walk/idempotent, cancel chỉ đúng `operationId`, gate khi gục, disconnect listener/unsubscribe và reconnect kể cả listener ném lỗi, start lặp không sinh phiên thứ hai, hurt count không giảm, cùng vitals/trạng thái gục tiếp tục `null` khi chưa nhận `you`. Mỗi fixture được stop trong `t.after()` để không giữ loop/timer sau test. `VendorGateway.getState().isDown` giờ trả `null` khi vitals chưa được xác nhận; đây là hook nhỏ cần để giữ trạng thái chưa biết đúng hợp đồng.
+
+Kiểm tra: test gateway 15/15, `vendor-runner.test.ts` 20/20, toàn bộ test server 135/135 trên đúng 27 file `*.test.ts` trong `apps/server/src` bằng `npx tsx --test` (so với số đúng trước thay đổi là 125; tăng 10 test), Vitest web 48/48 trên 10 file. Server suite dùng `DATA_DIR` tạm và preload tạm chỉ thay `os.userInfo` do Node báo `uv_os_get_passwd returned ENOMEM`; file preload đã được xóa. Đã phá thử độc lập VendorGateway: HP chưa biết→0 làm test vitals fail; `isDown` null→false làm test trạng thái gục fail; bỏ `operationId` làm test cancel fail; `stop()` no-op làm test stop fail. Cả bốn mutation đều được khôi phục. `corepack pnpm --filter @tutien2d/server build`, build `core-client`, và web Vite build với `--configLoader runner` pass; Vitest web cùng loader pass.
+
+Lệnh gốc `pnpm build` không khởi chạy vì `pnpm` không có PATH; `corepack pnpm build` dừng khi script lồng gọi `pnpm`. Build workspace qua shim tạm chạy TypeScript server/core-client nhưng Vite mặc định bị sandbox chặn khi đọc `vite.config.ts` (`Access is denied`); lệnh Vite với `--configLoader runner` chạy pass riêng. `npx.cmd tsx --test` không preload cũng bị Node `uv_os_get_passwd returned ENOMEM`; test suite chạy pass với preload nêu trên. Thư mục `%TEMP%\dbtutien2d-contract-tests` còn dữ liệu test `.secret` và `tutien_db.sqlite`; sandbox từ chối lệnh xóa thư mục tạm. Không chạm game/mạng thật, không commit; chưa chạy bot thật.
+
+Không đổi `loopIntervalMs`, `frame()`, `AutoSupervisor`, API công khai, thời điểm gửi gói hay các khoá `KHU_PROTOCOL_UNAVAILABLE`/`RESPAWN_PROTOCOL_UNAVAILABLE`; không sửa `vendor/` hoặc `auto-supervisor.ts`.
+
 ## 2026-10-10 — ARCHITECTURE_V2 Bước 0a: số liệu hiệu năng theo bot
 
 Thay đổi: thêm `FrameMetrics` thuần với đồng hồ `performance.now()` tiêm được, vòng đệm cố định 600 khung, EMA, p95/max, tỷ lệ chiếm vòng lặp và reset theo vòng đời `VendorRunner`. Bọc callback khung bằng `try/finally`, không đổi nhịp hoặc logic khung. Thêm `ProcessMetrics` dùng `monitorEventLoopDelay` (20 ms), RSS/heap và số runner; bật khi server khởi chạy, tắt khi shutdown. Runtime account thêm `metrics` (runner dừng: `null`); `GET /api/admin/health` thêm `data.process`. Web sanitizer chuyển dữ liệu thiếu/sai kiểu thành `null`; thẻ admin hiển thị thời gian EMA, p95 và chiếm vòng lặp hoặc “chưa biết”. Cập nhật `CONTROL_PLANE_API.md`.

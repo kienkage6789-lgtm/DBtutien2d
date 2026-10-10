@@ -45,7 +45,9 @@ Dashboard (React) ⇄ REST/WS ⇄ Tiến trình chính (API, SQLite, auth, entit
 ## 4. Các lớp
 
 ### 4.1 `GameGateway` (giao diện duy nhất mà nhiệm vụ được dùng)
-Nhóm thao tác (phác thảo, tên chỉ mang tính gợi ý, cần chốt khi viết mã):
+Bước 1 hiện thực `apps/server/src/gateway/game-gateway.ts`: `start/stop`, lifecycle và sự kiện disconnect, state chỉ đọc với giá trị chưa biết là `null`, walk/cancel, Auto, khu và metrics. Daily task được chứa qua `daily: DailyClient`, giữ nguyên `DailyQuests` và ACK theo `cmd`. `VendorGateway` uỷ quyền các lệnh cho `VendorRunner`; state gateway chỉ trả vitals khi snapshot xác nhận fresh. Danh sách map đi được hiện là map ID từ đồ thị đường đi của client.
+
+Nhóm thao tác (tên cụ thể đã chốt trong interface):
 
 | Nhóm | Ví dụ thao tác | Ghi chú |
 |---|---|---|
@@ -59,7 +61,7 @@ Nhóm thao tác (phác thảo, tên chỉ mang tính gợi ý, cần chốt khi 
 Tiêu chí: nhiệm vụ hiện có (ví dụ `DailyQuests` qua lớp `DailyClient`) chuyển sang giao diện này mà không đổi logic; mối nối `DailyClient` đã có sẵn **[Đã biết]** nên chi phí bước đầu thấp.
 
 ### 4.2 Hai bản cài đặt
-- **`VendorGateway`:** bọc `VendorRunner` hiện tại. Giữ nguyên hành vi; là đường lui và là nguồn đối chứng.
+- **`VendorGateway`:** đã có; bọc `VendorRunner` bằng composition. Giữ nguyên hành vi; là hiện thực duy nhất và nguồn đối chứng hiện tại.
 - **`ProtocolGateway`:** client nhẹ, giữ WebSocket, giải mã gói theo schema, giữ mô hình thế giới tối thiểu (vị trí từ `you`, thực thể từ `p`/`pf`, map từ dữ liệu sinh sẵn). Không mô phỏng vật lý toàn cục; chỉ làm những gì cần để gửi gói hợp lệ.
 - Chọn gateway theo tài khoản và theo loại việc; một tài khoản chỉ chạy MỘT gateway tại một thời điểm.
 

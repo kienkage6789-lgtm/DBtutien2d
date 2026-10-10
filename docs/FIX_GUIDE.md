@@ -1524,3 +1524,11 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 6. [~] Build toàn workspace pass khi dùng shim `pnpm.cmd` và `--configLoader runner` tạm do PATH/quyền sandbox; các thay đổi tạm đã hoàn nguyên. Web Vitest pass với cùng loader; test server cần preload tạm vì `uv_os_get_passwd ... ENOMEM`. Lệnh gốc không qua được hạn chế môi trường, xem `SESSION_LOG.md`.
 7. [ ] Chưa đo bot thật trên TV box (Bước 0b); số liệu smoke server cục bộ không phải benchmark phần cứng.
 8. [x] Hiệu chỉnh `eventLoopDelay` trừ `resolutionMs` khỏi p50/p99/max và clamp 0; test histogram giả kiểm tra trừ, clamp, ns→ms, `null` khi chưa có mẫu. Fault injection bỏ phép trừ làm 2 test fail; đã phục hồi.
+
+## AF. ARCHITECTURE_V2 Bước 1 — GameGateway + VendorGateway (2026-10-10)
+
+1. [x] Định nghĩa `GameGateway` theo lifecycle/disconnect, state chỉ đọc (`null` cho dữ liệu chưa biết), walk, Auto/khu, metrics và phần `DailyClient`; thêm adapter composition `VendorGateway` uỷ quyền sang `VendorRunner`.
+2. [x] `WorkerPool` tạo `VendorGateway` và dùng giao diện mới cho start/stop, Auto, walk/cancel và thao tác khu; `DailyQuests` giữ nguyên `DailyClient` hiện có. Runtime snapshot, API daily và probe vẫn dùng runner vì hiện chưa thuộc `GameGateway` và phải giữ payload/API hiện tại.
+3. [x] Hợp đồng chạy trên gateway đã start: stop đóng socket/hủy walk/idempotent; cancel chỉ đúng ID và kết thúc waiter; down chặn walk, Auto và đổi khu bằng đúng mã; disconnect/unsubscribe và listener lỗi không cản reconnect; start lặp không tạo phiên; hurt count không giảm; HP/MP/isDown chưa xác nhận giữ `null`. Bảy bất biến mỗi implementation; test tổng gateway 15/15.
+4. [x] Test server 135/135 trên 27 file (125 trước thay đổi), `vendor-runner.test.ts` 20/20, web 48/48. Mutation HP→0, isDown null→false, bỏ operationId, stop no-op đều làm test VendorGateway fail; đã khôi phục.
+5. [~] Server/core-client build và web Vite build với `--configLoader runner` pass. `pnpm build` không có PATH; `corepack pnpm build` vướng script lồng; build workspace bằng shim bị sandbox chặn esbuild đọc config Vite. Preload test tạm xử lý `uv_os_get_passwd ... ENOMEM`, đã xóa. Chưa chạy bot thật.

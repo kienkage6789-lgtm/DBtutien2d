@@ -1,6 +1,6 @@
 # Kiến trúc TuTien2D
 
-Cập nhật: 2026-10-08. Repo chỉ còn một đường chạy game: `vendor`, tức client chính thức chạy headless trong Node. `vendor/` là nguồn tham chiếu chỉ đọc.
+Cập nhật: 2026-10-10. Repo chỉ có một hiện thực gateway là `VendorGateway`, adapter mỏng quanh client chính thức chạy headless trong Node. `GameGateway` là giao diện cho vòng đời, state, di chuyển, Auto, khu và `DailyClient`; chưa có `ProtocolGateway`. `vendor/` là nguồn tham chiếu chỉ đọc.
 
 ## Luồng chính
 
@@ -8,12 +8,14 @@ Cập nhật: 2026-10-08. Repo chỉ còn một đường chạy game: `vendor`,
 Dashboard REST/WS
         │
         ▼
-apps/server WorkerPool ── VendorRunner ── vendor client trong node:vm ── game server
+apps/server WorkerPool ── VendorGateway ── VendorRunner ── vendor client trong node:vm ── game server
         │                        │
         └── runtime snapshot ────┴── AutoSupervisor
 ```
 
-- `WorkerPool.startAccount` luôn gọi `startVendorAccount`; mỗi account tối đa một `VendorRunner`.
+- `WorkerPool.startAccount` luôn gọi `startVendorAccount`; mỗi account tối đa một `VendorGateway`/`VendorRunner`.
+- `GameGateway` được định nghĩa tại `apps/server/src/gateway`; `VendorGateway` chỉ uỷ quyền, không giữ protocol hoặc safety logic riêng.
+- `DailyQuests` tiếp tục phụ thuộc `DailyClient`; `VendorGateway.daily` cung cấp cùng interface từ runner.
 - `VendorRunner` giữ auth/session, WebSocket chính thức, snapshot HP/MP/vị trí, counters, hurt/death và vòng đời Auto.
 - `AutoSupervisor` là lớp an toàn của Auto chính thức: neo, recovering/traveling, giới hạn death/timeout và dừng khi dữ liệu không đủ.
 - `vendor-env.ts` cung cấp DOM/canvas/RAF/clock/socket adapter cần thiết; không hiển thị game.

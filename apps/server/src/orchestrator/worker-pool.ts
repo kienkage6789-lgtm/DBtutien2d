@@ -4,6 +4,8 @@ import { wsHub } from '../ws/hub.js';
 import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
 import { VendorRunner, type KhuInfo, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { VendorGateway } from '../gateway/vendor-gateway.js';
+import type { GameGateway } from '../gateway/game-gateway.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -162,7 +164,7 @@ const emptyEntityContext = (): MapEntityContext => ({
 });
 
 export class WorkerPool {
-  private readonly activeVendors = new Map<string, { runner: VendorRunner }>();
+  private readonly activeVendors = new Map<string, { runner: VendorRunner; gateway: GameGateway }>();
   private runtimeBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private readonly observedMaps = new Map<string, ObservedMap>();
   private readonly proxyChecker = new ProxyChecker();
@@ -329,10 +331,11 @@ export class WorkerPool {
       },
     });
 
-    this.activeVendors.set(accountId, { runner });
+    const gateway = new VendorGateway(runner);
+    this.activeVendors.set(accountId, { runner, gateway });
     this.ensureRuntimeBroadcast();
     try {
-      await runner.start();
+      await gateway.start();
       if (this.activeVendors.get(accountId)?.runner !== runner) {
         await runner.stop().catch(() => undefined);
         db.updateAccount(accountId, { status: 'stopped' });
@@ -398,7 +401,7 @@ export class WorkerPool {
     }
 
     try {
-      await active.runner.stop();
+      await active.gateway.stop();
       this.activeVendors.delete(accountId);
       if (!opts.keepStatus) db.updateAccount(accountId, { status: 'stopped' });
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
@@ -487,7 +490,7 @@ export class WorkerPool {
   public async startVendorAuto(accountId: string, anchor?: AutoAnchor): Promise<VendorRunnerSnapshot> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
-    await active.runner.startAuto(anchor);
+    await active.gateway.startAuto(anchor);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return active.runner.getSnapshot();
   }
@@ -495,7 +498,7 @@ export class WorkerPool {
   public stopVendorAuto(accountId: string): VendorRunnerSnapshot {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    active.runner.stopAuto();
+    active.gateway.stopAuto();
     const snapshot = active.runner.getSnapshot();
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return snapshot;
@@ -504,7 +507,7 @@ export class WorkerPool {
   public moveTo(accountId: string, request: WalkRequest): WalkOperation {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
-    const operation = active.runner.moveTo(request);
+    const operation = active.gateway.walkTo(request);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
   }
@@ -512,7 +515,7 @@ export class WorkerPool {
   public cancelMoveTo(accountId: string, operationId: string): WalkOperation {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    if (!active.runner.cancelMoveTo('user_cancelled', operationId)) throw new Error('OPERATION_NOT_FOUND');
+    if (!active.gateway.cancelWalk(operationId)) throw new Error('OPERATION_NOT_FOUND');
     const operation = active.runner.getSnapshot().moveTo;
     if (!operation) throw new Error('OPERATION_NOT_FOUND');
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
@@ -552,7 +555,7 @@ export class WorkerPool {
   public async changeKhu(accountId: string, khu: number): Promise<AccountRuntimeInfo> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    await active.runner.changeKhu(khu);
+    await active.gateway.changeKhu(khu);
     const runtime = this.getRuntimeInfo(accountId);
     wsHub.broadcastAccountUpdate(runtime);
     return runtime;
@@ -561,8 +564,8 @@ export class WorkerPool {
   public async getKhu(accountId: string, refresh = false): Promise<KhuInfo> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    if (refresh) await active.runner.requestKhuList();
-    return active.runner.getKhuInfo();
+    if (refresh) await active.gateway.requestKhuList();
+    return active.gateway.getKhuInfo() as KhuInfo;
   }
 
   /** THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md). */

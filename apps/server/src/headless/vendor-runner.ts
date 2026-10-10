@@ -20,6 +20,7 @@ import {
   DailyQuests,
   type DailyAck,
   type DailyClientState,
+  type DailyClient,
   type DailyOperation,
   type DailyProp,
   type DailyStatus,
@@ -294,6 +295,8 @@ export class VendorRunner {
   private supervisor: AutoSupervisor | null = null;
   private readonly walkNavigator: WalkNavigator;
   private readonly dailyQuests: DailyQuests;
+  public readonly dailyClient: DailyClient;
+  private readonly disconnectListeners = new Set<() => void>();
   private supervisorUnsubscribe: (() => void) | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private readonly frameMetrics = new FrameMetrics(() => performance.now());
@@ -368,11 +371,16 @@ export class VendorRunner {
       watchdogRestart: input.watchdogRestart ?? false,
     };
     this.walkNavigator = new WalkNavigator(this.createWalkClient());
-    this.dailyQuests = new DailyQuests(this.createDailyClient());
+    this.dailyClient = this.createDailyClient();
+    this.dailyQuests = new DailyQuests(this.dailyClient);
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
   public getFrameMetrics(): FrameMetricsSnapshot { return this.frameMetrics.snapshot(); }
+  public onDisconnect(listener: () => void): () => void {
+    this.disconnectListeners.add(listener);
+    return () => this.disconnectListeners.delete(listener);
+  }
 
   public async start(): Promise<void> {
     if (this.lifecycle !== 'stopped' && this.lifecycle !== 'error') return;
@@ -1393,6 +1401,9 @@ export class VendorRunner {
 
   private handleSocketClosed(): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
+    for (const listener of this.disconnectListeners) {
+      try { listener(); } catch { /* observer failures must not change reconnect behavior */ }
+    }
     this.cancelDailyForReason('reconnecting');
     this.cancelMoveTo('reconnecting');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
