@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — Tối ưu canvas giả của môi trường vendor (CPU khởi động và RAM mỗi bot)
+
+Nguyên nhân (profile trên TV box và máy phát triển): mã client tạo ảnh map (`art_rung_truc.js`, `art_tan_vien.js`) chiếm ~50% CPU khởi động; nó gọi `ctx.createImageData(w,h).data[i] = ...` từng điểm ảnh, nhưng `vendor-env.ts` trả Proxy `makeStub` (mỗi lần ghi là một bẫy `set` vào `Map`, mỗi lời gọi canvas tạo Proxy mới).
+
+Sửa trong `apps/server/src/headless/vendor-env.ts` (không đụng `vendor/`): `makeCanvasContext()` — context 2D bằng đối tượng thường: hàm vẽ chỉ-ghi (`fillRect`, `drawImage`, `putImageData`...) là no-op trả `undefined` như trình duyệt, thuộc tính chuẩn có giá trị mặc định thật, `createImageData` trả `{width,height,data: Uint8ClampedArray}` thật; tên chưa biết vẫn rơi về Proxy `makeStub` qua prototype nên hành vi cũ giữ nguyên.
+
+Đo trên máy phát triển (i7-4790K, `pnpm measure`, 1 bot offline): CPU tiến trình 5 s đầu 72-75% -> 7%; khung ổn định avg 0,55 -> 0,41 ms (p95 1,6 -> 1,4); RSS bot đầu 208 -> 136 MB; RAM tăng thêm mỗi bot sau bot đầu ~50 -> ~18 MB (5 bot một tiến trình: 206 MB). Thời gian vào game gần như không đổi (2,6 s). `pnpm build` pass; toàn bộ test server 135/135.
+
+Chưa xác minh: hiệu quả trên TV box/VPS thật (cần chạy lại `pnpm measure` và bot thật), hành vi với các map khác ngoài `thanh_truc_lam` ở bot live, và việc client có đọc giá trị trả về của canvas (getImageData, measureText...) ở những đường chưa được test.
+
 ## 2026-10-11 — Đo hiệu năng bot: hiệu chỉnh giữa máy phát triển và TV box (offline)
 
 Công cụ mới: `scripts/summarize-cpuprofile.mjs` (tóm tắt `.cpuprofile`) và `apps/server/tools/measure-runner.ts` (`cd apps/server && pnpm measure`; chạy `VendorRunner` với socket giả, không mạng, in avg/p95/max khung và `busyRatio` kèm thông tin máy). Không chạm game thật.

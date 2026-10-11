@@ -72,6 +72,38 @@ export function makeStub(name = 'stub'): any {
   });
 }
 
+/**
+ * Context 2D giả cho client chạy headless. Các hàm vẽ chỉ-ghi trả `undefined` như trình duyệt thật và không cấp phát;
+ * mọi tên khác (measureText, getImageData, createLinearGradient, thuộc tính lạ...) rơi về Proxy `makeStub` như trước,
+ * nên hành vi với mã client không đổi. Tạo ảnh map gọi canvas hàng chục nghìn lần: Proxy + Proxy mới mỗi lời gọi rất tốn CPU.
+ */
+const CANVAS_DRAW_ONLY_METHODS = [
+  'fillRect', 'strokeRect', 'clearRect', 'fill', 'stroke', 'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'arcTo',
+  'ellipse', 'rect', 'roundRect', 'quadraticCurveTo', 'bezierCurveTo', 'save', 'restore', 'translate', 'rotate', 'scale',
+  'transform', 'setTransform', 'resetTransform', 'drawImage', 'putImageData', 'fillText', 'strokeText', 'clip', 'setLineDash',
+] as const;
+
+function makeCanvasContext(): any {
+  const fallback = makeStub('context');
+  const context: Record<string, any> = Object.create(fallback);
+  const noop = (): void => undefined;
+  for (const name of CANVAS_DRAW_ONLY_METHODS) context[name] = noop;
+  // Mã vẽ ảnh map ghi từng điểm ảnh vào createImageData(...).data[i]: dùng mảng typed thật như trình duyệt (nhanh hơn Proxy rất nhiều).
+  context.createImageData = (widthOrImage: unknown, height?: unknown) => {
+    const source = widthOrImage as { width?: number; height?: number } | number;
+    const width = Math.max(0, Math.floor(Number(typeof source === 'object' && source ? source.width : source)) || 0);
+    const rows = Math.max(0, Math.floor(Number(typeof source === 'object' && source ? source.height : height)) || 0);
+    return { width, height: rows, data: new Uint8ClampedArray(width * rows * 4) };
+  };
+  Object.assign(context, {
+    fillStyle: '#000000', strokeStyle: '#000000', globalAlpha: 1, lineWidth: 1, lineCap: 'butt', lineJoin: 'miter',
+    miterLimit: 10, lineDashOffset: 0, font: '10px sans-serif', textAlign: 'start', textBaseline: 'alphabetic',
+    globalCompositeOperation: 'source-over', imageSmoothingEnabled: true, shadowBlur: 0, shadowColor: 'rgba(0, 0, 0, 0)',
+    shadowOffsetX: 0, shadowOffsetY: 0, filter: 'none',
+  });
+  return context;
+}
+
 function seededRandom(seed: number): () => number {
   let value = (seed >>> 0) || 0x9e3779b9;
   return () => {
@@ -179,7 +211,7 @@ export function createVendorEnv(options: VendorEnvOptions): VendorEnv {
     const element = makeStub('element') as Record<string, any>;
     element.style = makeStub('style');
     element.classList = makeStub('classList');
-    element.getContext = () => makeStub('context');
+    element.getContext = () => makeCanvasContext();
     element.width = 64;
     element.height = 64;
     return element;
