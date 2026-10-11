@@ -115,6 +115,7 @@ export interface VendorRuntimeSnapshot {
   dataStale?: boolean;
   lifecycle: string;
   connection: string;
+  reconnectAttempts?: number;
   autoRequested: boolean;
   supervisor: {
     phase: string;

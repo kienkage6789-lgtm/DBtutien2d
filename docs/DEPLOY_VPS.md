@@ -43,6 +43,8 @@ sudoedit /etc/tutien2d/env
 
 Sharding tùy chọn dùng `child_process`: mặc định `VENDOR_SHARDS=0` giữ runner in-process. Sau khi test offline và soak trên chính VPS, có thể đặt `VENDOR_SHARDS=2` để tạo tối đa hai tiến trình shard theo nhu cầu. Mỗi shard tốn khoảng 66 MB RSS nền theo ước lượng ban đầu, chưa xác minh trên Linux/VPS. `SHARD_MAX_RUNNERS=0` không đặt giới hạn mỗi shard; `SHARD_RPC_TIMEOUT_MS=15000` và `SHARD_STOP_GRACE_MS=5000` điều khiển timeout RPC và dừng khẩn cấp. Tiến trình chính vẫn kiểm tra quota, entitlement, proxy và RAM trước khi start; shard chết thì runner chuyển sang `stopped`, không tự khởi động lại.
 
+Khi game socket ngắt, runner thử nối lại liên tục với backoff luỹ thừa và jitter. `RECONNECT_MAX_DELAY_MS=60000` giới hạn thời gian chờ mỗi lần (giá trị hợp lệ 1000..300000 ms; sai thì dùng mặc định). `RECONNECT_GIVE_UP_MS=1800000` giới hạn một đợt mất kết nối liên tục (0..86400000 ms; sai thì dùng mặc định); đặt `0` để không bỏ cuộc. Kết nối game thành công sẽ reset thời gian và bộ đếm. Lỗi refresh token bị từ chối dừng ngay và đánh dấu lỗi xác thực. Cùng các giá trị này được gửi tới runner in-process và shard.
+
 `ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ dùng lần đầu. Đăng nhập, đổi mật khẩu ngay, rồi xóa hai biến này khỏi `/etc/tutien2/env`. Không đặt `API_TOKEN` trên VPS.
 
 ## 4. Preflight

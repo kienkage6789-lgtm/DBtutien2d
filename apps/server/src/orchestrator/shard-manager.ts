@@ -12,7 +12,7 @@ import { redactProxyUrl } from '../network/proxy-url.js';
 
 interface ShardProcess {
   id: string; child: ChildProcess; ready: Promise<void>; resolveReady: () => void; rejectReady: (error: Error) => void;
-  accounts: Set<string>; expectedExit: boolean; failureExit: boolean; ignoredPackets: number; stderr: string; lastSnapshotAt: number; metrics: { rssBytes: number; eventLoop: { p50Ms: number | null; p99Ms: number | null; maxMs: number | null }; runners: number; ignoredPackets: number; at: number } | null;
+  accounts: Set<string>; expectedExit: boolean; failureExit: boolean; killReason: string | null; ignoredPackets: number; stderr: string; lastSnapshotAt: number; metrics: { rssBytes: number; eventLoop: { p50Ms: number | null; p99Ms: number | null; maxMs: number | null }; runners: number; ignoredPackets: number; at: number } | null;
 }
 export interface ShardHealth { id: string; pid: number | null; runners: number; rssBytes: number | null; eventLoop: ShardProcess['metrics'] extends infer T ? T extends { eventLoop: infer E } ? E | null : null : null; stale: boolean; ignoredPackets: number }
 export function redactShardStderr(value: string): string {
@@ -30,7 +30,7 @@ export function chooseLeastLoadedShard<T extends { id: string; accounts: Set<str
   return shards.filter((shard) => shard.accounts.size < (maxRunners || Number.MAX_SAFE_INTEGER))
     .sort((a, b) => a.accounts.size - b.accounts.size || a.id.localeCompare(b.id, undefined, { numeric: true }))[0];
 }
-export interface ShardManagerHooks { onExit?: (accountId: string, shardId: string, details?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string }) => void; onLog?: (accountId: string, event: import('./runner-handle.js').RunnerHandleLog) => void; onSession?: (accountId: string, refreshToken: string) => void }
+export interface ShardManagerHooks { onExit?: (accountId: string, shardId: string, details?: { exitCode: number | null; signal: NodeJS.Signals | null; stderr: string; killReason: string | null }) => void; onLog?: (accountId: string, event: import('./runner-handle.js').RunnerHandleLog) => void; onSession?: (accountId: string, refreshToken: string) => void }
 export interface ShardManagerSettings { vendorShards: number; maxRunners: number; rpcTimeoutMs: number; stopGraceMs: number; staleKillMs?: number; entryPath?: string }
 const defaultSettings: ShardManagerSettings = { vendorShards: CONFIG.VENDOR_SHARDS, maxRunners: CONFIG.SHARD_MAX_RUNNERS,
   rpcTimeoutMs: CONFIG.SHARD_RPC_TIMEOUT_MS, stopGraceMs: CONFIG.SHARD_STOP_GRACE_MS, staleKillMs: CONFIG.SHARD_STALE_KILL_MS };
@@ -90,7 +90,7 @@ export class ShardManager implements RemoteRunnerTransport {
     const tsx = path.extname(sourcePath) === '.ts' ? pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href : undefined;
     const execArgv = tsx ? ['--import', tsx] : [];
     const child = fork(sourcePath, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv, env: this.shardEnvironment() });
-    const shard: ShardProcess = { id, child, ready, resolveReady, rejectReady, accounts: new Set(), expectedExit: false, failureExit: false, ignoredPackets: 0, stderr: '', lastSnapshotAt: Date.now(), metrics: null };
+    const shard: ShardProcess = { id, child, ready, resolveReady, rejectReady, accounts: new Set(), expectedExit: false, failureExit: false, killReason: null, ignoredPackets: 0, stderr: '', lastSnapshotAt: Date.now(), metrics: null };
     this.shards.set(id, shard);
     child.on('message', (raw) => this.onMessage(shard, raw));
     child.on('error', () => { /* exit event performs ownership cleanup */ });
@@ -131,7 +131,7 @@ export class ShardManager implements RemoteRunnerTransport {
         await this.recoverStartTimeout(assigned, accountId);
       } else if (assigned && assigned.child.exitCode === null && ['SHARD_DISCONNECTED', 'SHARD_EXITED', 'SHARD_READY_TIMEOUT'].includes(code)) {
         assigned.failureExit = true;
-        const exited = this.waitExit(assigned.child); assigned.child.kill('SIGKILL'); await exited;
+        const exited = this.waitExit(assigned.child); this.killShard(assigned, 'start_failed'); await exited;
       }
       assigned?.accounts.delete(accountId); this.accountShard.delete(accountId); this.handles.delete(accountId);
       throw error;
@@ -144,7 +144,7 @@ export class ShardManager implements RemoteRunnerTransport {
     catch (error) {
       shard.expectedExit = true;
       shard.failureExit = true;
-      const exited = this.waitExit(shard.child); shard.child.kill('SIGKILL'); await exited;
+      const exited = this.waitExit(shard.child); this.killShard(shard, 'stop_timeout'); await exited;
       throw error;
     }
     shard.accounts.delete(accountId); this.accountShard.delete(accountId); this.handles.delete(accountId);
@@ -159,7 +159,7 @@ export class ShardManager implements RemoteRunnerTransport {
     }
     shard.failureExit = true;
     const exited = this.waitExit(shard.child);
-    shard.child.kill('SIGKILL');
+    this.killShard(shard, 'start_timeout');
     await exited;
   }
   public async call<T>(accountId: string, method: string, args: unknown[]): Promise<T> {
@@ -169,6 +169,10 @@ export class ShardManager implements RemoteRunnerTransport {
   }
   private findShard(accountId: string): ShardProcess | undefined { const id = this.accountShard.get(accountId); return id ? this.shards.get(id) : undefined; }
   private timeout(ms: number, code: string): Promise<never> { return new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error(code)), ms); timer.unref?.(); }); }
+  private killShard(shard: ShardProcess, reason: string): void {
+    shard.killReason ??= reason;
+    shard.child.kill('SIGKILL');
+  }
   private waitExit(child: ChildProcess): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
     return new Promise((resolve) => child.once('exit', () => resolve()));
@@ -206,7 +210,7 @@ export class ShardManager implements RemoteRunnerTransport {
     for (const accountId of shard.accounts) {
       this.accountShard.delete(accountId); this.handles.delete(accountId);
       if (!shard.expectedExit || shard.failureExit) this.hooks.onExit?.(accountId, shard.id, { exitCode: shard.child.exitCode, signal: shard.child.signalCode,
-        stderr: shard.expectedExit ? '' : redactShardStderr(shard.stderr) });
+        stderr: shard.expectedExit ? '' : redactShardStderr(shard.stderr), killReason: shard.killReason });
     }
     shard.accounts.clear();
   }
@@ -219,7 +223,7 @@ export class ShardManager implements RemoteRunnerTransport {
     const limit = this.settings.staleKillMs ?? CONFIG.SHARD_STALE_KILL_MS;
     if (!limit) return;
     for (const shard of this.shards.values()) if (shard.accounts.size && now - shard.lastSnapshotAt > limit) {
-      shard.failureExit = true; const exited = this.waitExit(shard.child); shard.child.kill('SIGKILL'); void exited;
+      shard.failureExit = true; const exited = this.waitExit(shard.child); this.killShard(shard, 'no_snapshot_for_' + Math.round(limit / 1000) + 's'); void exited;
     }
   }
   public async shutdown(timeoutMs = 20_000): Promise<void> {
@@ -232,11 +236,11 @@ export class ShardManager implements RemoteRunnerTransport {
       try {
         await Promise.all([...shard.accounts].map((accountId) => this.send(shard,
           { v: SHARD_PROTOCOL_VERSION, type: 'stop', accountId }, Math.max(100, Math.min(this.settings.stopGraceMs, deadline - Date.now())))));
-      } catch { shard.failureExit = true; shard.child.kill('SIGKILL'); }
+      } catch { shard.failureExit = true; this.killShard(shard, 'shutdown_stop_failed'); }
       if (shard.child.connected) shard.child.send({ v: SHARD_PROTOCOL_VERSION, type: 'shutdown' } satisfies ParentMessage);
     }
     await Promise.all(shards.map(async (shard) => Promise.race([this.waitExit(shard.child), new Promise<void>((resolve) => {
-      const timer = setTimeout(() => { shard.failureExit = true; shard.child.kill('SIGKILL'); resolve(); }, Math.max(1, deadline - Date.now())); timer.unref?.();
+      const timer = setTimeout(() => { shard.failureExit = true; this.killShard(shard, 'shutdown_timeout'); resolve(); }, Math.max(1, deadline - Date.now())); timer.unref?.();
     })])));
   }
 }

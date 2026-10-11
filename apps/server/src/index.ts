@@ -13,6 +13,7 @@ import { db } from './db/database.js';
 import { errorHandler } from './security/errors.js';
 import { entitlementWatcher } from './orchestrator/entitlement-runtime.js';
 import { processMetrics } from './orchestrator/process-metrics.js';
+import { redactProxyError } from './network/proxy-url.js';
 import { createSecurityHeaders, STATIC_CACHE_CONTROL, HTML_CACHE_CONTROL } from './security/http-hardening.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -99,10 +100,20 @@ server.listen(CONFIG.PORT, CONFIG.HOST, () => {
 let shuttingDown = false;
 const SHUTDOWN_TIMEOUT_MS = 20_000;
 
-async function handleShutdown(exitCode = 0): Promise<void> {
+/** Mô tả lỗi đã làm sạch: không bao giờ chứa token/URL proxy có xác thực; đường dẫn thư mục bị cắt bớt. */
+function describeFailure(error: unknown): { name: string; message: string; where: string } {
+  const err = error instanceof Error ? error : null;
+  const message = redactProxyError(err ? err.message : String(error ?? '')).slice(0, 240);
+  const frames = (err?.stack ?? '').split('\n').slice(1, 4)
+    .map((line) => line.trim().replace(/^at\s+/, '').replace(/\(?[^()\s]*[\\/]([^\\/()\s]+)\)?$/, '($1)'))
+    .join(' | ').slice(0, 300);
+  return { name: err ? err.name : typeof error, message, where: frames };
+}
+
+async function handleShutdown(exitCode = 0, reason = 'unknown'): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('\n[TuTien2D Server] Shutting down, stopping all active bots...');
+  console.log(`\n[TuTien2D Server] Shutting down, stopping all active bots... (reason=${reason}; exitCode=${exitCode})`);
   const httpClosed = new Promise<void>((resolve) => {
     if (!server.listening) { resolve(); return; }
     server.close(() => resolve());
@@ -131,13 +142,15 @@ async function handleShutdown(exitCode = 0): Promise<void> {
   }
 }
 
-process.on('SIGINT', () => { void handleShutdown(0); });
-process.on('SIGTERM', () => { void handleShutdown(0); });
+process.on('SIGINT', () => { void handleShutdown(0, 'SIGINT'); });
+process.on('SIGTERM', () => { void handleShutdown(0, 'SIGTERM'); });
 process.on('uncaughtException', (error) => {
-  console.error(JSON.stringify({ event: 'uncaught_exception', error: error instanceof Error ? error.name : 'unknown' }));
-  void handleShutdown(1);
+  const detail = describeFailure(error);
+  console.error(JSON.stringify({ event: 'uncaught_exception', error: detail.name, message: detail.message, where: detail.where }));
+  void handleShutdown(1, `uncaught_exception:${detail.name}`);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error(JSON.stringify({ event: 'unhandled_rejection', error: reason instanceof Error ? reason.name : 'unknown' }));
-  void handleShutdown(1);
+  const detail = describeFailure(reason);
+  console.error(JSON.stringify({ event: 'unhandled_rejection', error: detail.name, message: detail.message, where: detail.where }));
+  void handleShutdown(1, `unhandled_rejection:${detail.name}`);
 });

@@ -209,3 +209,29 @@ const blank = { lifecycle: 'stopped', connection: 'DISCONNECTED', autoRequested:
   vitals: { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null }, moveTo: null, daily: null, dailyStatus: null, logs: [] } as unknown as VendorRunnerSnapshot;
 
 function expectShard(actual: unknown, expected: unknown): void { assert.equal(actual, expected); }
+
+test('a shard killed by the server reports why; an external SIGKILL reports no server reason', async () => {
+  const reasons: Array<string | null | undefined> = [];
+  const make = (killedByServer: boolean) => {
+    const manager = new ShardManager({ onExit: (_accountId, _shardId, details) => reasons.push(details?.killReason) },
+      { vendorShards: 1, maxRunners: 0, rpcTimeoutMs: 100, stopGraceMs: 100, staleKillMs: 30_000 });
+    const internals = manager as unknown as { shards: Map<string, any>; onExit(shard: any): void };
+    const child: any = new EventEmitter();
+    Object.assign(child, { exitCode: null, signalCode: null, connected: true, killed: false,
+      kill(signal: NodeJS.Signals) { child.killed = true; child.signalCode = signal; setImmediate(() => child.emit('exit', null, signal)); return true; } });
+    const shard: any = { id: 'shard-1', child, ready: Promise.resolve(), resolveReady() {}, rejectReady() {},
+      accounts: new Set(['account-a']), expectedExit: false, failureExit: false, killReason: null, ignoredPackets: 0,
+      stderr: '', lastSnapshotAt: 1, metrics: null };
+    child.on('exit', () => internals.onExit(shard));
+    internals.shards.set(shard.id, shard);
+    return { manager, child, killedByServer };
+  };
+  const server = make(true);
+  server.manager.checkStale(30_002);
+  await new Promise((resolve) => setImmediate(resolve));
+  const external = make(false);
+  external.child.signalCode = 'SIGKILL'; external.child.emit('exit', null, 'SIGKILL');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reasons[0], 'no_snapshot_for_30s');
+  assert.equal(reasons[1], null);
+});

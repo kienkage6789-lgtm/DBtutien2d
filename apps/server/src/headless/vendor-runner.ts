@@ -1,4 +1,4 @@
-import type { AuthSession } from '@tutien2d/core-client';
+import { AuthError, type AuthSession } from '@tutien2d/core-client';
 import { createVendorEnv, type VendorEnv, type VendorSocketEvent, type VendorSocketLike, type VendorWebSocketConstructor } from './vendor-env.js';
 import {
   AutoSupervisor,
@@ -111,6 +111,7 @@ type VendorEntityContext = {
 export interface VendorRunnerSnapshot {
   lifecycle: VendorRunnerLifecycle;
   connection: 'DISCONNECTED' | 'CONNECTING' | 'IN_GAME' | 'RECONNECTING';
+  reconnectAttempts?: number;
   autoRequested: boolean;
   supervisor: AutoSupervisorSnapshot;
   packets: VendorPacketCounts;
@@ -179,9 +180,17 @@ export interface VendorRunnerOptions {
   };
   envFactory?: typeof createVendorEnv;
   envOptions?: { nowStart?: number; randomSeed?: number; maxConsoleErrors?: number };
+  /** Deprecated compatibility field. Reconnects are bounded by reconnectGiveUpMs, not by attempts. */
   reconnectMaxRetries?: number;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  reconnectGiveUpMs?: number;
+  reconnectRandom?: () => number;
+  reconnectClock?: {
+    now(): number;
+    setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+    clearTimeout(timer: ReturnType<typeof setTimeout>): void;
+  };
   loginTimeoutMs?: number;
   loopIntervalMs?: number;
   watchdogMaxFrameDelayMs?: number;
@@ -343,6 +352,7 @@ export class VendorRunner {
   private autoStartedAt: number | null = null;
   private killsBySelf = 0;
   private reconnectAttempts = 0;
+  private reconnectStartedAt: number | null = null;
   private stopRequested = false;
   private watchdogRestarting = false;
   private autoRequested = false;
@@ -353,7 +363,7 @@ export class VendorRunner {
   private dailyAckWaiter: { command: string; resolve: (ack: DailyAck) => void; timer: ReturnType<typeof setTimeout> | null } | null = null;
   /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
   private readonly watchdogLoggedAt = new Map<string, number>();
-  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
+  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'reconnectGiveUpMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
   private readonly onSnapshotChanged?: () => void;
   private transportClosed = false;
 
@@ -361,9 +371,9 @@ export class VendorRunner {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
     this.onSnapshotChanged = input.onSnapshotChanged;
     this.options = {
-      reconnectMaxRetries: input.reconnectMaxRetries ?? 5,
       reconnectBaseDelayMs: input.reconnectBaseDelayMs ?? 1_000,
-      reconnectMaxDelayMs: input.reconnectMaxDelayMs ?? 30_000,
+      reconnectMaxDelayMs: input.reconnectMaxDelayMs ?? 60_000,
+      reconnectGiveUpMs: input.reconnectGiveUpMs ?? 1_800_000,
       loginTimeoutMs: input.loginTimeoutMs ?? 10_000,
       loopIntervalMs: input.loopIntervalMs ?? 16,
       vitalsConfirmMs: input.vitalsConfirmMs ?? VITALS_CONFIRM_MS,
@@ -392,6 +402,8 @@ export class VendorRunner {
     this.stopRequested = false;
     this.transportClosed = false;
     this.lifecycle = 'starting';
+    this.reconnectAttempts = 0;
+    this.reconnectStartedAt = null;
     this.startedAt = Date.now();
     this.baseRss = process.memoryUsage().rss;
     try {
@@ -513,6 +525,7 @@ export class VendorRunner {
     return {
       lifecycle: this.lifecycle,
       connection: this.connectionState(),
+      reconnectAttempts: this.reconnectAttempts,
       autoRequested: this.autoRequested,
       supervisor,
       packets: {
@@ -713,6 +726,7 @@ export class VendorRunner {
 
   private async connectAndBuild(reconnect: boolean): Promise<void> {
     if (!this.P || !this.env || !this.tokenManager) throw new Error('VENDOR_NOT_INITIALIZED');
+    const reconnectHurtCount = reconnect ? this.hurtCount : null;
     this.lifecycle = reconnect ? 'connecting' : 'connecting';
     const P = this.P;
     P.Net.online = true;
@@ -729,14 +743,22 @@ export class VendorRunner {
     }
     await this.waitForScene();
     this.reconnectAttempts = 0;
+    this.reconnectStartedAt = null;
     const supervisor = this.supervisor ?? this.createSupervisor();
     if (reconnect && this.autoRequested) {
       const anchor = supervisor.getSnapshot().anchor;
       if (anchor) {
         await this.waitForMapReady();
-        if (this.autoRequested && !this.stopRequested) {
+        const player = this.getPlayer();
+        if (this.autoRequested && !this.stopRequested && player && !this.isDown(player)
+          && this.hasPlayerVitalsModel(player) && this.hurtCount === reconnectHurtCount) {
           supervisor.start(anchor, true);
           this.autoStartedAt = Date.now();
+        } else if (this.autoRequested && !this.stopRequested) {
+          supervisor.stop('reconnect_safety_gate');
+          this.autoRequested = false;
+          const reasonCode = !player ? 'PLAYER_UNKNOWN' : this.isDown(player) ? 'CHARACTER_DOWN' : 'VITALS_OR_HURT_UNCONFIRMED';
+          this.recordLog('reconnect_auto_blocked', { reasonCode });
         }
       }
     }
@@ -1407,8 +1429,18 @@ export class VendorRunner {
     })();
   }
 
-  private handleSocketClosed(): void {
+  private handleSocketClosed(error?: unknown): void {
     if (this.stopRequested || this.lifecycle === 'halted') return;
+    if (error instanceof AuthError && (error.code === 'REFRESH_INVALID' || error.code === 'INVALID_CREDENTIALS')) {
+      this.lifecycle = 'error';
+      this.clearReconnectTimer();
+      this.recordLog('auth_failed', { reasonCode: error.code });
+      this.cleanupTransport();
+      this.tokenManager?.stop();
+      this.tokenManager = null;
+      void this.closeTransport();
+      return;
+    }
     for (const listener of this.disconnectListeners) {
       try { listener(); } catch { /* observer failures must not change reconnect behavior */ }
     }
@@ -1423,23 +1455,30 @@ export class VendorRunner {
     this.observedKhu = null;
     this.observedSoKhu = null;
     this.khuList = null;
-    if (this.reconnectAttempts >= this.options.reconnectMaxRetries) {
+    const now = this.input.reconnectClock?.now() ?? Date.now();
+    this.reconnectStartedAt ??= now;
+    const elapsed = Math.max(0, now - this.reconnectStartedAt);
+    if (this.options.reconnectGiveUpMs > 0 && elapsed >= this.options.reconnectGiveUpMs) {
       this.lifecycle = 'error';
-      this.recordLog('reconnect_exhausted');
+      this.recordLog('reconnect_exhausted', { detail: `attempts=${this.reconnectAttempts}; elapsedMs=${elapsed}` });
       return;
     }
-    const delay = Math.min(this.options.reconnectBaseDelayMs * (2 ** this.reconnectAttempts), this.options.reconnectMaxDelayMs);
+    const cap = Math.min(this.options.reconnectBaseDelayMs * (2 ** this.reconnectAttempts), this.options.reconnectMaxDelayMs);
+    const random = Math.min(1, Math.max(0, this.input.reconnectRandom?.() ?? Math.random()));
+    const delay = Math.min(this.options.reconnectMaxDelayMs, Math.max(0, Math.round(cap * (0.8 + random * 0.4))));
     this.reconnectAttempts += 1;
     this.lifecycle = 'connecting';
     this.clearReconnectTimer();
-    this.reconnectTimer = setTimeout(() => {
+    const clock = this.input.reconnectClock;
+    this.reconnectTimer = clock ? clock.setTimeout(() => {
       this.reconnectTimer = null;
-      void this.connectAndBuild(true).catch(() => {
-        this.handleSocketClosed();
-      });
+      void this.connectAndBuild(true).catch((error) => this.handleSocketClosed(error));
+    }, delay) : setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connectAndBuild(true).catch((error) => this.handleSocketClosed(error));
     }, delay);
     this.reconnectTimer.unref?.();
-    this.recordLog('reconnect_scheduled');
+    this.recordLog('reconnect_scheduled', { detail: `attempt=${this.reconnectAttempts}; delayMs=${delay}; elapsedMs=${elapsed}` });
   }
 
   private failKhuWaiters(error: KhuError): void {
@@ -1933,7 +1972,10 @@ export class VendorRunner {
   }
 
   private clearReconnectTimer(): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+      if (this.input.reconnectClock) this.input.reconnectClock.clearTimeout(this.reconnectTimer);
+      else clearTimeout(this.reconnectTimer);
+    }
     this.reconnectTimer = null;
   }
 

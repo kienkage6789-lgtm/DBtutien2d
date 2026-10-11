@@ -1,3 +1,13 @@
+## 2026-10-11 — Reconnect resilience (offline)
+
+Runner reconnect now uses exponential backoff with 20% jitter and a 60,000 ms default ceiling. It keeps retrying during a continuous outage until `RECONNECT_GIVE_UP_MS` (default 1,800,000 ms); `0` disables the deadline. Config parsing falls back for malformed input and clamps the maximum delay to 1,000..300,000 ms and give-up time to 0..86,400,000 ms. WorkerPool passes both values to in-process and shard runners. The runtime snapshot carries `reconnectAttempts`, and AccountCard shows the attempt count while reconnecting.
+
+Successful reconnect resets the attempt count and outage clock. Auto resumes only when it was requested, the anchor still exists, the player is not down, the client vitals model is available, no hurt arrived during reconnect, and stop was not requested. Permanent `REFRESH_INVALID`/`INVALID_CREDENTIALS` errors stop immediately and set account `authError`; proxy transport remains attached for every retry, with no direct-socket fallback. Give-up records an account error log, audit entry, owner `system_alert`, and account status `error`, then stops the handle.
+
+Verification: related runner + shard protocol tests 55/55; full server suite 186/186 across 32 files; web Vitest 49/49; core-client/server/web TypeScript and web Vite production build pass. Tests use fake sockets, a manually advanced reconnect clock, `DATA_DIR` under `%TEMP%`, and a temporary `os.userInfo` preload because Node otherwise fails with `uv_os_get_passwd returned ENOMEM`. Five direct-source fault injections (five-attempt cutoff, missing backoff ceiling, missing outage-clock reset, forcing Auto on reconnect, and direct socket fallback) each failed the guarding test and were reverted. `pnpm build` could not run because `pnpm` is not recognized; equivalent direct builds passed. No real game or external network was used.
+
+Not verified: live reconnect behavior against the game service, real refresh-token revocation, and account alert delivery to a live dashboard. No commit was made.
+
 ## ARCHITECTURE_V2 Step 5B acceptance repair (2026-10-11)
 
 Runtime stale snapshots now suppress map-derived context and do not update `observedMaps`; `positionKnown`, `positionCurrent`, and `locationKnown` are false while stale. The nested `vendor` snapshot is omitted while stale so old map/vitals/daily values cannot leak through it. Added WorkerPool runtime tests for stale and fresh snapshots. Added a ShardManager test that calls `start()` with fake child processes: a timed-out bot is stopped alone when a peer remains, its assignment is removed, and an otherwise empty shard is killed. No game connection is used.

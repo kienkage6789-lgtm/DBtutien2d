@@ -1582,3 +1582,14 @@ ull`/rỗng.
 - [x] Fault injection directly in source fails promptly for forced `stale = false`, stale `mapContext` built from the cached snapshot, and shard-wide kill on start timeout; all mutations were reverted.
 - [x] Current checks: related tests 21/21, all 32 server test files 181/181, web 49/49, direct core/server/web TypeScript and web production build pass. `pnpm build` remains unrun successfully because `pnpm` is absent from this shell; see `SESSION_LOG.md` for commands and the Node test preload limitation.
 - [ ] Live game behavior and shard soak on VPS/TV box remain unverified.
+
+## Reconnect resilience — 2026-10-11
+
+- [x] Retry continuously with exponential backoff, jitter, a configurable delay ceiling, and a configurable continuous-outage deadline (`0` means no deadline).
+- [x] Pass reconnect configuration through WorkerPool to both in-process and shard runners; reject malformed values to defaults and clamp valid bounds.
+- [x] Reset retry count and outage time after success; expose the attempt count in the runner snapshot and reconnecting account card.
+- [x] Resume Auto only when it was requested and the anchor, live player, vitals model, hurt count, and down-state gates allow it; otherwise leave Auto off.
+- [x] Keep proxy transport for every retry; permanent refresh/credential errors stop immediately and populate `authError`.
+- [x] On give-up, mark the account error, write account log and audit, alert the owner, and stop the runner handle.
+- [x] Offline tests: reconnect after a virtual five-minute outage, deadline expiry, unlimited retry, capped backoff, permanent `AuthError`, proxy no-fallback, Auto resume/off/down gates; full server 186/186 and web 49/49. Five requested direct-source fault injections failed their guarding tests and were reverted.
+- [~] `pnpm build` unavailable because `pnpm` is missing from PATH; direct core/server/web TypeScript builds and web Vite production build passed. No real game session or live alert delivery was exercised.

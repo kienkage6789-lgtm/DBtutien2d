@@ -10,7 +10,7 @@ export const RUNNER_RPC_METHODS = [
 ] as const;
 export type RunnerRpcMethod = typeof RUNNER_RPC_METHODS[number];
 export type SerializableRunnerOptions = Omit<VendorRunnerOptions,
-  'credentials' | 'transport' | 'WebSocketImpl' | 'tokenManager' | 'envFactory' | 'onLog' | 'onSessionUpdated' | 'onSnapshotChanged'>;
+  'credentials' | 'transport' | 'WebSocketImpl' | 'tokenManager' | 'envFactory' | 'onLog' | 'onSessionUpdated' | 'onSnapshotChanged' | 'reconnectRandom' | 'reconnectClock'>;
 
 export type ParentMessage =
   | { v: number; type: 'start'; accountId: string; credentials: VendorRunnerOptions['credentials']; gameServerUrl: string; proxyUrl: string | null; options: SerializableRunnerOptions }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import nodeTest from 'node:test';
-import type { AuthSession } from '@tutien2d/core-client';
+import { AuthError, type AuthSession } from '@tutien2d/core-client';
 import { VendorRunner, type VendorTokenManagerLike } from './vendor-runner.js';
 import type { VendorSocketLike } from './vendor-env.js';
 import { InProcessRunnerHandle } from '../orchestrator/runner-handle.js';
@@ -11,6 +11,32 @@ import { registerRunnerHandleContract } from '../orchestrator/runner-handle.cont
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 const vendorClientDir = path.join(repoRoot, 'vendor/tutien2d-public-client/2026-10-06');
 const test = (name: string, fn: () => void | Promise<void>) => nodeTest(name, { timeout: 20_000 }, fn);
+
+class ManualReconnectClock {
+  public nowMs = 0;
+  private nextId = 0;
+  private timers = new Map<number, { at: number; callback: () => void }>();
+  public now(): number { return this.nowMs; }
+  public setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout> {
+    const id = ++this.nextId;
+    this.timers.set(id, { at: this.nowMs + delayMs, callback });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }
+  public clearTimeout(timer: ReturnType<typeof setTimeout>): void { this.timers.delete(timer as unknown as number); }
+  public nextDelay(): number | null {
+    const due = [...this.timers.values()].map((timer) => timer.at).sort((a, b) => a - b)[0];
+    return due === undefined ? null : due - this.nowMs;
+  }
+  public advance(ms: number): void {
+    this.nowMs += ms;
+    while (true) {
+      const next = [...this.timers.entries()].filter(([, timer]) => timer.at <= this.nowMs).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      this.timers.delete(next[0]);
+      next[1].callback();
+    }
+  }
+}
 
 const fixtureSession: AuthSession = {
   accessToken: 'fixture-access-token',
@@ -50,6 +76,7 @@ class FakeSocket implements VendorSocketLike {
   public static outgoing: Array<{ op?: string; act?: string; khu?: number; mapId?: string; cmd?: string; rid?: number }> = [];
   /** false: giả lập server thật, gói `you` chỉ đến sau khi nhân vật di chuyển (không có ngay lúc vào game). */
   public static emitYou = true;
+  public static downed = false;
   public static readonly CONNECTING = 0;
   public static readonly OPEN = 1;
   public static readonly CLOSING = 2;
@@ -133,7 +160,7 @@ class FakeSocket implements VendorSocketLike {
         setTimeout(() => {
           this.emit({ op: 'map', mapId: FakeSocket.mapId, ...(FakeSocket.mapKhu === undefined ? {} : { khu: FakeSocket.mapKhu }), soKhu: FakeSocket.soKhu, ep: FakeSocket.mapEp, x: FakeSocket.spawn.x, y: FakeSocket.spawn.y, dir: 0, p: [] });
           this.emit({ op: 'snap2', full: true, ep: 1, seq: 1, p: [], m: [] });
-          if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
+          if (FakeSocket.emitYou) this.emit({ op: 'you', seq: 10, x: 240, y: 192, hp: 100, mp: 50, dn: FakeSocket.downed, fix: true });
         }, FakeSocket.mapDelayMs);
       }, 5);
     });
@@ -175,6 +202,7 @@ function resetKhuFixture(): void {
   FakeSocket.outgoing = [];
   FakeSocket.moves = [];
   FakeSocket.dailyAckResponses = false;
+  FakeSocket.downed = false;
 }
 
 function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRunner>[0]> = {}): VendorRunner {
@@ -294,6 +322,137 @@ test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, a
   } finally {
     await runner.stop();
   }
+});
+
+test('VendorRunner stays alive across a virtual five minute outage and resets its reconnect window on success', async () => {
+  FakeSocket.instances = [];
+  const clock = new ManualReconnectClock();
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5, reconnectMaxDelayMs: 2_000, reconnectGiveUpMs: 600_000 });
+  try {
+    await runner.start();
+    FakeSocket.instances[0]!.serverClose();
+    assert.equal(runner.getSnapshot().lifecycle, 'connecting');
+    clock.advance(5 * 60_000);
+    await waitUntil(() => FakeSocket.instances.length >= 2 && runner.getSnapshot().lifecycle === 'in_game');
+    const state = runner as unknown as { reconnectAttempts: number; reconnectStartedAt: number | null };
+    assert.equal(state.reconnectAttempts, 0);
+    assert.equal(state.reconnectStartedAt, null);
+  } finally { await runner.stop(); }
+});
+
+test('VendorRunner gives up only after the continuous disconnect deadline and caps retry delay', async () => {
+  const clock = new ManualReconnectClock();
+  const logs: Array<{ code: string }> = [];
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5, reconnectBaseDelayMs: 1_000,
+    reconnectMaxDelayMs: 2_500, reconnectGiveUpMs: 5_000, onLog: (event) => logs.push(event) });
+  (runner as unknown as { connectAndBuild: () => Promise<void> }).connectAndBuild = async () => { throw new Error('SOCKET_DOWN'); };
+  (runner as unknown as { handleSocketClosed: () => void }).handleSocketClosed();
+  assert.equal(clock.nextDelay(), 1_000);
+  clock.advance(1_000); await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(clock.nextDelay(), 2_000);
+  clock.advance(2_000); await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(clock.nextDelay(), 2_500, 'backoff must stop growing at the configured ceiling');
+  clock.advance(2_500); await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(runner.getLifecycle(), 'error');
+  assert.ok(logs.some((event) => event.code === 'reconnect_exhausted'));
+  await runner.stop();
+});
+
+test('VendorRunner retries forever when give-up is zero and stops immediately on permanent AuthError', async () => {
+  const clock = new ManualReconnectClock();
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0, reconnectMaxDelayMs: 1_500, reconnectGiveUpMs: 0 });
+  (runner as unknown as { connectAndBuild: () => Promise<void> }).connectAndBuild = async () => { throw new Error('SOCKET_DOWN'); };
+  (runner as unknown as { handleSocketClosed: () => void }).handleSocketClosed();
+  for (let i = 0; i < 10; i += 1) {
+    const delay = clock.nextDelay();
+    assert.notEqual(delay, null);
+    assert.ok(delay! <= 1_500);
+    clock.advance(delay!); await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(runner.getLifecycle(), 'connecting');
+  assert.equal((runner as unknown as { reconnectAttempts: number }).reconnectAttempts, 11);
+  await runner.stop();
+
+  const authClock = new ManualReconnectClock();
+  const authLogs: Array<{ code: string; reasonCode?: string }> = [];
+  const authRunner = createKhuRunner({ reconnectClock: authClock, onLog: (event) => authLogs.push(event) });
+  (authRunner as unknown as { connectAndBuild: () => Promise<void> }).connectAndBuild = async () => { throw new AuthError('REFRESH_INVALID', 'fixture revoked'); };
+  (authRunner as unknown as { handleSocketClosed: () => void }).handleSocketClosed();
+  authClock.advance(authClock.nextDelay()!); await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(authRunner.getLifecycle(), 'error');
+  assert.equal(authClock.nextDelay(), null, 'permanent auth failure must not schedule another retry');
+  assert.ok(authLogs.some((event) => event.code === 'auth_failed' && event.reasonCode === 'REFRESH_INVALID'));
+  await authRunner.stop();
+});
+
+test('VendorRunner retries through the same proxy transport and never falls back to a direct socket', async () => {
+  FakeSocket.instances = [];
+  const clock = new ManualReconnectClock();
+  let proxySockets = 0;
+  let directSockets = 0;
+  class FailingProxySocket extends FakeSocket {
+    public constructor(url: string) { super(url); proxySockets += 1; }
+    public send(data: string): void {
+      super.send(data);
+      const packet = JSON.parse(data) as { op?: string };
+      if (packet.op === 'hello' && proxySockets === 1) queueMicrotask(() => this.serverClose());
+    }
+  }
+  class DirectSocket extends FakeSocket { public constructor(url: string) { super(url); directSockets += 1; } }
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5,
+    WebSocketImpl: DirectSocket as unknown as new (url: string) => VendorSocketLike,
+    transport: { fetch: globalThis.fetch, WebSocketImpl: FailingProxySocket as unknown as new (url: string) => VendorSocketLike, close() {} } });
+  try {
+    await runner.start();
+    clock.advance(5_000);
+    await waitUntil(() => proxySockets >= 2 && runner.getSnapshot().lifecycle === 'in_game');
+    assert.equal(directSockets, 0);
+  } finally { await runner.stop(); }
+});
+
+test('VendorRunner preserves Auto preference on reconnect and never enables it for a downed player', async () => {
+  FakeSocket.instances = [];
+  const clock = new ManualReconnectClock();
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5 });
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().mapId !== null);
+    await runner.startAuto();
+    assert.equal(runner.getSnapshot().autoRequested, true);
+    FakeSocket.instances[0]!.serverClose();
+    clock.advance(5_000);
+    await waitUntil(() => FakeSocket.instances.length >= 2 && runner.getSnapshot().lifecycle === 'farming');
+    assert.equal(runner.getSnapshot().supervisor.phase, 'farming');
+    await runner.stop();
+  } finally { await runner.stop(); }
+
+  FakeSocket.instances = [];
+  const offClock = new ManualReconnectClock();
+  const offRunner = createKhuRunner({ reconnectClock: offClock, reconnectRandom: () => 0.5 });
+  try {
+    await offRunner.start();
+    FakeSocket.instances[0]!.serverClose();
+    offClock.advance(5_000);
+    await waitUntil(() => FakeSocket.instances.length >= 2 && offRunner.getSnapshot().lifecycle === 'in_game');
+    assert.equal(offRunner.getSnapshot().autoRequested, false);
+    assert.notEqual(offRunner.getSnapshot().supervisor.phase, 'farming');
+  } finally { await offRunner.stop(); }
+
+  FakeSocket.instances = [];
+  FakeSocket.downed = false;
+  const downClock = new ManualReconnectClock();
+  const downRunner = createKhuRunner({ reconnectClock: downClock, reconnectRandom: () => 0.5 });
+  try {
+    await downRunner.start();
+    await waitUntil(() => downRunner.getSnapshot().mapId !== null);
+    await downRunner.startAuto();
+    FakeSocket.downed = true;
+    FakeSocket.instances[0]!.serverClose();
+    downClock.advance(5_000);
+    await waitUntil(() => FakeSocket.instances.length >= 2 && downRunner.getSnapshot().lifecycle === 'in_game');
+    assert.equal(downRunner.getSnapshot().autoRequested, false);
+    assert.equal(downRunner.getSnapshot().downed, true);
+  } finally { FakeSocket.downed = false; await downRunner.stop(); }
 });
 
 test('VendorRunner validates the configured game URL before loading the client', () => {

@@ -184,7 +184,8 @@ export class WorkerPool {
         this.activeVendors.delete(accountId);
         const account = db.getAccountById(accountId);
         db.updateAccount(accountId, { status: 'stopped' });
-        const exitInfo = `exitCode=${details?.exitCode ?? 'unknown'} signal=${details?.signal ?? 'none'}`;
+        const killedBy = details?.killReason ? `; killedBy=server:${details.killReason}` : details?.signal === 'SIGKILL' ? '; killedBy=external (có thể do bộ nhớ: kiểm tra `dmesg | grep -i killed`)' : '';
+        const exitInfo = `exitCode=${details?.exitCode ?? 'unknown'} signal=${details?.signal ?? 'none'}${killedBy}`;
         const saved = db.addLog(accountId, 'error', 'Shard', `Shard exited; runner was stopped (${exitInfo}).${details?.stderr ? ` stderr: ${details.stderr}` : ''}`.slice(0, 5000));
         wsHub.broadcastLog(saved);
         const detail = `shard=${shardId}; ${exitInfo}${details?.stderr ? `; stderr=${details.stderr}` : ''}`.slice(0, 5000);
@@ -344,6 +345,8 @@ export class WorkerPool {
       allowedGameServerUrl: CONFIG.GAME_SERVER_URL,
       vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
       loopIntervalMs: CONFIG.VENDOR_LOOP_INTERVAL_MS,
+      reconnectMaxDelayMs: CONFIG.RECONNECT_MAX_DELAY_MS,
+      reconnectGiveUpMs: CONFIG.RECONNECT_GIVE_UP_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
@@ -355,12 +358,25 @@ export class WorkerPool {
       db.updateCredentials(accountId, { refreshToken: session.refreshToken });
     });
     handle.onLog((event) => {
-        const level = event.code.includes('failed') || event.code.includes('error') || event.code.includes('halted')
+        const level = event.code.includes('failed') || event.code.includes('error') || event.code.includes('halted') || event.code === 'reconnect_exhausted'
           ? 'error'
           : event.code.includes('warning') || event.code.includes('death') ? 'warn' : 'info';
         const message = `Vendor ${event.code}${event.reasonCode ? ` (${event.reasonCode})` : ''}${event.detail ? ` ${event.detail}` : ''}`;
         const saved = db.addLog(accountId, level, 'VendorRunner', message);
         wsHub.broadcastLog(saved);
+        if (event.code === 'auth_failed') {
+          const authError = event.reasonCode ?? 'AUTH_FAILED';
+          db.updateAccount(accountId, { status: 'error', authError });
+          const terminalHandle = this.activeVendors.get(accountId);
+          if (terminalHandle) { this.activeVendors.delete(accountId); void terminalHandle.stop().catch(() => undefined); }
+        } else if (event.code === 'reconnect_exhausted') {
+          db.updateAccount(accountId, { status: 'error', authError: null });
+          const account = db.getAccountById(accountId);
+          db.addAuditLog({ actorId: null, action: 'runner_reconnect_exhausted', targetType: 'account', targetId: accountId, detail: event.detail ?? 'continuous_disconnect_timeout' });
+          if (account?.ownerId) wsHub.broadcastSystemAlertToOwner(account.ownerId, { reason: 'reconnect_exhausted', message: 'Bot mất kết nối quá lâu và đã dừng.' });
+          const terminalHandle = this.activeVendors.get(accountId);
+          if (terminalHandle) { this.activeVendors.delete(accountId); void terminalHandle.stop().catch(() => undefined); }
+        }
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     });
     this.activeVendors.set(accountId, handle);
@@ -388,7 +404,9 @@ export class WorkerPool {
       return true;
     } catch (error) {
       this.activeVendors.delete(accountId);
-      const rawCode = error instanceof Error ? error.message.split(':', 1)[0].trim() : '';
+      const explicitCode = error && typeof error === 'object' && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
+        ? (error as { code: string }).code : '';
+      const rawCode = explicitCode || (error instanceof Error ? error.message.split(':', 1)[0].trim() : '');
       const code = /^[A-Z][A-Z0-9_]{2,79}$/.test(rawCode) ? rawCode : 'UNKNOWN';
       if (code === 'SHARD_EXITED' || code === 'SHARD_DISCONNECTED') {
         db.updateAccount(accountId, { status: 'stopped' });
@@ -401,6 +419,7 @@ export class WorkerPool {
         throw error;
       }
       db.updateAccount(accountId, { status: 'error' });
+      if (code === 'REFRESH_INVALID' || code === 'INVALID_CREDENTIALS') db.updateAccount(accountId, { authError: code });
       const saved = db.addLog(accountId, 'error', 'VendorRunner', `Vendor runner start failed (${code})`);
       wsHub.broadcastLog(saved);
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));

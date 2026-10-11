@@ -76,6 +76,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
     </div>
 
     {account.dataStale && <p role="status" className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-200">Dữ liệu cũ · trạng thái chưa biết</p>}
+    {account.connection === 'RECONNECTING' && <p role="status" className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-200">Đang kết nối lại · lần thử {account.vendor?.reconnectAttempts ?? 0}</p>}
 
     {account.authError && <div className="mb-3 p-2 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-2">
       <span className="flex items-center gap-1.5 truncate"><AlertTriangle className="w-4 h-4 shrink-0" />{account.authError}</span>
