@@ -1532,3 +1532,12 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 3. [x] Hợp đồng chạy trên gateway đã start: stop đóng socket/hủy walk/idempotent; cancel chỉ đúng ID và kết thúc waiter; down chặn walk, Auto và đổi khu bằng đúng mã; disconnect/unsubscribe và listener lỗi không cản reconnect; start lặp không tạo phiên; hurt count không giảm; HP/MP/isDown chưa xác nhận giữ `null`. Bảy bất biến mỗi implementation; test tổng gateway 15/15.
 4. [x] Test server 135/135 trên 27 file (125 trước thay đổi), `vendor-runner.test.ts` 20/20, web 48/48. Mutation HP→0, isDown null→false, bỏ operationId, stop no-op đều làm test VendorGateway fail; đã khôi phục.
 5. [~] Server/core-client build và web Vite build với `--configLoader runner` pass. `pnpm build` không có PATH; `corepack pnpm build` vướng script lồng; build workspace bằng shim bị sandbox chặn esbuild đọc config Vite. Preload test tạm xử lý `uv_os_get_passwd ... ENOMEM`, đã xóa. Chưa chạy bot thật.
+
+## AG. ARCHITECTURE_V2 Bước 5A — RunnerHandle (2026-10-11)
+
+1. [x] `RunnerHandle` có lifecycle, snapshot/cache sync (`ageMs`/`stale`), lệnh Promise và event unsubscribe; `InProcessRunnerHandle` composition quanh `VendorGateway`/`VendorRunner`, factory mặc định được tiêm vào `WorkerPool`.
+2. [x] `WorkerPool` chỉ giữ/gọi `RunnerHandle`; route đã await lệnh async, giữ payload/status/error mapping. Credential, proxy, entitlement và capacity vẫn do `WorkerPool` xử lý.
+3. [x] `runner-handle.contract.ts` là một registrar dùng chung cho fake và `InProcessRunnerHandle` thật. Bao phủ (a)-(h), thêm chuyển tiếp/hủy đăng ký `onLog`, snapshot trả bản sao và cache tươi; test dùng timeout tường minh. Xóa bộ test handle bị sao chép khỏi `vendor-runner.test.ts`.
+4. [x] Bảy mutation trên handle thật (HP chưa biết→0, stop no-op, cancel sai ID, bỏ forward session/log, bỏ `jsonClone`, `stale: true`) đều fail gọn; stop no-op không treo nhờ cleanup fixture. Test liên quan 42/42: `runner-handle.test.ts` 11/11, `vendor-runner.test.ts` 31/31. Toàn server 157/157 trên 28 file; web 48/48.
+5. [~] Server/core-client build và web TypeScript/Vite production build pass riêng; workspace `pnpm build` bị lỗi sandbox khi Vite/esbuild đọc config mặc định. Lệnh pnpm gốc không có PATH; Vitest 48/48 với `--configLoader runner`. Server cần preload `os.userInfo` do môi trường Node `uv_os_get_passwd returned ENOMEM`. Chi tiết lệnh/kết quả ở `SESSION_LOG.md`.
+6. [ ] Chưa chạy bot thật; chưa tạo child process/IPC/shard hay xác minh cho Bước 5B.

@@ -3,9 +3,8 @@ import { db } from '../db/database.js';
 import { wsHub } from '../ws/hub.js';
 import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
-import { VendorRunner, type KhuInfo, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
-import { VendorGateway } from '../gateway/vendor-gateway.js';
-import type { GameGateway } from '../gateway/game-gateway.js';
+import type { KhuInfo, VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { createInProcessRunnerHandle, type RunnerHandle, type RunnerHandleFactory } from './runner-handle.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -164,7 +163,7 @@ const emptyEntityContext = (): MapEntityContext => ({
 });
 
 export class WorkerPool {
-  private readonly activeVendors = new Map<string, { runner: VendorRunner; gateway: GameGateway }>();
+  private readonly activeVendors = new Map<string, RunnerHandle>();
   private runtimeBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private readonly observedMaps = new Map<string, ObservedMap>();
   private readonly proxyChecker = new ProxyChecker();
@@ -175,6 +174,8 @@ export class WorkerPool {
     anonKey: CONFIG.SUPABASE_ANON_KEY,
     gameApiBase: CONFIG.GAME_SERVER_URL.replace(/^ws/i, 'http'),
   });
+
+  public constructor(private readonly createRunnerHandle: RunnerHandleFactory = createInProcessRunnerHandle) {}
 
   /** Verify credentials without starting a game session. */
   public async verifyLogin(accountName: string, password: string, transport?: ProxyTransport) {
@@ -308,7 +309,7 @@ export class WorkerPool {
       throw new Error(message);
     }
 
-    const runner = new VendorRunner({
+    const handle = this.createRunnerHandle({
       accountName: account.accountName,
       credentials: creds,
       gameServerUrl: CONFIG.GAME_SERVER_URL,
@@ -318,10 +319,11 @@ export class WorkerPool {
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
-      onSessionUpdated: (session) => {
-        db.updateCredentials(accountId, { refreshToken: session.refreshToken });
-      },
-      onLog: (event) => {
+    });
+    handle.onSessionUpdated((session) => {
+      db.updateCredentials(accountId, { refreshToken: session.refreshToken });
+    });
+    handle.onLog((event) => {
         const level = event.code.includes('failed') || event.code.includes('error') || event.code.includes('halted')
           ? 'error'
           : event.code.includes('warning') || event.code.includes('death') ? 'warn' : 'info';
@@ -329,23 +331,20 @@ export class WorkerPool {
         const saved = db.addLog(accountId, level, 'VendorRunner', message);
         wsHub.broadcastLog(saved);
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
-      },
     });
-
-    const gateway = new VendorGateway(runner);
-    this.activeVendors.set(accountId, { runner, gateway });
+    this.activeVendors.set(accountId, handle);
     this.ensureRuntimeBroadcast();
     try {
-      await gateway.start();
-      if (this.activeVendors.get(accountId)?.runner !== runner) {
-        await runner.stop().catch(() => undefined);
+      await handle.start();
+      if (this.activeVendors.get(accountId) !== handle) {
+        await handle.stop().catch(() => undefined);
         db.updateAccount(accountId, { status: 'stopped' });
         return false;
       }
       const owner = db.getUserById(account.ownerId);
       const afterStartEntitlement = owner?.role === 'user' ? entitlement(owner, Date.now()) : null;
       if (afterStartEntitlement && afterStartEntitlement.state !== 'active') {
-        await runner.stop().catch(() => undefined);
+        await handle.stop().catch(() => undefined);
         this.activeVendors.delete(accountId);
         db.updateAccount(accountId, { status: 'stopped' });
         const code = afterStartEntitlement.state === 'disabled'
@@ -402,7 +401,7 @@ export class WorkerPool {
     }
 
     try {
-      await active.gateway.stop();
+      await active.stop();
       this.activeVendors.delete(accountId);
       if (!opts.keepStatus) db.updateAccount(accountId, { status: 'stopped' });
       wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
@@ -491,33 +490,33 @@ export class WorkerPool {
   public async startVendorAuto(accountId: string, anchor?: AutoAnchor): Promise<VendorRunnerSnapshot> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
-    await active.gateway.startAuto(anchor);
+    await active.startAuto(anchor);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
-    return active.runner.getSnapshot();
+    return active.getSnapshot().value;
   }
 
-  public stopVendorAuto(accountId: string): VendorRunnerSnapshot {
+  public async stopVendorAuto(accountId: string): Promise<VendorRunnerSnapshot> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    active.gateway.stopAuto();
-    const snapshot = active.runner.getSnapshot();
+    await active.stopAuto();
+    const snapshot = active.getSnapshot().value;
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return snapshot;
   }
 
-  public moveTo(accountId: string, request: WalkRequest): WalkOperation {
+  public async moveTo(accountId: string, request: WalkRequest): Promise<WalkOperation> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
-    const operation = active.gateway.walkTo(request);
+    const operation = await active.walkTo(request);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
   }
 
-  public cancelMoveTo(accountId: string, operationId: string): WalkOperation {
+  public async cancelMoveTo(accountId: string, operationId: string): Promise<WalkOperation> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    if (!active.gateway.cancelWalk(operationId)) throw new Error('OPERATION_NOT_FOUND');
-    const operation = active.runner.getSnapshot().moveTo;
+    if (!await active.cancelWalk(operationId)) throw new Error('OPERATION_NOT_FOUND');
+    const operation = active.getSnapshot().value.moveTo;
     if (!operation) throw new Error('OPERATION_NOT_FOUND');
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
@@ -526,29 +525,31 @@ export class WorkerPool {
   public getDaily(accountId: string): { status: DailyStatus; current: DailyOperation | null } {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    return active.runner.getDailySnapshot(true);
+    const snapshot = active.getDailySnapshot(true).value;
+    if (!snapshot.status) throw new Error('NOT_IN_GAME');
+    return snapshot as { status: DailyStatus; current: DailyOperation | null };
   }
 
-  public startDailyCheckin(accountId: string): DailyOperation {
+  public async startDailyCheckin(accountId: string): Promise<DailyOperation> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const operation = active.runner.startDailyCheckin();
+    const operation = await active.startDailyCheckin();
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
   }
 
-  public startDailySeed(accountId: string, taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): DailyOperation {
+  public async startDailySeed(accountId: string, taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): Promise<DailyOperation> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const operation = active.runner.startDailySeed(taskId, runs, options);
+    const operation = await active.startDailySeed(taskId, runs, options);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
   }
 
-  public cancelDaily(accountId: string, operationId: string): DailyOperation {
+  public async cancelDaily(accountId: string, operationId: string): Promise<DailyOperation> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const operation = active.runner.cancelDaily(operationId);
+    const operation = await active.cancelDaily(operationId);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
   }
@@ -556,7 +557,7 @@ export class WorkerPool {
   public async changeKhu(accountId: string, khu: number): Promise<AccountRuntimeInfo> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
-    await active.gateway.changeKhu(khu);
+    await active.changeKhu(khu);
     const runtime = this.getRuntimeInfo(accountId);
     wsHub.broadcastAccountUpdate(runtime);
     return runtime;
@@ -565,34 +566,35 @@ export class WorkerPool {
   public async getKhu(accountId: string, refresh = false): Promise<KhuInfo> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    if (refresh) await active.gateway.requestKhuList();
-    return active.gateway.getKhuInfo() as KhuInfo;
+    if (refresh) await active.requestKhuList();
+    return await active.getKhuInfo() as KhuInfo;
   }
 
   /** THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md). */
-  public questProbe(accountId: string, act: string, params: { taskId?: string; propId?: string }) {
+  public async questProbe(accountId: string, act: string, params: { taskId?: string; propId?: string }) {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    return active.runner.questProbe(act, params);
+    return active.questProbe(act, params);
   }
 
   /** THỬ NGHIỆM đo giao thức đổi khu (docs/RESEARCH_KHU_CHANGE.md). */
-  public khuProbe(accountId: string, action: 'xem' | 'chon', khu?: number) {
+  public async khuProbe(accountId: string, action: 'xem' | 'chon', khu?: number) {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    return active.runner.khuProbe(action, khu);
+    return active.khuProbe(action, khu);
   }
 
   public getKhuProbe(accountId: string) {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    return active.runner.getKhuProbe();
+    return active.getKhuProbe().value;
   }
 
   public getReachableMaps(accountId: string): { currentMapId: string; maps: ReachableMapInfo[] } {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const result = active.runner.getReachableMaps();
+    const result = active.getReachableMaps().value;
+    if (!result) throw new Error('VENDOR_MAP_NOT_READY');
     const names = new Map(PUBLIC_CLIENT_MAP_CATALOG.map((map) => [map.mapId, map.name] as const));
     return {
       currentMapId: result.currentMapId,
@@ -607,7 +609,7 @@ export class WorkerPool {
     const account = db.getAccountById(accountId);
     const active = this.activeVendors.get(accountId);
     return active
-      ? this.getVendorRuntimeInfo(accountId, account, active.runner)
+      ? this.getVendorRuntimeInfo(accountId, account, active)
       : this.getStoppedRuntimeInfo(accountId, account);
   }
 
@@ -688,10 +690,10 @@ export class WorkerPool {
   private getVendorRuntimeInfo(
     accountId: string,
     account: ReturnType<typeof db.getAccountById>,
-    runner: VendorRunner,
+    runner: RunnerHandle,
   ): AccountRuntimeInfo {
     const owner = account?.ownerId ? db.getUserById(account.ownerId) : undefined;
-    const snapshot = runner.getSnapshot();
+    const snapshot = runner.getSnapshot().value;
     const positionKnown = snapshot.mapId !== null && snapshot.x !== null && snapshot.y !== null;
     const positionCurrent = snapshot.connection === 'IN_GAME' && positionKnown;
     const locationKnown = positionCurrent && snapshot.khu !== null;
@@ -757,7 +759,7 @@ export class WorkerPool {
       dailyStatus: snapshot.dailyStatus,
       latencyMs: 0,
       activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
-      metrics: runner.getFrameMetrics(),
+      metrics: runner.getFrameMetrics().value,
       soKhu: snapshot.soKhu,
       khuList: snapshot.khuList,
       mapContext,

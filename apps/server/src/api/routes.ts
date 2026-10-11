@@ -1025,14 +1025,14 @@ apiRouter.post('/accounts/:id/auto/start', async (req: Request, res: Response) =
   }
 });
 
-apiRouter.post('/accounts/:id/auto/stop', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/auto/stop', async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
     return;
   }
   try {
-    workerPool.stopVendorAuto(accountId);
+    await workerPool.stopVendorAuto(accountId);
     res.json({ success: true, data: workerPool.getRuntimeInfo(accountId) });
   } catch (error) {
     const response = vendorAutoErrorResponse(error instanceof Error ? error.message : String(error));
@@ -1078,7 +1078,7 @@ apiRouter.post('/accounts/:id/khu', requireEntitlement, async (req: Request, res
   }
 });
 
-apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/move-to', async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1104,7 +1104,7 @@ apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
     return;
   }
   try {
-    const data = workerPool.moveTo(accountId, {
+    const data = await workerPool.moveTo(accountId, {
       ...(hasX ? { target: { x: body?.x as number, y: body?.y as number } } : {}),
       ...(hasMapId ? { targetMapId: body?.mapId as string } : {}),
       ...(Object.prototype.hasOwnProperty.call(body, 'abortOnHurt') ? { abortOnHurt: body?.abortOnHurt as boolean } : {}),
@@ -1119,7 +1119,7 @@ apiRouter.post('/accounts/:id/move-to', (req: Request, res: Response) => {
 });
 
 // THỬ NGHIỆM đo giao thức nhiệm vụ hàng ngày (docs/RESEARCH_DAILY_QUESTS.md).
-apiRouter.post('/accounts/:id/quest-probe', requireAdmin, (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/quest-probe', requireAdmin, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1128,7 +1128,7 @@ apiRouter.post('/accounts/:id/quest-probe', requireAdmin, (req: Request, res: Re
   try {
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
     if (typeof body.act !== 'string') throw new Error('TARGET_INVALID');
-    res.json({ success: true, data: workerPool.questProbe(accountId, body.act, {
+    res.json({ success: true, data: await workerPool.questProbe(accountId, body.act, {
       ...(typeof body.taskId === 'string' ? { taskId: body.taskId } : {}),
       ...(typeof body.propId === 'string' ? { propId: body.propId } : {}),
     }) });
@@ -1153,7 +1153,7 @@ apiRouter.get('/accounts/:id/khu-probe', requireAdmin, (req: Request, res: Respo
   }
 });
 
-apiRouter.post('/accounts/:id/khu-probe', requireAdmin, (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/khu-probe', requireAdmin, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1162,7 +1162,7 @@ apiRouter.post('/accounts/:id/khu-probe', requireAdmin, (req: Request, res: Resp
   try {
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
     if (body.act !== 'xem' && body.act !== 'chon') throw new Error('TARGET_INVALID');
-    res.json({ success: true, data: workerPool.khuProbe(accountId, body.act, typeof body.khu === 'number' ? body.khu : undefined) });
+    res.json({ success: true, data: await workerPool.khuProbe(accountId, body.act, typeof body.khu === 'number' ? body.khu : undefined) });
   } catch (error) {
     const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
     res.status(response.status).json(response.body);
@@ -1183,7 +1183,7 @@ apiRouter.get('/accounts/:id/reachable-maps', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/move-to/cancel', (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/move-to/cancel', async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1198,7 +1198,7 @@ apiRouter.post('/accounts/:id/move-to/cancel', (req: Request, res: Response) => 
     return;
   }
   try {
-    const data = workerPool.cancelMoveTo(accountId, operationId);
+    const data = await workerPool.cancelMoveTo(accountId, operationId);
     res.json({ success: true, data });
   } catch (error) {
     const response = moveToErrorResponse(error instanceof Error ? error.message : String(error));
@@ -1221,7 +1221,7 @@ apiRouter.get('/accounts/:id/daily', (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/accounts/:id/daily/checkin', requireEntitlement, (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/checkin', requireEntitlement, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1233,14 +1233,14 @@ apiRouter.post('/accounts/:id/daily/checkin', requireEntitlement, (req: Request,
     return;
   }
   try {
-    res.status(202).json({ success: true, data: workerPool.startDailyCheckin(accountId) });
+    res.status(202).json({ success: true, data: await workerPool.startDailyCheckin(accountId) });
   } catch (error) {
     const response = dailyErrorResponse(error);
     res.status(response.status).json(response.body);
   }
 });
 
-apiRouter.post('/accounts/:id/daily/seed', requireEntitlement, (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/seed', requireEntitlement, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1261,7 +1261,7 @@ apiRouter.post('/accounts/:id/daily/seed', requireEntitlement, (req: Request, re
   }
   try {
     const runs = body.runs === undefined ? 1 : Number(body.runs);
-    const data = workerPool.startDailySeed(accountId, body.taskId as string, runs, {
+    const data = await workerPool.startDailySeed(accountId, body.taskId as string, runs, {
       ...(body.abortOnHurt === undefined ? {} : { abortOnHurt: body.abortOnHurt as boolean }),
       ...(body.maxHurt === undefined ? {} : { maxHurt: body.maxHurt as number }),
     });
@@ -1272,7 +1272,7 @@ apiRouter.post('/accounts/:id/daily/seed', requireEntitlement, (req: Request, re
   }
 });
 
-apiRouter.post('/accounts/:id/daily/cancel', requireEntitlement, (req: Request, res: Response) => {
+apiRouter.post('/accounts/:id/daily/cancel', requireEntitlement, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {
     res.status(404).json({ success: false, error: 'account_not_found', errorCode: 'ACCOUNT_NOT_FOUND', retryable: false });
@@ -1285,7 +1285,7 @@ apiRouter.post('/accounts/:id/daily/cancel', requireEntitlement, (req: Request, 
     return;
   }
   try {
-    res.json({ success: true, data: workerPool.cancelDaily(accountId, body.operationId) });
+    res.json({ success: true, data: await workerPool.cancelDaily(accountId, body.operationId) });
   } catch (error) {
     const response = dailyErrorResponse(error);
     res.status(response.status).json(response.body);

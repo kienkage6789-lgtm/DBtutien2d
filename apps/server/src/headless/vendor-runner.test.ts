@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import type { AuthSession } from '@tutien2d/core-client';
 import { VendorRunner, type VendorTokenManagerLike } from './vendor-runner.js';
 import type { VendorSocketLike } from './vendor-env.js';
+import { InProcessRunnerHandle } from '../orchestrator/runner-handle.js';
+import { registerRunnerHandleContract } from '../orchestrator/runner-handle.contract.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 const vendorClientDir = path.join(repoRoot, 'vendor/tutien2d-public-client/2026-10-06');
+const test = (name: string, fn: () => void | Promise<void>) => nodeTest(name, { timeout: 20_000 }, fn);
 
 const fixtureSession: AuthSession = {
   accessToken: 'fixture-access-token',
@@ -23,6 +26,7 @@ class FakeTokenManager implements VendorTokenManagerLike {
   public getSession(): AuthSession { return fixtureSession; }
   public stop(): void {}
   public on(_event: 'sessionUpdated', listener: (session: AuthSession) => void): void { this.listeners.add(listener); }
+  public emitSessionUpdated(): void { for (const listener of this.listeners) listener({ ...fixtureSession, refreshToken: 'fixture-refreshed-token' }); }
 }
 
 class FakeSocket implements VendorSocketLike {
@@ -186,6 +190,46 @@ function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRun
     loopIntervalMs: 5,
     ...options,
   });
+}
+
+function createKhuHandle(tokenManager = new FakeTokenManager()): InProcessRunnerHandle {
+  resetKhuFixture();
+  return new InProcessRunnerHandle({
+    accountName: 'fixture-account', credentials: { refreshToken: 'fixture-refresh-token' },
+    gameServerUrl: 'wss://fixture.invalid/game', vendorClientDir, tokenManager,
+    WebSocketImpl: FakeSocket as unknown as new (url: string) => VendorSocketLike,
+    reconnectMaxRetries: 0, loginTimeoutMs: 500, loopIntervalMs: 5,
+  });
+}
+
+registerRunnerHandleContract('InProcessRunnerHandle', () => {
+  FakeSocket.instances = [];
+  const tokenManager = new FakeTokenManager();
+  const handle = createKhuHandle(tokenManager);
+  FakeSocket.soKhu = 20;
+  return {
+    handle,
+    setDown: (value) => { (handle.runner as any).P.SceneWorld.player.downed = value; },
+    emitDisconnect: () => FakeSocket.instances[0]?.serverClose(),
+    emitSession: () => tokenManager.emitSessionUpdated(),
+    emitLog: (event) => (handle.runner as any).recordLog(event.code, { at: event.at }),
+    sessionCount: () => FakeSocket.instances.length,
+    isSocketClosed: () => FakeSocket.instances.every((socket) => socket.readyState === FakeSocket.CLOSED),
+    waitReady: async () => { await waitForMapReady(handle.runner); },
+    pinSnapshotReference: () => {
+      const snapshot = handle.runner.getSnapshot();
+      (handle.runner as any).getSnapshot = () => snapshot;
+    },
+    forceStop: () => handle.runner.stop(),
+  };
+});
+
+async function waitForMapReady(runner: VendorRunner): Promise<void> {
+  for (let turn = 0; turn < 2_000; turn += 1) {
+    if ((runner as any).isMapReady()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail('fixture map readiness was not observed');
 }
 
 test('VendorRunner closes a measured frame in finally and preserves a frame exception', async () => {

@@ -1,6 +1,6 @@
 # Kiến trúc TuTien2D
 
-Cập nhật: 2026-10-10. Repo chỉ có một hiện thực gateway là `VendorGateway`, adapter mỏng quanh client chính thức chạy headless trong Node. `GameGateway` là giao diện cho vòng đời, state, di chuyển, Auto, khu và `DailyClient`; chưa có `ProtocolGateway`. `vendor/` là nguồn tham chiếu chỉ đọc.
+Cập nhật: 2026-10-11. `WorkerPool` quản lý runner qua `RunnerHandle`; hiện factory mặc định tạo `InProcessRunnerHandle`, composition quanh `VendorGateway` và `VendorRunner`. `RunnerHandle` giữ các lệnh bất đồng bộ, đọc snapshot đồng bộ kèm tuổi dữ liệu, và các sự kiện log/session/disconnect để sau này có thể thay bằng handle IPC. Chưa tạo tiến trình con hay shard. Chưa có `ProtocolGateway`. `vendor/` là nguồn tham chiếu chỉ đọc.
 
 ## Luồng chính
 
@@ -8,12 +8,14 @@ Cập nhật: 2026-10-10. Repo chỉ có một hiện thực gateway là `Vendor
 Dashboard REST/WS
         │
         ▼
-apps/server WorkerPool ── VendorGateway ── VendorRunner ── vendor client trong node:vm ── game server
-        │                        │
-        └── runtime snapshot ────┴── AutoSupervisor
+apps/server WorkerPool ── RunnerHandle ── InProcessRunnerHandle ── VendorGateway ── VendorRunner ── vendor client trong node:vm ── game server
+        │                                  │
+        └── runtime snapshot ──────────────┴── AutoSupervisor
 ```
 
-- `WorkerPool.startAccount` luôn gọi `startVendorAccount`; mỗi account tối đa một `VendorGateway`/`VendorRunner`.
+- `WorkerPool.startAccount` giữ xác thực, proxy, entitlement và capacity ở tiến trình chính; factory tạo handle và mỗi account tối đa một handle/phiên.
+- `RunnerHandle` nằm tại `apps/server/src/orchestrator/runner-handle.ts`; các giá trị đọc đồng bộ được trả dưới dạng cache (`ageMs`, `stale`), còn các lệnh điều khiển trả `Promise`.
+- `InProcessRunnerHandle` chỉ uỷ quyền qua `VendorGateway`/`VendorRunner`; không có child process, thay đổi nhịp frame hay logic Auto.
 - `GameGateway` được định nghĩa tại `apps/server/src/gateway`; `VendorGateway` chỉ uỷ quyền, không giữ protocol hoặc safety logic riêng.
 - `DailyQuests` tiếp tục phụ thuộc `DailyClient`; `VendorGateway.daily` cung cấp cùng interface từ runner.
 - `VendorRunner` giữ auth/session, WebSocket chính thức, snapshot HP/MP/vị trí, counters, hurt/death và vòng đời Auto.

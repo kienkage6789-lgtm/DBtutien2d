@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — ARCHITECTURE_V2 Bước 5A: RunnerHandle (offline)
+
+Phạm vi mục này: refactor `RunnerHandle` đã hoàn thành ở phần trước; lượt này chỉ củng cố test hợp đồng, không đổi hành vi runtime. `runner-handle.contract.ts` là registrar chung chạy trên `FakeRunnerHandle` và `InProcessRunnerHandle` thật bằng `FakeSocket` offline trong `vendor-runner.test.ts`. Xóa các test handle bị sao chép; Bước 5B có thể đăng ký `RemoteRunnerHandle` cùng hợp đồng. Hợp đồng bao gồm (a)-(h) của PROMPT_V2_STEP5A và (i) chuyển tiếp/huỷ đăng ký `onLog`, (j) đọc snapshot trả bản sao; đọc mới kiểm tra `ageMs: 0`/`stale: false`. Mọi test vendor trong file có timeout 20 giây; test hợp đồng có timeout 5 giây và cleanup fixture trực tiếp để mutation stop no-op không giữ socket/timer sống.
+
+Các lệnh route vốn gọi thao tác sync (`stop Auto`, walk/cancel, daily, probe) đã thành async và đều được await trong `routes.ts`; giữ nguyên body/status/error mapping. E2E multi-user tiếp tục đăng nhập test và gọi `/api/accounts`, `/api/admin/health`. Không sửa `vendor/`, `auto-supervisor.ts`, không chạy game thật/mạng ngoài.
+
+Kiểm tra test hiện tại: hai file liên quan 42/42 khi chạy chung; riêng `runner-handle.test.ts` 11/11 và `vendor-runner.test.ts` 31/31. Tất cả test server bằng `tsx --test` trên đủ 28 file pass 157/157 (151 trước lượt củng cố). Web Vitest 48/48. Bảy fault injection trực tiếp lên adapter thật (HP chưa biết→0, stop no-op, cancel sai ID, bỏ chuyển tiếp session, bỏ chuyển tiếp log, bỏ `jsonClone` trong cache, `stale: true` khi tươi) đều kết thúc exit 1 và được hoàn nguyên; stop no-op fail trong khoảng 0,46 giây, không treo.
+
+Kiểm tra build: lệnh gốc `pnpm build` và `pnpm --filter @tutien2d/web test` không tìm thấy executable. Với shim pnpm tạm, build workspace chạy `tsc` cho core-client/server/web thành công nhưng Vite/esbuild bị sandbox từ chối đọc cấu hình (`Access is denied`); `vite build --configLoader runner` chạy trực tiếp trong `apps/web` pass. Server/core-client build riêng pass. Vitest trực tiếp trong `apps/web` với `--configLoader runner` pass 48/48. Test Node cần preload tạm chỉ thay `os.userInfo` do `uv_os_get_passwd returned ENOMEM`; dùng `DATA_DIR` dưới `%TEMP%`. Chưa chạy bot thật, không mở mạng/game thật; child process/IPC/sharding thuộc Bước 5B, chưa xác minh.
+
 ## 2026-10-11 — Đo 60 Hz so với 30 Hz trên TV box; thêm tùy chọn giảm tần suất cập nhật hiển thị
 
 TV box (Cortex-A53, `pnpm measure`, 1 bot offline, không quái): 60 Hz: 59,4 khung/giây, avg 8,4 ms/khung, CPU tiến trình ~48% (luồng chính 46%); 30 Hz (`MEASURE_LOOP_MS=33`): 29,7 khung/giây, avg 11,8 ms/khung, CPU ~34%. Giảm CPU chỉ ~29% (không phải 50%) vì chi phí mỗi khung tăng theo bước thời gian: khớp thô hai điểm cho ~5 ms/khung CỐ ĐỊNH (giao diện/FX/Proxy giả DOM chạy mỗi khung) + ~3,4 ms mỗi 16,7 ms thời gian mô phỏng. Tức ~60% CPU bot ở 60 Hz là phần cố định mỗi khung. (Chỉ là khớp hai điểm đo, chưa chắc chính xác.)
