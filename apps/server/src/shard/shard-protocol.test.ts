@@ -169,6 +169,7 @@ test('RemoteRunnerHandle propagates RPC errors without changing stable code', as
 registerRunnerHandleContract('RemoteRunnerHandle', () => {
   const options = { accountName: 'fixture', credentials: {}, gameServerUrl: 'wss://fixture.invalid', vendorClientDir: '' } as VendorRunnerOptions;
   let handle!: RemoteRunnerHandle; let down = false; let socketClosed = true; let starts = 0;
+  const inventoryReference = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean }>, totalKinds: null, totalCount: null, caveChest: null, at: 1 };
   let operation: import('../headless/walk-navigator.js').WalkOperation | null = null;
   const update = (lifecycle: VendorRunnerSnapshot['lifecycle'], connection: VendorRunnerSnapshot['connection'] = 'IN_GAME') => {
     const snapshot = { ...blank, lifecycle, connection, downed: down, moveTo: operation } as VendorRunnerSnapshot;
@@ -191,6 +192,7 @@ registerRunnerHandleContract('RemoteRunnerHandle', () => {
       if (method === 'startDailyCheckin' || method === 'startDailySeed' || method === 'cancelDaily') return { operationId: 'daily', kind: 'checkin', status: 'accepted', step: 'checkin_ack', runIndex: 1, runsTotal: 1, startedAt: 1, updatedAt: 1 } as T;
       if (method === 'questProbe') return { act: args[0], at: 1, result: null } as T;
       if (method === 'khuProbe') return { sent: true, at: 1, x: null, y: null, mapId: null, khu: null } as T;
+      if (method === 'getInventory') return inventoryReference as T;
       throw new Error('SHARD_METHOD_NOT_ALLOWED');
     },
   };
@@ -199,7 +201,7 @@ registerRunnerHandleContract('RemoteRunnerHandle', () => {
   return { handle, setDown: (value) => { down = value; update(value ? 'in_game' : 'in_game'); },
     emitDisconnect: () => update('stopped', 'DISCONNECTED'), emitSession: (value) => handle.emitSessionUpdated(value.refreshToken),
     emitLog: (event) => handle.emitLog(event), sessionCount: () => starts, isSocketClosed: () => socketClosed,
-    waitReady: async () => undefined, forceStop: () => transport.stop('fixture-account') };
+    waitReady: async () => undefined, forceStop: () => transport.stop('fixture-account'), pinInventoryReference: () => {} };
 });
 
 const blank = { lifecycle: 'stopped', connection: 'DISCONNECTED', autoRequested: false, supervisor: {}, packets: { incoming: {}, outgoing: {}, commands: {}, moves: 0, attacks: 0, skills: 0, cmds: 0 },

@@ -1593,3 +1593,13 @@ ull`/rỗng.
 - [x] On give-up, mark the account error, write account log and audit, alert the owner, and stop the runner handle.
 - [x] Offline tests: reconnect after a virtual five-minute outage, deadline expiry, unlimited retry, capped backoff, permanent `AuthError`, proxy no-fallback, Auto resume/off/down gates; full server 186/186 and web 49/49. Five requested direct-source fault injections failed their guarding tests and were reverted.
 - [~] `pnpm build` unavailable because `pnpm` is missing from PATH; direct core/server/web TypeScript builds and web Vite production build passed. No real game session or live alert delivery was exercised.
+
+## Dashboard inventory, phase 1 — 2026-10-11
+
+- [x] Runner reads loaded `Inventory.bag`, item names, `Inventory.HOP`, and cave key/chest flags; unloaded state stays `known:false` with null totals.
+- [x] Async inventory RPC is allowlisted and wired through InProcess/Remote handles and shard dispatch, outside the periodic snapshot; copied JSON values survive the contract tests and stale shard data returns a stable error.
+- [x] Owned-account GET endpoint returns 404 across owners, uses the API rate limiter, reports stable stopped/stale errors, and does not put item contents in logs/audit/snapshots.
+- [x] Dashboard modal supports search, openable group first, cave status, refresh, unknown state, and narrow-width wrapping; sanitizer ignores malformed item rows.
+- [x] Offline coverage includes item packet, box classification, cave flags, 300 item kinds, JSON serialization, ownership and unknown display; fault injections for all five requested guards were caught and reverted.
+- [x] Related server tests 72/72, full server suite 191/191, web Vitest 51/51; direct core/server/web TypeScript builds and web production build pass. `pnpm build` and `pnpm --filter @tutien2d/web test` were unavailable because `pnpm` is missing from PATH.
+- [ ] Browser layout at 334 px and live game behavior remain unverified; no real game session or external network was used.

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { AlertTriangle, Heart, KeyRound, MapPin, Play, Square, Trash2, Zap } from 'lucide-react';
 import type { AccountRuntime, MoveToOperation } from '../types';
 import { resolveMapContext, resolveVitalsAge, VITALS_DISPLAY_STALE_MS } from '../lib/context';
@@ -6,6 +6,7 @@ import { MiniMap } from './MiniMap';
 import { MapTravelControl } from './MapTravelControl';
 import { KhuControl } from './KhuControl';
 import { DailyControl } from './DailyControl';
+import { InventoryModal } from './InventoryModal';
 import type { WorldBounds } from '../lib/minimap';
 import type { MapCatalogItem } from '../lib/api';
 
@@ -48,6 +49,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   onDelete,
   mapGeometry,
 }) => {
+  const [showInventory, setShowInventory] = useState(false);
   const running = account.status === 'running';
   const vitals = account.vitals;
   const derived = account.derivedMax;
@@ -128,10 +130,12 @@ export const AccountCard: React.FC<AccountCardProps> = ({
     <div className="mt-3 flex items-center justify-between border-t border-slate-800/60 pt-2 text-xs">
       <span className="text-slate-400">{account.downed === true ? 'Đang gục' : account.activity}</span>
       <div className="flex items-center gap-1">
+        {running && <button type="button" onClick={() => setShowInventory(true)} className="rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-1.5 text-cyan-200">Túi đồ</button>}
         <button onClick={() => onUpdatePassword(account)} title="Cập nhật mật khẩu" className="p-1.5 rounded bg-slate-800/60 text-amber-300 border border-slate-700"><KeyRound className="w-4 h-4" /></button>
         <button onClick={() => onDelete(account.id)} title="Xóa tài khoản" className="p-1.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30"><Trash2 className="w-4 h-4" /></button>
       </div>
     </div>
+    {showInventory && <InventoryModal accountId={account.id} accountLabel={account.characterName || account.accountName} onClose={() => setShowInventory(false)} />}
   </div>;
 };
 

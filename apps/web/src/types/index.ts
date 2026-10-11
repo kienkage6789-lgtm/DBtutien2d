@@ -166,6 +166,22 @@ export interface KhuInfo {
   list: KhuList | null;
 }
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  count: number;
+  openable: boolean;
+}
+
+export interface InventorySnapshot {
+  known: boolean;
+  items: InventoryItem[];
+  totalKinds: number | null;
+  totalCount: number | null;
+  caveChest: { keyCount: number; claimed: boolean; active: boolean } | null;
+  at: number | null;
+}
+
 export interface FrameMetricsSnapshot {
   frames: number;
   avgMs: number | null;

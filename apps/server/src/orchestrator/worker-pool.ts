@@ -11,6 +11,7 @@ import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import type { VendorInventorySnapshot } from '../headless/vendor-runner.js';
 import { entitlement } from '../security/entitlement.js';
 import { hasRunnerMemoryCapacity } from './capacity.js';
 import { createProxyTransport, type ProxyTransport } from '../network/proxy-transport.js';
@@ -591,6 +592,12 @@ export class WorkerPool {
     const snapshot = this.requireFresh(active.getDailySnapshot(true));
     if (!snapshot.status) throw new Error('NOT_IN_GAME');
     return snapshot as { status: DailyStatus; current: DailyOperation | null };
+  }
+
+  public async getInventory(accountId: string): Promise<VendorInventorySnapshot> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    return active.getInventory();
   }
 
   public async startDailyCheckin(accountId: string): Promise<DailyOperation> {

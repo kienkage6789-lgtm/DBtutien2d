@@ -15,6 +15,7 @@ const emptyDaily = { status: { today: null, stage: null, checkin: { done: false,
 
 /** Small contract double: it models only the public handle boundary, without any game transport. */
 class FakeRunnerHandle implements RunnerHandle {
+  private readonly inventory = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean }>, totalKinds: null, totalCount: null, caveChest: null, at: 0 };
   private lifecycle: 'stopped' | 'in_game' = 'stopped';
   private down: boolean | null = null;
   private operation: WalkOperation | null = null;
@@ -31,6 +32,7 @@ class FakeRunnerHandle implements RunnerHandle {
   public getReachableMaps() { return cache({ currentMapId: 'tan_vien', maps: [] as ReachableMap[] }); }
   public getKhuProbe() { return cache({ events: [], mapId: null, khu: null, soKhu: null }); }
   public getDailySnapshot() { return cache(emptyDaily); }
+  public getInventory() { return Promise.resolve(JSON.parse(JSON.stringify(this.inventory)) as typeof this.inventory); }
   public startAuto(): Promise<AutoSupervisorSnapshot> { return this.down ? Promise.reject(new Error('VENDOR_CHARACTER_DOWN')) : Promise.resolve({ phase: 'farming' } as AutoSupervisorSnapshot); }
   public stopAuto(): Promise<AutoSupervisorSnapshot> { return Promise.resolve({ phase: 'idle' } as AutoSupervisorSnapshot); }
   public walkTo(request: WalkRequest): Promise<WalkOperation> {
@@ -69,5 +71,6 @@ registerRunnerHandleContract('FakeRunnerHandle', async () => {
     sessionCount: () => handle.sessionCount(),
     isSocketClosed: () => handle.isSocketClosed(),
     waitReady: async () => {},
+    pinInventoryReference: () => {},
   };
 });

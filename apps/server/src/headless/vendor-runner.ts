@@ -158,6 +158,15 @@ export interface VendorRunnerSnapshot {
   logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }>;
 }
 
+export interface VendorInventorySnapshot {
+  known: boolean;
+  items: Array<{ id: string; name: string; count: number; openable: boolean }>;
+  totalKinds: number | null;
+  totalCount: number | null;
+  caveChest: { keyCount: number; claimed: boolean; active: boolean } | null;
+  at: number;
+}
+
 export interface VendorRunnerLogger {
   (event: { code: string; phase?: string; reasonCode?: string; detail?: string; at: number }): void;
 }
@@ -1277,6 +1286,34 @@ export class VendorRunner {
     this.lastFrameAt = Date.now();
     this.loopTimer = setInterval(() => this.runMeasuredFrame(), this.options.loopIntervalMs);
     (this.loopTimer as NodeJS.Timeout).unref?.();
+  }
+
+  /** Read the locally maintained inventory; this never sends a game command. */
+  public getInventory(): VendorInventorySnapshot {
+    const at = Date.now();
+    const inventory = this.P?.Inventory;
+    const bag = inventory?.bag;
+    if (this.connectionState() !== 'IN_GAME' || !bag || typeof bag !== 'object' || Array.isArray(bag)) {
+      return { known: false, items: [], totalKinds: null, totalCount: null, caveChest: null, at };
+    }
+    const definitions = this.P?.ITEMS && typeof this.P.ITEMS === 'object' ? this.P.ITEMS as Record<string, unknown> : {};
+    const openable = inventory?.HOP && typeof inventory.HOP === 'object' ? inventory.HOP as Record<string, unknown> : {};
+    const items = Object.entries(bag as Record<string, unknown>).flatMap(([id, rawCount]) => {
+      const count = typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount > 0 ? rawCount : null;
+      if (count === null) return [];
+      const definition = definitions[id] && typeof definitions[id] === 'object' ? definitions[id] as Record<string, unknown> : null;
+      const name = typeof definition?.name === 'string' && definition.name.trim() ? definition.name.trim() : id;
+      return [{ id, name, count, openable: Object.prototype.hasOwnProperty.call(openable, id) }];
+    }).sort((a, b) => Number(b.openable) - Number(a.openable) || a.name.localeCompare(b.name, 'vi') || a.id.localeCompare(b.id));
+    const quest = this.P?.Quest;
+    const flags = quest?.flags && typeof quest.flags === 'object' ? quest.flags as Record<string, unknown> : null;
+    const keyId = typeof quest?.HANG_DONG_KEY === 'string' ? quest.HANG_DONG_KEY : null;
+    const rawKeyCount = keyId ? inventory?.count?.(keyId) : null;
+    const keyCount = typeof rawKeyCount === 'number' && Number.isSafeInteger(rawKeyCount) && rawKeyCount >= 0 ? rawKeyCount : 0;
+    const claimed = flags ? flags.hang_dong_da_lay_ruong === true : false;
+    const active = typeof quest?.hangDongActive === 'function' ? quest.hangDongActive() === true : false;
+    return { known: true, items, totalKinds: items.length, totalCount: items.reduce((sum, item) => sum + item.count, 0),
+      caveChest: flags && keyId ? { keyCount, claimed, active } : null, at };
   }
 
   private runMeasuredFrame(): void {

@@ -5,7 +5,7 @@ import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
-import type { VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import type { VendorInventorySnapshot, VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { CachedValue, RunnerHandle, RunnerHandleLog } from '../orchestrator/runner-handle.js';
 import { SNAPSHOT_INTERVAL_MS } from './protocol.js';
 
@@ -90,6 +90,10 @@ export class RemoteRunnerHandle implements RunnerHandle {
   public getReachableMaps() { return this.cached(this.isStale() ? null : this.latest?.reachableMaps ?? null); }
   public getKhuProbe() { return this.cached(this.isStale() ? { events: [], mapId: null, khu: null, soKhu: null } : this.latest?.khuProbe ?? { events: [], mapId: null, khu: null, soKhu: null }); }
   public getDailySnapshot(_force = true) { return this.cached(this.isStale() ? { status: null, current: null } : this.latest?.dailySnapshot ?? { status: null, current: null }); }
+  public getInventory(): Promise<VendorInventorySnapshot> {
+    if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE'));
+    return this.call<VendorInventorySnapshot>('getInventory').then(clone);
+  }
   private call<T>(method: string, ...args: unknown[]): Promise<T> { return this.transport.call<T>(this.accountId, method, args); }
   public startAuto(anchor?: AutoAnchor) { return this.call<AutoSupervisorSnapshot>('startAuto', anchor); }
   public stopAuto() { return this.call<AutoSupervisorSnapshot>('stopAuto'); }

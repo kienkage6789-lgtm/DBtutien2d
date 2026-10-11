@@ -100,6 +100,7 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 | `POST` | `/api/accounts/:id/move-to` | Nhận tọa độ `{x,y}` và bắt đầu đi trong map hiện tại |
 | `POST` | `/api/accounts/:id/move-to/cancel` | Hủy thao tác đi tay theo `operationId` |
 | `GET` | `/api/accounts/:id/daily` | Đọc ngày, điểm danh, lượt seed và nhiệm vụ hiện tại |
+| `GET` | `/api/accounts/:id/inventory` | Đọc túi đồ và trạng thái Hang Động của runner vendor đang chạy |
 | `POST` | `/api/accounts/:id/daily/checkin` | Bắt đầu điểm danh; body rỗng hoặc `{}` |
 | `POST` | `/api/accounts/:id/daily/seed` | Bắt đầu `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca` hoặc `ho_tong_chau`: `{taskId,runs?,abortOnHurt?,maxHurt?}` |
 | `POST` | `/api/accounts/:id/daily/cancel` | Hủy nhiệm vụ theo `{operationId}` |
@@ -150,6 +151,8 @@ Khi gói `map` cùng `mapId` nhưng `khu` đổi đến từ bất kỳ nguồn 
 `POST /api/accounts/:id/daily/seed` hiện hỗ trợ `taskId: "ho_tong_chau"` cùng `duoc_moc`, `linh_chi`, `truc_gia` và `cau_ca`; `runs` vẫn nằm trong khoảng 1–3 và phản hồi trả `runsLeft` trong `GET /daily`.
 
 `GET /daily` trả `DailyStatus` cùng `current`. `POST /daily/checkin` và `/daily/seed` trả HTTP 202 với `DailyOperation`; `/daily/cancel` trả operation đã `cancelled`. Hiện hỗ trợ `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca` và `ho_tong_chau`; các seed task khác vẫn được đọc và hiển thị nhưng trả `TASK_NOT_SUPPORTED` (422). Lỗi gate dùng envelope `{success:false,error,errorCode,retryable}`: map chưa sẵn sàng có `retryable:true`; các gate runtime là 409, `STAGE_TOO_LOW`/`TASK_NOT_SUPPORTED` là 422, body sai là 400 và operation không tồn tại là 404.
+
+`GET /api/accounts/:id/inventory` yêu cầu session và quyền sở hữu tài khoản (admin hoặc chính chủ); tài khoản không thuộc quyền trả `ACCOUNT_NOT_FOUND` (404). Runner chưa chạy trả `VENDOR_NOT_RUNNING` (409); snapshot shard quá hạn trả `VENDOR_DATA_STALE` (503, retryable). Khi túi chưa được client tải, phản hồi thành công có `known:false`, `items:[]`, `totalKinds:null`, `totalCount:null`, `caveChest:null`; đây không có nghĩa túi rỗng. Khi `known:true`, `items` gồm `id`, `name`, `count`, `openable`; hộp được nhận diện từ `Inventory.HOP`, và `caveChest` cung cấp `keyCount`, `claimed`, `active`. `at` là thời điểm đọc. Kết quả là dữ liệu đọc cục bộ, không gửi lệnh game; nội dung túi chỉ xuất hiện trong phản hồi đã xác thực, không nằm trong snapshot định kỳ, audit hoặc log. Endpoint tuân theo rate limit API chung.
 
 `DailyStatus.fishInBag` là tổng `Inventory.count('ca_song') + Inventory.count('linh_ngu')`, hoặc 
 ull` khi client chưa cung cấp; operation `cau_ca` dùng progress `{itemId:"ca",collected,required:3}`.

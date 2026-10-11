@@ -5,7 +5,7 @@ import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
-import { VendorRunner, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { VendorRunner, type VendorInventorySnapshot, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import { VendorGateway } from '../gateway/vendor-gateway.js';
 import type { GameGateway } from '../gateway/game-gateway.js';
 
@@ -13,7 +13,7 @@ export interface CachedValue<T> { value: T; ageMs: number; stale: boolean }
 export type RunnerHandleLog = Parameters<NonNullable<VendorRunnerOptions['onLog']>>[0];
 const jsonClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-/** IPC-ready operations used by WorkerPool. Reads are synchronous cached snapshots. */
+/** IPC-ready operations used by WorkerPool. Snapshots are cached; commands are async RPC-safe calls. */
 export interface RunnerHandle {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -23,6 +23,7 @@ export interface RunnerHandle {
   getReachableMaps(): CachedValue<{ currentMapId: string; maps: ReachableMap[] } | null>;
   getKhuProbe(): CachedValue<ReturnType<VendorRunner['getKhuProbe']>>;
   getDailySnapshot(force?: boolean): CachedValue<{ status: DailyStatus | null; current: DailyOperation | null }>;
+  getInventory(): Promise<VendorInventorySnapshot>;
   startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot>;
   stopAuto(): Promise<AutoSupervisorSnapshot>;
   walkTo(request: WalkRequest): Promise<WalkOperation>;
@@ -79,6 +80,7 @@ export class InProcessRunnerHandle implements RunnerHandle {
       throw error;
     }
   }
+  public getInventory() { return Promise.resolve().then(() => this.runner.getInventory()).then(jsonClone); }
   public startAuto(anchor?: AutoAnchor) { return this.gateway.startAuto(anchor).then(jsonClone); }
   public stopAuto() { return Promise.resolve().then(() => this.gateway.stopAuto()).then(jsonClone); }
   public walkTo(request: WalkRequest) { return Promise.resolve().then(() => this.gateway.walkTo(request)).then(jsonClone); }

@@ -154,7 +154,7 @@ class FakeSocket implements VendorSocketLike {
     }
     if (packet.op !== 'hello') return;
     queueMicrotask(() => {
-      this.emit({ op: 'welcome', serverTime: Date.now(), hasChar: true, snap: 2, ep: 1 });
+      this.emit({ op: 'welcome', serverTime: Date.now(), hasChar: true, snap: 2, ep: 1, features: { formation: 1 } });
       setTimeout(() => {
         this.emit({ op: 'state', save: { realm: 'luyen_khi_8', exp: 0, equipment: {} } });
         setTimeout(() => {
@@ -220,6 +220,41 @@ function createKhuRunner(options: Partial<ConstructorParameters<typeof VendorRun
   });
 }
 
+test('VendorRunner reads loaded inventory and cave-chest state from the client', async () => {
+  resetKhuFixture(); FakeSocket.instances = [];
+  const runner = createKhuRunner();
+  (runner as unknown as { P: unknown }).P = { Gateway: { ready: false, connected: false }, Inventory: { bag: {}, HOP: {}, count: () => 0 }, ITEMS: {}, Quest: { flags: {} } };
+  const unloaded = runner.getInventory();
+  assert.equal(unloaded.known, false);
+  assert.equal(unloaded.totalKinds, null);
+  assert.equal(unloaded.totalCount, null);
+  assert.equal(unloaded.caveChest, null);
+  try {
+    await runner.start();
+    await waitUntil(() => runner.getSnapshot().connection === 'IN_GAME');
+    (FakeSocket.instances.at(-1) as unknown as { emit(packet: Record<string, unknown>): void }).emit({
+      op: 'formation', protocol: 1, ep: 1, act: 'balance', item: 'hop_van_bao', itemCount: 3,
+    });
+    const client = (runner as unknown as { P: Record<string, any> }).P;
+    client.Inventory.bag.thach_giap_tinh_hach = 1;
+    client.Quest.flags.hang_dong_da_nhan = true;
+    const inventory = runner.getInventory();
+    assert.equal(inventory.known, true);
+    assert.equal(inventory.items.find((item) => item.id === 'hop_van_bao')?.count, 3);
+    assert.equal(inventory.items.find((item) => item.id === 'hop_van_bao')?.openable, true);
+    assert.deepEqual(inventory.caveChest, { keyCount: 1, claimed: false, active: true });
+    assert.equal(inventory.totalKinds, inventory.items.length);
+    assert.equal(inventory.totalCount, inventory.items.reduce((total, item) => total + item.count, 0));
+    for (let index = 0; index < 300; index += 1) client.Inventory.bag[`fixture_item_${index}`] = index + 1;
+    assert.equal(runner.getInventory().items.length, 302);
+    client.Quest.flags.hang_dong_da_lay_ruong = true;
+    assert.deepEqual(runner.getInventory().caveChest, { keyCount: 1, claimed: true, active: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(inventory)), inventory);
+    inventory.items.push({ id: 'mutated', name: 'mutated', count: 1, openable: false });
+    assert.equal(runner.getInventory().items.some((item) => item.id === 'mutated'), false);
+  } finally { await runner.stop(); }
+});
+
 function createKhuHandle(tokenManager = new FakeTokenManager()): InProcessRunnerHandle {
   resetKhuFixture();
   return new InProcessRunnerHandle({
@@ -234,6 +269,10 @@ registerRunnerHandleContract('InProcessRunnerHandle', () => {
   FakeSocket.instances = [];
   const tokenManager = new FakeTokenManager();
   const handle = createKhuHandle(tokenManager);
+  const pinnedInventory = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean }>, totalKinds: null, totalCount: null, caveChest: null, at: 0 };
+  const originalGetInventory = handle.runner.getInventory.bind(handle.runner);
+  let pinInventory = false;
+  handle.runner.getInventory = () => pinInventory ? pinnedInventory : originalGetInventory();
   FakeSocket.soKhu = 20;
   return {
     handle,
@@ -248,6 +287,7 @@ registerRunnerHandleContract('InProcessRunnerHandle', () => {
       const snapshot = handle.runner.getSnapshot();
       (handle.runner as any).getSnapshot = () => snapshot;
     },
+    pinInventoryReference: () => { pinInventory = true; },
     forceStop: () => handle.runner.stop(),
   };
 });

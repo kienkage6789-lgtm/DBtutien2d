@@ -1,4 +1,4 @@
-import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, InventorySnapshot, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired, setToken } from './auth';
@@ -726,6 +726,49 @@ export async function fetchDaily(accountId: string): Promise<{ status: DailyStat
   const current = parseDailyOperation(json?.data && typeof json.data === 'object' && !Array.isArray(json.data) ? (json.data as Record<string, unknown>).current : undefined);
   if (!response.ok || json?.success !== true || !status || current === undefined) throw dailyError(json, response);
   return { status, current };
+}
+
+export function sanitizeInventory(value: unknown): InventorySnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  if (typeof item.known !== 'boolean') return undefined;
+  if (!item.known) return { known: false, items: [], totalKinds: null, totalCount: null, caveChest: null,
+    at: isFiniteNumber(item.at) && item.at >= 0 ? item.at : null };
+  if (!Array.isArray(item.items)) return undefined;
+  const rawItems = item.items;
+  const items = rawItems.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.id !== 'string' || !entry.id || entry.id.length > 128
+      || typeof entry.name !== 'string' || entry.name.length > 160
+      || !isFiniteNumber(entry.count) || !Number.isSafeInteger(entry.count) || entry.count < 0
+      || typeof entry.openable !== 'boolean') return [];
+    return [{ id: entry.id, name: entry.name, count: entry.count, openable: entry.openable }];
+  });
+  const rawCave = item.caveChest;
+  const caveChest = rawCave && typeof rawCave === 'object' && !Array.isArray(rawCave)
+    && isFiniteNumber((rawCave as Record<string, unknown>).keyCount)
+    && Number.isSafeInteger((rawCave as Record<string, unknown>).keyCount)
+    && ((rawCave as Record<string, unknown>).keyCount as number) >= 0
+    && typeof (rawCave as Record<string, unknown>).claimed === 'boolean'
+    && typeof (rawCave as Record<string, unknown>).active === 'boolean'
+    ? { keyCount: (rawCave as Record<string, unknown>).keyCount as number, claimed: (rawCave as Record<string, unknown>).claimed as boolean, active: (rawCave as Record<string, unknown>).active as boolean }
+    : null;
+  return { known: true, items,
+    totalKinds: isFiniteNumber(item.totalKinds) && Number.isSafeInteger(item.totalKinds) && item.totalKinds >= 0 ? item.totalKinds : null,
+    totalCount: isFiniteNumber(item.totalCount) && Number.isSafeInteger(item.totalCount) && item.totalCount >= 0 ? item.totalCount : null,
+    caveChest, at: isFiniteNumber(item.at) && item.at >= 0 ? item.at : null };
+}
+
+export async function fetchInventory(accountId: string): Promise<InventorySnapshot> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/inventory`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const data = sanitizeInventory(json?.data);
+  if (!response.ok || json?.success !== true || !data) {
+    const code = typeof json?.errorCode === 'string' ? json.errorCode : 'INVENTORY_FAILED';
+    throw new ApiRequestError(code, response.status, code);
+  }
+  return data;
 }
 
 async function postDaily(path: string, body: Record<string, unknown>): Promise<DailyOperation> {

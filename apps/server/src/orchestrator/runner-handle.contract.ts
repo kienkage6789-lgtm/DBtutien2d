@@ -15,6 +15,7 @@ export interface RunnerHandleContractFixture {
   waitReady(): Promise<void>;
   /** Pins the underlying snapshot source so the copy contract tests cached() itself. */
   pinSnapshotReference?(): void;
+  pinInventoryReference?(): void;
   /** Test-only emergency cleanup for mutants that break the public stop boundary. */
   forceStop?(): Promise<void>;
 }
@@ -85,13 +86,14 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     assert.doesNotThrow(() => {
       handle.getSnapshot(); handle.getFrameMetrics(); handle.getReachableMaps(); handle.getKhuProbe(); handle.getDailySnapshot();
     });
+    assert.equal((await handle.getInventory()).known, false);
   });
 
   test(`${name}: returned data survives a plain JSON round trip`, timeout, async (t) => {
     const fixture = await create(); const { handle, waitReady } = fixture;
     t.after(async () => { try { await handle.stop(); } finally { await fixture.forceStop?.(); } });
     const values: unknown[] = [handle.getSnapshot().value, handle.getFrameMetrics().value, handle.getReachableMaps().value,
-      handle.getKhuProbe().value, handle.getDailySnapshot().value];
+      handle.getKhuProbe().value, handle.getDailySnapshot().value, await handle.getInventory()];
     await handle.start(); await waitReady();
     const walk = await handle.walkTo(walkRequest);
     values.push(await handle.startAuto(), await handle.stopAuto(), await handle.getKhuInfo(), await handle.requestKhuList(),
@@ -142,6 +144,16 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
       assert.equal(cached.stale, false);
       assert.equal(cached.ageMs, 0);
     }
+  });
+
+  test(`${name}: inventory results are returned as copies`, timeout, async (t) => {
+    const fixture = await create(); const { handle } = fixture;
+    t.after(async () => { try { await handle.stop(); } finally { await fixture.forceStop?.(); } });
+    fixture.pinInventoryReference?.();
+    const first = await handle.getInventory();
+    (first.items as Array<{ id: string; name: string; count: number; openable: boolean }>).push({ id: 'mutated', name: 'mutated', count: 1, openable: false });
+    const second = await handle.getInventory();
+    assert.equal(second.items.some((item) => item.id === 'mutated'), false);
   });
 }
 
