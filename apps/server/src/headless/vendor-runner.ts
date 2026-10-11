@@ -299,6 +299,7 @@ export class VendorRunner {
   private readonly disconnectListeners = new Set<() => void>();
   private supervisorUnsubscribe: (() => void) | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
+  private lastRssCheckAt = 0;
   private readonly frameMetrics = new FrameMetrics(() => performance.now());
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFrameAt = 0;
@@ -1284,8 +1285,12 @@ export class VendorRunner {
       this.updateErrors += 1;
       this.recordLog('vendor_update_error');
     }
-    const rssGrowth = process.memoryUsage().rss - this.baseRss;
-    if (rssGrowth > this.options.watchdogMaxRssGrowthBytes) this.handleWatchdog('rss_growth', rssGrowth);
+    // process.memoryUsage() tốn ~0,4 ms mỗi lần trên Cortex-A53: kiểm tra mỗi ~1 s là đủ cho watchdog tăng RSS.
+    if (now - this.lastRssCheckAt >= 1000) {
+      this.lastRssCheckAt = now;
+      const rssGrowth = process.memoryUsage().rss - this.baseRss;
+      if (rssGrowth > this.options.watchdogMaxRssGrowthBytes) this.handleWatchdog('rss_growth', rssGrowth);
+    }
   }
 
   /** Auto đang bật mà quá VITALS_CONFIRM_MS vẫn chưa có you/hurt/revived thì dừng Auto (HP chưa được xác nhận). */

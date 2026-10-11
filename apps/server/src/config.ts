@@ -54,6 +54,9 @@ const parseNonNegativeInt = (value: string | undefined, fallback: number): numbe
 };
 const MAX_TOTAL_RUNNERS = parseNonNegativeInt(process.env.MAX_TOTAL_RUNNERS, 0);
 const MIN_FREE_MEM_MB = parseNonNegativeInt(process.env.MIN_FREE_MEM_MB, 300);
+// Chu kỳ vòng lặp mô phỏng của mỗi bot (ms). 16 = ~60 Hz (mặc định, hành vi gốc). Tăng (vd 33 = ~30 Hz) giảm CPU nhưng
+// làm thô nhịp di chuyển/đánh: chỉ đổi sau khi thử live từng bước nhỏ. Kẹp trong 8..50 (dt tối đa 0,05 s của client).
+const VENDOR_LOOP_INTERVAL_MS = Math.min(50, Math.max(8, parseNonNegativeInt(process.env.VENDOR_LOOP_INTERVAL_MS, 16)));
 const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
 const REQUIRE_PROXY = process.env.REQUIRE_PROXY === '1' || process.env.REQUIRE_PROXY === 'true';
 const AUTO_ASSIGN_PROXY = process.env.AUTO_ASSIGN_PROXY === undefined
@@ -113,6 +116,7 @@ export const CONFIG = {
   ALLOW_LEGACY_API_TOKEN,
   MAX_TOTAL_RUNNERS,
   MIN_FREE_MEM_MB,
+  VENDOR_LOOP_INTERVAL_MS,
   ENTITLEMENT_SWEEP_MS,
   REQUIRE_PROXY,
   AUTO_ASSIGN_PROXY,

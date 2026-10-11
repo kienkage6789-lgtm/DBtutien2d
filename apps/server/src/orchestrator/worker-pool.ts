@@ -314,6 +314,7 @@ export class WorkerPool {
       gameServerUrl: CONFIG.GAME_SERVER_URL,
       allowedGameServerUrl: CONFIG.GAME_SERVER_URL,
       vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
+      loopIntervalMs: CONFIG.VENDOR_LOOP_INTERVAL_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),

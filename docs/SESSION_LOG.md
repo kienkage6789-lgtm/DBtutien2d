@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — Đo TV box sau khi bỏ nướng nền; giảm kiểm tra RSS; cấu hình chu kỳ vòng lặp
+
+Đo trên TV box (Cortex-A53, `pnpm measure`, 1 bot offline, không quái, Auto bật) sau khi bỏ nướng nền: khung 59-60/giây (trước 33-48); CPU tiến trình 59% giảm dần còn 33% (trước 95-116% suốt 40 s); luồng chính 33%, luồng phụ V8 0-1%; vào game 5,0 s (trước 8-9 s); khung lớn nhất 34 ms (trước 94-130); RSS 140 MB (trước 217). Lưu ý: các số đo trên bot THẬT (7 ms/khung bình thường, 14,7 ms khi Auto đánh quái) được lấy khi bot đã chạy lâu nên chi phí ổn định mỗi bot gần như không đổi; lợi ích của việc bỏ nướng nền là loại bỏ ~40 s CPU mỗi lần vào/đổi map và cú sốc khi bật nhiều bot.
+
+Profile trạng thái ổn định trên TV box: luồng chính rảnh 46%; phần việc thật: giao diện (hud/skills/quickslots/talismans/hotbar) ~15% tổng mẫu, Proxy giả DOM ~5% (một phần là `__name` của tsx, không có ở bản `dist`), `process.memoryUsage()` mỗi khung 1,7% (~0,4 ms/khung trên A53), mô phỏng thế giới (world/player/targeting/charparts) ~5-6%. Không tắt giao diện vì `HUD.update`/`QuickSlots.update`/`skills.js` trộn lẫn logic (sắp xếp ô kỹ năng, hotbarSlots).
+
+Thay đổi: (1) `vendor-runner.ts` kiểm tra tăng RSS mỗi ~1 s thay vì mỗi khung. (2) `config.ts` thêm `VENDOR_LOOP_INTERVAL_MS` (mặc định 16 = 60 Hz, kẹp 8..50, sai kiểu -> 16), `worker-pool.ts` truyền vào `VendorRunner`; KHÔNG đổi mặc định. (3) `tools/measure-runner.ts` thêm `MEASURE_LOOP_MS`. (4) `.env.example` ghi chú. Build pass; test server 135/135; cấu hình đọc đúng ở 16/33/5/999/abc.
+
+Chưa xác minh: hiệu quả 30 Hz trên TV box (cần `MEASURE_LOOP_MS=33 pnpm measure`), độ an toàn của 30 Hz với di chuyển/đánh quái live (dt tối đa 0,05 s của client; cần thử một bot, theo dõi hurtCount), tác động thật của việc kiểm tra RSS thưa lên bot live.
+
 ## 2026-10-11 — Bỏ bước "nướng" nền vẽ tay của map trong môi trường headless
 
 Phát hiện (TV box Cortex-A53, `pnpm measure` + `--cpu-prof` + bảng CPU theo luồng): sau khi sửa canvas giả, luồng chính vẫn ~95% CPU suốt 40 s, khung chỉ ~20%, luồng phụ V8 ~0% (JIT/GC không phải nguyên nhân). Profile: `art_rung_truc.js` ~64% (~21 s CPU). Đo trên máy phát triển: tổng việc vẽ ~3,4 s CPU/map; nhân tỉ lệ A53 ~11,5 lần ≈ 39 s CPU/map, khớp với CPU ~100% suốt cửa sổ đo.

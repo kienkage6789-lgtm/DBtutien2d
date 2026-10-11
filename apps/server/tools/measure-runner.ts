@@ -1,7 +1,7 @@
 // Đo hiệu năng VendorRunner OFFLINE (socket giả, không mạng, không đăng nhập, không chạm game thật).
 // Dùng để HIỆU CHỈNH tỉ lệ giữa các máy: chạy cùng lệnh trên máy phát triển, TV box, VPS rồi so avgMs/p95Ms.
 // Chạy: cd apps/server && pnpm measure        (hoặc: npx tsx tools/measure-runner.ts)
-// Biến môi trường: MEASURE_MAP (mặc định thanh_truc_lam), MEASURE_SECONDS (mặc định 40, bội của 5).
+// Biến môi trường: MEASURE_LOOP_MS (chu kỳ vòng lặp bot, mặc định 16; thử 33 để so 30 Hz với 60 Hz), MEASURE_MAP (mặc định thanh_truc_lam), MEASURE_SECONDS (mặc định 40, bội của 5).
 // Giới hạn: mẫu KHÔNG có quái và không có lưu lượng gói tin thật => là mức cơ sở "rảnh/Auto không đánh", không phải tải đánh quái thật.
 import os from 'node:os';
 import fs from 'node:fs';
@@ -56,7 +56,7 @@ class FakeSocket {
 const tm = { getAccessToken: async () => 'x', getSession: () => ({ accessToken: 'x', refreshToken: 'x', expiresAt: Date.now() + 6e4, ttlMs: 6e4, email: 'f@example.invalid' }), stop() {}, on() {} };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 (async () => {
-  const runner = new VendorRunner({ accountName: 'measure', credentials: { refreshToken: 'x' }, gameServerUrl: 'wss://fixture.invalid/g', vendorClientDir: path.join(repoRoot, 'vendor/tutien2d-public-client/2026-10-06'), tokenManager: tm as never, WebSocketImpl: FakeSocket as never, reconnectMaxRetries: 0, loginTimeoutMs: 120000, vitalsConfirmMs: 600000 } as never);
+  const runner = new VendorRunner({ accountName: 'measure', credentials: { refreshToken: 'x' }, gameServerUrl: 'wss://fixture.invalid/g', vendorClientDir: path.join(repoRoot, 'vendor/tutien2d-public-client/2026-10-06'), tokenManager: tm as never, WebSocketImpl: FakeSocket as never, reconnectMaxRetries: 0, loginTimeoutMs: 120000, vitalsConfirmMs: 600000, ...(Number(process.env.MEASURE_LOOP_MS) > 0 ? { loopIntervalMs: Number(process.env.MEASURE_LOOP_MS) } : {}) } as never);
   const t0 = performance.now();
   await runner.start();
   for (let i = 0; i < 6000 && runner.getSnapshot().mapId !== MAP; i += 1) await sleep(10);
