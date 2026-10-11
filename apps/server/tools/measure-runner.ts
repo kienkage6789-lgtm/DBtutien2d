@@ -4,6 +4,25 @@
 // Biến môi trường: MEASURE_MAP (mặc định thanh_truc_lam), MEASURE_SECONDS (mặc định 40, bội của 5).
 // Giới hạn: mẫu KHÔNG có quái và không có lưu lượng gói tin thật => là mức cơ sở "rảnh/Auto không đánh", không phải tải đánh quái thật.
 import os from 'node:os';
+import fs from 'node:fs';
+/** Linux: CPU (tick) theo từng luồng của tiến trình, để phân biệt luồng chính với luồng phụ của V8/libuv. */
+export function parseThreadStat(content: string): { name: string; ticks: number } | null {
+  const open = content.indexOf('('); const close = content.lastIndexOf(')');
+  if (open < 0 || close < open) return null;
+  const rest = content.slice(close + 2).trim().split(/\s+/);
+  const utime = Number(rest[11]); const stime = Number(rest[12]);
+  if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
+  return { name: content.slice(open + 1, close), ticks: utime + stime };
+}
+function readThreads(): Map<string, { name: string; ticks: number }> {
+  const out = new Map<string, { name: string; ticks: number }>();
+  try {
+    for (const tid of fs.readdirSync('/proc/self/task')) {
+      try { const parsed = parseThreadStat(fs.readFileSync(`/proc/self/task/${tid}/stat`, 'utf8')); if (parsed) out.set(tid, parsed); } catch { /* luồng đã thoát */ }
+    }
+  } catch { /* không phải Linux */ }
+  return out;
+}
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
@@ -50,7 +69,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const histogram = monitorEventLoopDelay({ resolution: 20 }); histogram.enable();
   const timeline: Array<Record<string, number | null>> = [];
   let lastFrames = runner.getFrameMetrics().frames; let lastCpu = process.cpuUsage(); let lastAt = performance.now();
+  let threadsBefore = readThreads();
   for (let elapsed = INTERVAL_S; elapsed <= SECONDS; elapsed += INTERVAL_S) {
+    if (elapsed === SECONDS) threadsBefore = readThreads();
     await sleep(INTERVAL_S * 1000);
     const now = performance.now(); const cpu = process.cpuUsage(lastCpu); const wallMs = now - lastAt;
     const m = runner.getFrameMetrics();
@@ -70,6 +91,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   console.log(JSON.stringify({ may: { cpu: os.cpus()[0]?.model, nhan: os.cpus().length, node: process.version, arch: process.arch }, map: MAP, giay_do: SECONDS, thoi_gian_toi_in_game_ms: Math.round(tMap), khung_luc_khoi_dong: warm.frames, auto: runner.getSnapshot().autoRequested, rssMB: Math.round(process.memoryUsage().rss / 1048576), maxMs_toanBo: m.maxMs && +m.maxMs.toFixed(1) }, null, 1));
   console.log('\nTheo từng 5 s (cpuTienTrinh_phanTram: 100 = một nhân đầy; đáng tin hơn busyRatio vì tính cả việc ngoài frame()):');
   console.table(timeline);
+  const threadsAfter = readThreads();
+  if (threadsAfter.size > 0) {
+    const lastWallS = INTERVAL_S;
+    const rows = [...threadsAfter.entries()].map(([tid, now]) => ({ luong: now.name, tid, cpu_phanTram: +(((now.ticks - (threadsBefore.get(tid)?.ticks ?? now.ticks)) / 100) / lastWallS * 100).toFixed(0) }))
+      .sort((a, b) => b.cpu_phanTram - a.cpu_phanTram).slice(0, 8);
+    console.log('CPU theo luồng trong khoảng cuối (100 = một nhân đầy; luồng chính tên "node"):');
+    console.table(rows);
+  }
   console.log('Khoảng cuối cùng (gần trạng thái ổn định nhất):', JSON.stringify(last));
   await runner.stop(); process.exit(0);
 })().catch((e) => { console.log('LỖI', String(e?.stack || e).split('\n').slice(0, 5).join(' | ')); process.exit(1); });
