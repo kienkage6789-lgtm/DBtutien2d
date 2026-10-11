@@ -324,6 +324,36 @@ export function createVendorEnv(options: VendorEnvOptions): VendorEnv {
     } catch { /* thiếu module nền: giữ hành vi cũ */ }
   }
 
+  // Tùy chọn (mặc định tắt): giảm tần suất các hàm cập nhật THUẦN HIỂN THỊ của scene (hiệu ứng, bong bóng chat, giao diện, HUD).
+  // Chúng chiếm phần lớn chi phí cố định mỗi khung nhưng bot headless không vẽ. Không đụng Skills/Hotbar/QuickSlots/TalismanBar
+  // (có thể ảnh hưởng Auto). Tham số số đầu tiên (dt) được cộng dồn để không mất thời gian. VENDOR_UI_THROTTLE_MS=0 là tắt.
+  const uiThrottleMs = Math.max(0, Number(process.env.VENDOR_UI_THROTTLE_MS) || 0);
+  if (uiThrottleMs > 0) {
+    const throttled: Array<[string, string]> = [
+      ['VFX', 'update'], ['HUD', 'update'], ['ThreeMapsAtmosphere', 'update'], ['Chat', 'updateBubbles'], ['DaiHoiUI', 'update'],
+      ['TongMonChienUI', 'update'], ['FormationUI', 'update'], ['TruyenTongUI', 'update'], ['BangNhanhUI', 'update'], ['PhongChoUI', 'update'],
+    ];
+    for (const [moduleName, method] of throttled) {
+      try {
+        const target = win.PNTT?.[moduleName] as Record<string, unknown> | undefined;
+        const original = target?.[method];
+        if (!target || typeof original !== 'function') continue;
+        let lastAt = Number.NEGATIVE_INFINITY;
+        let pendingDt = 0;
+        target[method] = function throttledUpdate(this: unknown, ...args: unknown[]): unknown {
+          const nowMs = fakeClock ? (fakeNow as number) : Date.now();
+          const dt = typeof args[0] === 'number' ? args[0] : null;
+          if (dt !== null) pendingDt += dt;
+          if (nowMs - lastAt < uiThrottleMs) return undefined;
+          lastAt = nowMs;
+          const forwarded = dt !== null ? [pendingDt, ...args.slice(1)] : args;
+          pendingDt = 0;
+          return (original as (...a: unknown[]) => unknown).apply(this, forwarded);
+        };
+      } catch { /* thiếu mô-đun: giữ nguyên */ }
+    }
+  }
+
   return {
     win,
     context,

@@ -1,5 +1,13 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — Đo 60 Hz so với 30 Hz trên TV box; thêm tùy chọn giảm tần suất cập nhật hiển thị
+
+TV box (Cortex-A53, `pnpm measure`, 1 bot offline, không quái): 60 Hz: 59,4 khung/giây, avg 8,4 ms/khung, CPU tiến trình ~48% (luồng chính 46%); 30 Hz (`MEASURE_LOOP_MS=33`): 29,7 khung/giây, avg 11,8 ms/khung, CPU ~34%. Giảm CPU chỉ ~29% (không phải 50%) vì chi phí mỗi khung tăng theo bước thời gian: khớp thô hai điểm cho ~5 ms/khung CỐ ĐỊNH (giao diện/FX/Proxy giả DOM chạy mỗi khung) + ~3,4 ms mỗi 16,7 ms thời gian mô phỏng. Tức ~60% CPU bot ở 60 Hz là phần cố định mỗi khung. (Chỉ là khớp hai điểm đo, chưa chắc chính xác.)
+
+Thêm `VENDOR_UI_THROTTLE_MS` (mặc định 0 = TẮT) trong `vendor-env.ts`: giảm tần suất các hàm cập nhật thuần hiển thị của scene (`VFX`, `HUD`, `ThreeMapsAtmosphere`, `Chat.updateBubbles`, `DaiHoiUI`, `TongMonChienUI`, `FormationUI`, `TruyenTongUI`, `BangNhanhUI`, `PhongChoUI`), cộng dồn `dt` để không mất thời gian. KHÔNG đụng `Skills.update`, `Hotbar`, `TalismanBar`, `QuickSlots` (có thể ảnh hưởng Auto). Máy phát triển: khung avg ~0,50 -> ~0,37 ms (6 khoảng đo mỗi bên). Mô phỏng offline 62 quái (3 lần mỗi biến thể): đòn 37-39 như nhau, 0 lỗi update; quái chết 4-6 so với 5-6 (có thể thấp hơn chút khi bật, mẫu quá nhỏ, mô phỏng không tất định). Build pass; test server 135/135; 70/70 (runner, daily-quests, gateway) khi bật `VENDOR_UI_THROTTLE_MS=250`.
+
+Chưa xác minh: lợi ích CPU thật trên TV box (cần `VENDOR_UI_THROTTLE_MS=250 pnpm measure`), tác động tới Auto đánh quái live (tốc độ giết quái, hurtCount), các mô-đun hiển thị khác chưa được liệt kê. Giữ tắt mặc định cho tới khi thử live một bot.
+
 ## 2026-10-11 — Đo TV box sau khi bỏ nướng nền; giảm kiểm tra RSS; cấu hình chu kỳ vòng lặp
 
 Đo trên TV box (Cortex-A53, `pnpm measure`, 1 bot offline, không quái, Auto bật) sau khi bỏ nướng nền: khung 59-60/giây (trước 33-48); CPU tiến trình 59% giảm dần còn 33% (trước 95-116% suốt 40 s); luồng chính 33%, luồng phụ V8 0-1%; vào game 5,0 s (trước 8-9 s); khung lớn nhất 34 ms (trước 94-130); RSS 140 MB (trước 217). Lưu ý: các số đo trên bot THẬT (7 ms/khung bình thường, 14,7 ms khi Auto đánh quái) được lấy khi bot đã chạy lâu nên chi phí ổn định mỗi bot gần như không đổi; lợi ích của việc bỏ nướng nền là loại bỏ ~40 s CPU mỗi lần vào/đổi map và cú sốc khi bật nhiều bot.
