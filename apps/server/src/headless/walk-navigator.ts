@@ -129,6 +129,7 @@ const DEFAULT_STUCK_TIMEOUT_MS = 5_000;
 const DEFAULT_MIN_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_TIMEOUT_MS = 120_000;
 const DEFAULT_PORTAL_WAIT_TIMEOUT_MS = 8_000;
+const MAX_GATE_RESUMES = 2;
 const DEFAULT_MAX_TOTAL_TIMEOUT_MS = 10 * 60_000;
 
 let operationSequence = 0;
@@ -253,6 +254,7 @@ export class WalkNavigator {
   private totalDeadlineAt = 0;
   private waitStartedAt = 0;
   private replanCount = 0;
+  private gateResumeCount = 0;
   private transitionFarSince: number | null = null;
   private transitionObserved = false;
   private currentArrivalRadius = DEFAULT_ARRIVAL_RADIUS;
@@ -377,6 +379,7 @@ export class WalkNavigator {
     this.waitStartedAt = 0;
     this.transitionObserved = false;
     this.replanCount = 0;
+    this.gateResumeCount = 0;
     this.transitionFarSince = null;
     this.client.recordLog({ code: 'move_to_accepted', detail: this.diag(player, resolvedTarget), at: now });
     return copyOperation(this.operation)!;
@@ -516,8 +519,26 @@ export class WalkNavigator {
       && (this.transitionObserved || observedMap !== leg.fromMapId);
     if (arrivedAtExpectedMap) { this.advanceAfterMap(now, player); return; }
     if (now - this.waitStartedAt >= this.cfg.portalWaitTimeoutMs || now >= this.totalDeadlineAt) {
+      if (now < this.totalDeadlineAt && this.resumeWalkingToGate(now, player, leg)) return;
       this.finish('failed', 'portal_no_transition', 'move_to_failed', player);
     }
+  }
+
+  /**
+   * Cờ chuyển cảnh thoáng qua gần cổng có thể đã dừng nhân vật trước khi chạm cổng (map không đổi). Nếu hết thời gian chờ mà
+   * vẫn ở map cũ và chưa tới tâm cổng thì đi tiếp tới cổng, tối đa MAX_GATE_RESUMES lần (không gửi lệnh game nào khác).
+   */
+  private resumeWalkingToGate(now: number, player: WalkPlayer, leg: NonNullable<WalkOperation['leg']>): boolean {
+    const goal = this.operation?.resolvedTarget;
+    if (!goal || this.gateResumeCount >= MAX_GATE_RESUMES) return false;
+    if (this.client.isTransitioning() || this.client.getMapId() !== leg.fromMapId) return false;
+    if (!finite(player.x) || !finite(player.y) || distance({ x: player.x, y: player.y }, goal) <= 2) return false;
+    leg.phase = 'walking_to_gate';
+    if (!this.replan(now, player, goal, true)) { leg.phase = 'waiting_map'; return false; }
+    this.gateResumeCount += 1;
+    this.transitionObserved = false;
+    this.client.recordLog({ code: 'move_to_gate_resume', reasonCode: 'no_transition', detail: this.diag(player, goal), at: now });
+    return true;
   }
 
   private advanceAfterMap(now: number, player: WalkPlayer): void {
@@ -562,6 +583,7 @@ export class WalkNavigator {
     this.lastProgressAt = now;
     this.lastProgressPosition = { x: player.x, y: player.y };
     this.replanCount = 0;
+    this.gateResumeCount = 0;
     this.transitionFarSince = null;
     this.deadlineAt = now + this.timeoutForRoute({ x: player.x, y: player.y }, route, goal);
     this.waitStartedAt = 0;

@@ -1632,3 +1632,5 @@ ull`/rỗng.
 - [x] Web 58/58; server 191/191; TypeScript core-client/server/web và Vite production build pass. Bốn mutation trực tiếp nguồn đều làm test fail gọn rồi được khôi phục.
 - [~] `pnpm build`/lệnh test pnpm không khởi chạy do thiếu `pnpm` trong PATH; đã chạy lệnh compiler/Vite/Vitest/tsx trực tiếp thay thế.
 - [ ] Chưa kiểm tra trực quan bằng trình duyệt ở 1280/768/334 px; chờ người dùng chụp.
+- [x] Walk navigator: đi tiếp tới cổng khi `portal_no_transition` gần cổng (2 lần); test 192/192, build pass.
+- [ ] Xác nhận live: log `move_to_gate_resume` rồi qua được cổng ở `truc_gia`.

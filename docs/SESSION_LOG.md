@@ -1,3 +1,7 @@
+# 2026-10-11 — Đi tiếp tới cổng khi chờ đổi map không có kết quả
+
+Log live: `move_to_failed (portal_no_transition) pos=(432,902) goal=(432,944) d=42` ở `truc_gia` làm hỏng daily. Suy ra: cờ chuyển cảnh nháy gần cổng (<= 1,5 ô) đưa bot vào `waiting_map` và dừng nó trước cổng. `walk-navigator.ts` giờ lập lại đường và đi tiếp tới cổng (tối đa 2 lần/chặng, log `move_to_gate_resume`) nếu hết thời gian chờ mà vẫn ở map cũ. Server 192/192, `pnpm build` pass, phá thử tắt giới hạn làm 1 test fail. Chưa xác minh live; nguyên nhân gốc của cờ nháy chưa biết. Thêm `docs/RESEARCH_HUYET_XICH.md` (nghiên cứu, chưa có code).
+
 # 2026-10-11 — Hiệu chỉnh giao diện túi đồ (offline)
 
 Chỉnh `InventoryModal` sang bảng màu tối cố định theo dashboard; ô tìm kiếm, sức chứa, Hang Động (amber tối), tab, chi tiết, ô trang bị, ô trống, trạng thái hover/chọn/focus đều dùng nền tối. Nội dung cuộn bên trong modal. Ô đồ có viền theo CSS game: common `#8a6a45`, fine `#79a477`, spirit `#5bb4bd`, earth `#8b65b5`; chữ/số lượng dùng màu sáng trên nền tối. Nhóm phẩm cấp theo thứ tự client (`Địa` → earth, `Linh` → spirit, `thượng` → fine, còn lại common) trong danh sách 12 tên phẩm cấp đã xác nhận; giá trị lạ/null dùng màu trung tính. Bảng ký hiệu có nhãn tiếng Việt cho 16 `type` và 8 `slot`, ưu tiên slot, rồi type, rồi openable.

@@ -341,6 +341,42 @@ test('a transition close to the gate still enters waiting_map and records why', 
   assert.match(String(waiting?.detail), /pos=\(100,112\)/);
 });
 
+test('a stopped-short near-gate wait with no map change resumes walking to the gate, bounded, then fails', () => {
+  const client = gateClient();
+  const navigator = new WalkNavigator(client, { portalWaitTimeoutMs: 1_000 });
+  navigator.walkTo({ targetMapId: 'map-b', requester: 'user' });
+  client.player.x = 100;
+  client.player.y = 112;
+  client.player.path = [];
+  client.transitioning = true;
+  client.mapId = null;
+  client.now = 100;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'waiting_map');
+  client.transitioning = false;
+  client.mapId = 'map-a';
+  client.player.path = [];
+  client.now = 1_200;
+  navigator.tick();
+  assert.equal(navigator.getOperation()?.leg?.phase, 'walking_to_gate', 'resumes instead of failing');
+  assert.ok(client.player.path.length > 0, 'a path to the gate is set again');
+  assert.ok(client.logs.some((log) => log.code === 'move_to_gate_resume'));
+
+  for (let i = 0; i < 2; i += 1) {
+    client.transitioning = true;
+    client.mapId = null;
+    client.player.path = [];
+    client.now += 100;
+    navigator.tick();
+    client.transitioning = false;
+    client.mapId = 'map-a';
+    client.player.path = [];
+    client.now += 1_200;
+    navigator.tick();
+  }
+  assert.deepEqual([navigator.getOperation()?.status, navigator.getOperation()?.reason], ['failed', 'portal_no_transition']);
+});
+
 test('a transition that lasts too long far from the gate fails as unexpected_map', () => {
   const client = gateClient();
   const navigator = new WalkNavigator(client, { portalWaitTimeoutMs: 1_000 });
