@@ -1,5 +1,17 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — Bỏ bước "nướng" nền vẽ tay của map trong môi trường headless
+
+Phát hiện (TV box Cortex-A53, `pnpm measure` + `--cpu-prof` + bảng CPU theo luồng): sau khi sửa canvas giả, luồng chính vẫn ~95% CPU suốt 40 s, khung chỉ ~20%, luồng phụ V8 ~0% (JIT/GC không phải nguyên nhân). Profile: `art_rung_truc.js` ~64% (~21 s CPU). Đo trên máy phát triển: tổng việc vẽ ~3,4 s CPU/map; nhân tỉ lệ A53 ~11,5 lần ≈ 39 s CPU/map, khớp với CPU ~100% suốt cửa sổ đo.
+
+Nguyên nhân: `SceneWorld.nuongNenDau` (runner gọi lúc khởi động) và đổi map gọi `chuanBiTruoc` của các module nền vẽ tay (`art_*.js`, danh sách `SceneWorld.nenVeTay()`), nướng ảnh nền theo lát bằng `setTimeout` (ngoài `frame()`). Kết quả (`layerFor`) chỉ được dùng trong `drawGround` của `tilemap.js`, tức chỉ khi vẽ; bot headless không vẽ.
+
+Sửa (`apps/server/src/headless/vendor-env.ts`, không đụng `vendor/`): sau khi nạp script, đặt `chuanBiTruoc` của mọi module trong `nenVeTay()` thành no-op. `choXong()` trả true ngay khi chưa nướng nên `nuongNenDau` và đổi map không phải chờ. `VENDOR_BAKE_ART=1` bật lại hành vi cũ để đối chứng.
+
+Đo trên máy phát triển (1 bot, `pnpm measure`): thời gian vào game 2,6 s -> 0,9 s; CPU 5 s đầu 7% -> 1% (trước canvas fix: 72-75%); RSS ~93 MB; khung ổn định ~0,4 ms. Test: build pass, test server 135/135; 55/55 cho vendor-runner + daily-quests cả khi bật lại nướng nền. Mô phỏng offline có 62 quái (4 lần chạy, 2 biến thể): cùng khoảng dao động (quái chết 4-6, đòn 37-43, quãng đường 82-255 px), 0 lỗi update, 0 lỗi console; mô phỏng không tất định nên không so sánh từng số.
+
+Chưa xác minh: tác động trên TV box/VPS thật (kỳ vọng hết ~40 s CPU mỗi lần vào/đổi map, cần chạy lại `pnpm measure`), hành vi bot live qua nhiều map (daily quest đi nhiều map), và việc có module nền nào ngoài `nenVeTay()` (Terrace, Chasm) cũng nướng khi không vẽ.
+
 ## 2026-10-11 — Tối ưu canvas giả của môi trường vendor (CPU khởi động và RAM mỗi bot)
 
 Nguyên nhân (profile trên TV box và máy phát triển): mã client tạo ảnh map (`art_rung_truc.js`, `art_tan_vien.js`) chiếm ~50% CPU khởi động; nó gọi `ctx.createImageData(w,h).data[i] = ...` từng điểm ảnh, nhưng `vendor-env.ts` trả Proxy `makeStub` (mỗi lần ghi là một bẫy `set` vào `Map`, mỗi lời gọi canvas tạo Proxy mới).

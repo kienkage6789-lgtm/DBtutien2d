@@ -314,6 +314,16 @@ export function createVendorEnv(options: VendorEnvOptions): VendorEnv {
     win.PNTT.Assets.idle = (callback: unknown) => { if (typeof callback === 'function') callback(); };
   }
 
+  // "Nướng" nền vẽ tay của map (art_*.js) chỉ tạo ảnh cho drawGround (layerFor chỉ được gọi khi vẽ); bot headless không vẽ.
+  // Bước này tốn ~3 s CPU trên máy phát triển và ~40 s trên Cortex-A53 cho mỗi map, nên bỏ qua. choXong() trả true ngay khi
+  // chưa nướng, nên nuongNenDau/đổi map không phải chờ. Đặt VENDOR_BAKE_ART=1 để bật lại (so sánh/gỡ lỗi).
+  if (process.env.VENDOR_BAKE_ART !== '1') {
+    try {
+      const arts = win.PNTT?.SceneWorld?.nenVeTay?.() as Array<{ chuanBiTruoc?: unknown } | undefined> | undefined;
+      for (const art of arts ?? []) if (art && typeof art.chuanBiTruoc === 'function') art.chuanBiTruoc = () => undefined;
+    } catch { /* thiếu module nền: giữ hành vi cũ */ }
+  }
+
   return {
     win,
     context,
