@@ -25,14 +25,18 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
   const PORT = await freePort();
   const B = `http://127.0.0.1:${PORT}`;
   const failures: string[] = [];
+  const shardPids: number[] = [];
   const check = (cond: unknown, message: string): void => { if (!cond) failures.push(message); };
   const j = async (p: string, m = 'GET', b?: unknown, token?: string): Promise<{ s: number; b: any }> => {
     const r = await fetch(B + p, { method: m, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: b ? JSON.stringify(b) : undefined });
     let body: any = null; try { body = await r.json(); } catch { /* không phải JSON */ }
     return { s: r.status, b: body };
   };
-  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '', MIN_FREE_MEM_MB: '0', ALLOW_PRIVATE_PROXY: '1', WS_MAX_CONNECTIONS_PER_USER: '1' };
-  const srv = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const env = { ...process.env, DATA_DIR: DATA, PORT: String(PORT), HOST: '127.0.0.1', API_TOKEN: '', ADMIN_USERNAME: '', ADMIN_PASSWORD: '', MIN_FREE_MEM_MB: '0', ALLOW_PRIVATE_PROXY: '1', REQUIRE_PROXY: '0', VENDOR_SHARDS: '2', TUTIEN_ALLOW_SHARD_TEST_HOOK: '1', WS_MAX_CONNECTIONS_PER_USER: '1' };
+  const builtServer = path.join(SERVER_DIR, 'dist/index.js');
+  const srv = fs.existsSync(builtServer)
+    ? spawn(process.execPath, [builtServer], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], { cwd: SERVER_DIR, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   srv.stdout.on('data', (d) => { log += d; });
   srv.stderr.on('data', (d) => { log += d; });
@@ -102,6 +106,19 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     // can touch the game when the expiry is forced into the past.
     r = await j(`/api/admin/users/${alice.id}/grant`, 'POST', { duration: '1d' }, tokA);
     check(r.s === 200 && r.b.data?.entitlement?.state === 'active', 'grant alice ' + r.s);
+    const bobGrant = await j(`/api/admin/users/${bob.id}/grant`, 'POST', { duration: '1d' }, tokA);
+    check(bobGrant.s === 200, 'grant bob for offline shard smoke ' + bobGrant.s);
+    const shardStartA = await j(`/api/accounts/${idA}/start`, 'POST', {}, tokA);
+    const shardStartB = await j(`/api/accounts/${idB}/start`, 'POST', {}, tokA);
+    check(shardStartA.s === 200 && shardStartB.s === 200, `two offline shard starts ${shardStartA.s}/${shardStartB.s}`);
+    const shardedHealth = await j('/api/admin/health', 'GET', null, tokA);
+    check(shardedHealth.s === 200 && shardedHealth.b.data?.shards?.length === 2, 'admin health reports two child shards');
+    check((shardedHealth.b.data?.shards ?? []).every((shard: any) => typeof shard.id === 'string' && Number.isInteger(shard.pid)
+      && shard.runners === 1 && typeof shard.stale === 'boolean' && Object.prototype.hasOwnProperty.call(shard, 'eventLoop')),
+    'admin health reports shard identity, runner count, and process metrics');
+    shardPids.push(...(shardedHealth.b.data?.shards ?? []).map((shard: any) => shard.pid).filter((pid: unknown): pid is number => Number.isInteger(pid)));
+    await j(`/api/accounts/${idA}/stop`, 'POST', {}, tokA);
+    await j(`/api/accounts/${idB}/stop`, 'POST', {}, tokA);
     const autoBeforeExpiry = await j(`/api/accounts/${idA}/auto/start`, 'POST', {}, tokAl);
     check(autoBeforeExpiry.s === 409 && autoBeforeExpiry.b.errorCode === 'ENGINE_VENDOR_REQUIRED', 'active user passed entitlement gate ' + autoBeforeExpiry.s);
     const stopAlice = await j(`/api/admin/users/${alice.id}/stop-bots`, 'POST', {}, tokA);
@@ -255,10 +272,16 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const deletedRow = deletedAudit.b?.data?.find((item: any) => item.action === 'user_deleted' && item.targetId === alice.id);
     check(deletedRow && deletedRow.targetName === undefined, 'deleted user audit has id only');
     check(!log.includes('admin123') && !log.includes('alice1'), 'no passwords in server log');
-    assert.deepEqual(failures, []);
   } finally {
     srv.kill();
-    await sleep(300);
+    await Promise.race([new Promise<void>((resolve) => srv.once('close', () => resolve())), sleep(10_000)]);
+    for (const pid of shardPids) {
+      const deadline = Date.now() + 5_000;
+      let alive = false;
+      while (Date.now() < deadline) { try { process.kill(pid, 0); alive = true; } catch { alive = false; break; } await sleep(50); }
+      if (alive) failures.push(`orphan shard process ${pid}`);
+    }
     try { fs.rmSync(DATA, { recursive: true, force: true }); } catch { /* Windows có thể còn giữ file WAL */ }
   }
+  assert.deepEqual(failures, []);
 });

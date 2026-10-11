@@ -29,10 +29,12 @@ Cập nhật: 2026-10-09. API này là control-plane nội bộ của dashboard,
 | `POST` | `/api/admin/users/:id/password` | Admin đặt lại mật khẩu, thu hồi session và buộc đổi mật khẩu lần sau. |
 | `DELETE` | `/api/admin/users/:id` | Dừng runner rồi xóa user cùng game account/config/log/session; không xóa chính mình hoặc admin cuối. |
 | `POST` | `/api/admin/users/:id/grant` | Admin cấp thêm `{duration:"1d"|"7d"|"30d"}`; cộng dồn từ hạn còn lại, ghi `grants` và audit `user_granted`. Admin/ user bị khóa trả lỗi riêng. |
-| `POST` | `/api/admin/users/:id/expiry` | Admin đặt hạn tuyệt đối `{expiresAt:number|null}`; `null`/hạn đã qua là chưa có quyền chạy và kích watcher ngay, audit `user_expiry_set`. |
+| `POST` | `/api/admin/users/:id/expiry` | Admin đặt hạn tuyệt đối `{expiresAt:number|null}`; 
+ull`/hạn đã qua là chưa có quyền chạy và kích watcher ngay, audit `user_expiry_set`. |
 | `POST` | `/api/admin/users/:id/stop-bots` | Dừng mọi runner của user, kể cả user hết hạn/khóa; trả `{stopped}` và audit `admin_stop_bots`. |
 | `POST` | `/api/admin/users/:id/revoke-sessions` | Thu hồi phiên dashboard; khi admin tự chọn mình giữ phiên hiện tại và trả `{revoked,preservedCurrent}`. |
-| `GET` | `/api/admin/audit?limit=50&before=<at-ms>` | Nhật ký kiểm toán đã làm sạch, phân trang tối đa 200 dòng; trả `data` và `nextBefore`, không có hash/token/mật khẩu. |
+| `GET` | `/api/admin/audit?limit=50&before=<at-ms>` | Nhật ký kiểm toán đã làm sạch, phân trang tối đa 200 dòng; trả `data` và 
+extBefore`, không có hash/token/mật khẩu. |
 
 ## Proxy theo tài khoản
 
@@ -53,7 +55,9 @@ Khi `AUTO_ASSIGN_PROXY=1` (mặc định), tạo account chọn proxy enabled/kh
 
 User thường chỉ thấy và điều khiển game account có `owner_id` của mình. Account của user khác trả `404 ACCOUNT_NOT_FOUND`, kể cả các route con dưới `/api/accounts/:id/**`; gọi `/api/admin/**` trả `403 FORBIDDEN`. `GET /api/orchestrator/start-all|stop-all`, `/api/logs` và `/api/system/status` cũng được giới hạn theo owner; admin vẫn thấy toàn hệ thống.
 
-`GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, `none` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `GET /api/admin/users` bổ sung `createdAt`, `lastLoginAt`, `createdBy` (username hoặc `null`), `usage` và `activeSessions`; không trả bất kỳ hash nào. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.
+`GET /api/auth/me` và user public trong login/admin trả `entitlement: { state, expiresAt, remainingMs }`. State của user thường là `active`, `expired`, 
+one` hoặc `disabled`; admin luôn là `admin`. User thường còn có `usage: { accounts, running, maxBots }`. `GET /api/admin/users` bổ sung `createdAt`, `lastLoginAt`, `createdBy` (username hoặc 
+ull`), `usage` và `activeSessions`; không trả bất kỳ hash nào. `serverNow` ở cấp response là thời gian máy chủ (ms) để dashboard hiệu chỉnh đồng hồ trình duyệt. User hết hạn/chưa cấp/bị khóa vẫn đăng nhập và xem được trạng thái.
 
 Khi hết hạn, các route điều khiển sau bị chặn với HTTP 403: `POST /api/accounts/:id/start`, `restart`, `auto/start`, `khu`, `move-to` (kể cả cancel), `daily/checkin`, `daily/seed`, `daily/cancel` và các route điều khiển tương tự; `POST /api/orchestrator/start-all` cũng bị chặn. Các route `GET` chỉ đọc, `POST /stop`, `POST /auto/stop`, `DELETE /api/accounts/:id`, `PUT /api/accounts/:id/password`, log và trạng thái vẫn được qua để người dùng tự dừng/dọn tài khoản. `POST /api/accounts` không yêu cầu còn hạn: user hết hạn vẫn được thêm tài khoản nếu còn chỗ; user bị khóa không được thêm. Hạ `maxBots` dưới số tài khoản hoặc runner hiện có không tự xóa/dừng gì, chỉ chặn thêm tài khoản/chạy thêm.
 
@@ -80,7 +84,7 @@ SQLite nằm ở `DATA_DIR/tutien_db.sqlite`, bật WAL và foreign keys. Khi c�
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `GET` | `/api/system/status` | Admin nhận uptime/memory/số account/running; user thường chỉ nhận số liệu account của mình |
-| `GET` | `/api/admin/health` | Admin xem uptime, Node, RSS/heap, load average, RAM khả dụng, runner/cap, kích thước SQLite, số user/account và backup gần nhất; `process` bổ sung độ trễ vòng lặp, RSS/heap bytes và runner đang chạy; không trả path/env/secret |
+| `GET` | `/api/admin/health` | Admin xem uptime, Node, RSS/heap, load average, RAM khả dụng, runner/cap, kích thước SQLite, số user/account và backup gần nhất; `process` bổ sung độ trễ vòng lặp, RSS/heap bytes và runner đang chạy; `shards` thêm `{id,pid,runners,rssBytes,eventLoop,stale,ignoredPackets}`; không trả path/env/secret |
 | `GET` | `/api/accounts` | Runtime snapshot theo owner; admin nhận mọi account |
 | `GET` | `/api/accounts/:id` | Runtime snapshot một account |
 | `POST` | `/api/accounts` | Verify và tạo account |
@@ -116,13 +120,16 @@ Gate start/restart/auto/start-all kiểm tra `MAX_TOTAL_RUNNERS` và `MIN_FREE_M
 
 Biến triển khai chính: `HOST`, `PORT`, `DATA_DIR`, `BACKUP_DIR`, `TRUST_PROXY`, `PUBLIC_ORIGIN`, `MAX_TOTAL_RUNNERS`, `MIN_FREE_MEM_MB`, `BACKUP_KEEP`, các biến rate-limit/WS ở trên. `BACKUP_DIR` mặc định là `DATA_DIR/backups`.
 
-Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters, packet/error/memory telemetry và `metrics` theo từng account. `metrics` có `frames`, `avgMs` (EMA), `p95Ms`, `maxMs`, `busyRatio` và `windowMs`; khi runner chưa chạy toàn trường này là `null`, còn các trị số trong lúc chưa có mẫu cũng không được thay bằng 0. `busyRatio` là tổng thời gian xử lý khung chia cho thời gian thực của cửa sổ trượt; giá trị 0.25 tương ứng khoảng 25% một lõi trong cửa sổ đó. Đây là số liệu runtime, không đo CPU hệ điều hành theo từng bot.
+Runtime giữ các nhóm dữ liệu: `ownerId`/`ownerUsername`, `engine:"vendor"`, connection/lifecycle, HP/MP/vitals freshness, vị trí/map/khu, marker players/monsters, `vendor.supervisor`, `moveTo`, `hurtCount`/`lastHurtAt`, death/revive/trip counters, packet/error/memory telemetry và `metrics` theo từng account. `metrics` có `frames`, `avgMs` (EMA), `p95Ms`, `maxMs`, `busyRatio` và `windowMs`; khi runner chưa chạy toàn trường này là 
+ull`, còn các trị số trong lúc chưa có mẫu cũng không được thay bằng 0. `busyRatio` là tổng thời gian xử lý khung chia cho thời gian thực của cửa sổ trượt; giá trị 0.25 tương ứng khoảng 25% một lõi trong cửa sổ đó. Đây là số liệu runtime, không đo CPU hệ điều hành theo từng bot.
 
-`GET /api/admin/health` thêm `data.process`: `eventLoopDelay` gồm `p50Ms`, `p99Ms`, `maxMs` từ `monitorEventLoopDelay`, đã trừ chu kỳ lấy mẫu 20 ms và kẹp tối thiểu 0; sàn đo còn cộng độ phân giải bộ định thời của hệ điều hành nên tiến trình rảnh vẫn có thể báo vài ms. `rssBytes`, `heapUsedBytes` là bộ nhớ toàn tiến trình; `runningRunners` là số runner hiện chạy. Độ trễ trả `null` trước khi histogram có mẫu. Cùng xem số liệu tiến trình và từng bot để phân biệt tải tổng với thời gian chiếm vòng lặp của mỗi runner; không suy ra số bot tối đa chỉ từ một cửa sổ ngắn. API account và WS chỉ đưa metrics cho account mà principal được phép xem (chủ sở hữu hoặc admin); `/api/admin/health` vẫn chỉ admin.
+`GET /api/admin/health` thêm `data.process`: `eventLoopDelay` gồm `p50Ms`, `p99Ms`, `maxMs` từ `monitorEventLoopDelay`, đã trừ chu kỳ lấy mẫu 20 ms và kẹp tối thiểu 0; sàn đo còn cộng độ phân giải bộ định thời của hệ điều hành nên tiến trình rảnh vẫn có thể báo vài ms. `rssBytes`, `heapUsedBytes` là bộ nhớ toàn tiến trình; `runningRunners` là số runner hiện chạy. Độ trễ trả 
+ull` trước khi histogram có mẫu. Khi sharding bật, `data.shards` liệt kê `id`, `pid`, số runner, RSS, độ trễ event loop, cờ stale và số packet IPC bị bỏ qua. Cùng xem số liệu tiến trình và từng bot để phân biệt tải tổng với thời gian chiếm vòng lặp của mỗi runner; không suy ra số bot tối đa chỉ từ một cửa sổ ngắn. API account và WS chỉ đưa metrics cho account mà principal được phép xem (chủ sở hữu hoặc admin); `/api/admin/health` vẫn chỉ admin.
 
 ## Danh sách và đổi khu
 
-`GET /api/accounts/:id/khu` trả `{ mapId, khu, soKhu, list }`. `list` là `null` khi chưa nhận danh sách hợp lệ; nếu có thì gồm `{ mapId, khu, dem, toiDa, tran, observedAt }`. `dem[i]` là số người ở khu `i + 1`; dữ liệu được giới hạn và kiểm tra kiểu ở runner/web, chỉ giữ cho map hiện tại. `refresh=1` gửi `{ "op": "khu", "act": "xem" }` qua Gateway chính thức và chờ gói `khu` đúng `mapId`, tối đa 3 giây.
+`GET /api/accounts/:id/khu` trả `{ mapId, khu, soKhu, list }`. `list` là 
+ull` khi chưa nhận danh sách hợp lệ; nếu có thì gồm `{ mapId, khu, dem, toiDa, tran, observedAt }`. `dem[i]` là số người ở khu `i + 1`; dữ liệu được giới hạn và kiểm tra kiểu ở runner/web, chỉ giữ cho map hiện tại. `refresh=1` gửi `{ "op": "khu", "act": "xem" }` qua Gateway chính thức và chờ gói `khu` đúng `mapId`, tối đa 3 giây.
 
 `POST /api/accounts/:id/khu` chỉ nhận đúng body `{ "khu": N }`. Runner chỉ gửi `{ "op": "khu", "act": "chon", "khu": N }` khi đang `IN_GAME`, map đã sẵn sàng, nhân vật không gục, Auto/supervisor và `walkTo` đều idle, map có `soKhu > 1`, đích hợp lệ, không trùng khu hiện tại và không trong bảo vệ hồi 5 giây phía client. Thành công được xác nhận bởi gói `map` cùng `mapId` và `khu` mới; toast thành công không được dùng làm ACK. Từ chối được nhận từ toast: cooldown `Vừa đổi khu, chờ N giây nữa.` → `KHU_COOLDOWN` với `retryAfterSec=N`, `Đang ở khu này rồi.` → `KHU_ALREADY_HERE`, toast khác → `KHU_REJECTED` và message đã làm sạch tối đa 120 ký tự; không có phản hồi trong khoảng 4 giây → `KHU_TIMEOUT`.
 
@@ -144,7 +151,8 @@ Khi gói `map` cùng `mapId` nhưng `khu` đổi đến từ bất kỳ nguồn 
 
 `GET /daily` trả `DailyStatus` cùng `current`. `POST /daily/checkin` và `/daily/seed` trả HTTP 202 với `DailyOperation`; `/daily/cancel` trả operation đã `cancelled`. Hiện hỗ trợ `duoc_moc`, `linh_chi`, `truc_gia`, `cau_ca` và `ho_tong_chau`; các seed task khác vẫn được đọc và hiển thị nhưng trả `TASK_NOT_SUPPORTED` (422). Lỗi gate dùng envelope `{success:false,error,errorCode,retryable}`: map chưa sẵn sàng có `retryable:true`; các gate runtime là 409, `STAGE_TOO_LOW`/`TASK_NOT_SUPPORTED` là 422, body sai là 400 và operation không tồn tại là 404.
 
-`DailyStatus.fishInBag` là tổng `Inventory.count('ca_song') + Inventory.count('linh_ngu')`, hoặc `null` khi client chưa cung cấp; operation `cau_ca` dùng progress `{itemId:"ca",collected,required:3}`.
+`DailyStatus.fishInBag` là tổng `Inventory.count('ca_song') + Inventory.count('linh_ngu')`, hoặc 
+ull` khi client chưa cung cấp; operation `cau_ca` dùng progress `{itemId:"ca",collected,required:3}`.
 
 Runner lấy prop `manh_shopt1`, `dai_phu`, `co_thu_linh_moc` từ `MapData`/`SceneWorld.map` lúc chạy. Với `duoc_moc`, nó gọi `Quest.startSeedQuest`, đặt `SceneWorld.chopping = { prop, swing: 0, t: 10 }` theo `ea()` đã đo, để client tự nhặt cành và phát `seed.collect`, rồi gọi `Quest.completeSeedQuest`. ACK được ghép theo `cmd` (`diemdanh`, `seed.start`, `seed.collect`, `seed.complete`) trước khi chờ tối đa 5 giây; `state ...:refused` chỉ để client đồng bộ và `ack.why` được giữ trong operation, không retry mù. Với `linh_chi`, runner đọc các prop `ling_chi_prop` hiện có ở `tan_vien`, đi tới gần nhất, gọi `Gateway.cmd("resource.harvest", {propId})` và dùng `Inventory.count('nam_linh_chi')`/`ack.du` để biết đã đủ 3 nấm. Prop trả `chưa mọc lại` được đánh dấu hồi theo `retryAfter`; chỉ khi không còn prop dùng được mới chờ, tối đa 15 giây mỗi lượt chờ.
 
@@ -152,7 +160,8 @@ Với `cau_ca`, runner gọi `Quest.startSeedQuest` ở Đại Phu, đọc `fish
 
 Với `ho_tong_chau`, runner nhận việc ở Đại Phu, đi theo map tới `tan_vien`, đọc NPC `su_phu` từ map đã tải rồi gọi `Quest.completeEscortSeedQuest`; kết quả chờ ACK `seed.escortComplete` theo `cmd`. Việc không có tiến độ vật phẩm (`activeRequired: 0`, operation không bịa `progress`); nếu server từ chối vì chưa đứng cạnh Thầy Ông Nội, runner chỉ đi sát lại một lần rồi giữ `why` khi thất bại.
 
-Thao tác daily giữ quyền lái với `walkTo`/đổi khu/Auto; gục, reconnect, stop và Auto bật sẽ hủy. Mặc định `abortOnHurt=false` theo yêu cầu; có thể bật ở request seed. `DailyStatus` có thêm `namLinhChi`; operation linh chi có thể có `progress {itemId,collected,required}`. Chưa xác minh live lại trong bản triển khai: ngưỡng NPC/prop chính xác, khi mọi prop cùng hồi, giới hạn lượt server, các task còn lại và hành vi rời việc giữa chừng.
+Thao tác daily giữ quyền lái với `walkTo`/đổi khu/Auto; gục, reconnect, stop và Auto bật sẽ hủy. Mặc định `abortOnHurt=false` theo yêu cầu; có thể bật ở request seed. `DailyStatus` có thêm 
+amLinhChi`; operation linh chi có thể có `progress {itemId,collected,required}`. Chưa xác minh live lại trong bản triển khai: ngưỡng NPC/prop chính xác, khi mọi prop cùng hồi, giới hạn lượt server, các task còn lại và hành vi rời việc giữa chừng.
 
 ## Endpoint đã gỡ
 
@@ -166,8 +175,13 @@ DB vẫn tương thích file cũ: `botConfigs` legacy được đọc an toàn v
 
 `GET /api/accounts/:id/reachable-maps` trả `{ currentMapId, maps: [{ mapId, name?, hops, route }] }`. Đồ thị lấy từ `P.MapData` của client vendor và chỉ dùng `map.portals`. `byHand`, `cooldownSec > 0`, `cooldownGroup`, `warps` và cấu trúc không xác minh bị loại. Account không tồn tại trả 404; chưa biết map hiện tại trả 409 `NOT_IN_GAME` hoặc `VENDOR_MAP_NOT_READY`.
 
-`WalkOperation` có thêm `route` và `leg`; `target` có thể là `null` với request map-only. Các lỗi `ROUTE_UNAVAILABLE` và `PATH_CROSSES_PORTAL` trả HTTP 422, dùng cùng envelope `success/error/errorCode/retryable`.
+`WalkOperation` có thêm `route` và `leg`; `target` có thể là 
+ull` với request map-only. Các lỗi `ROUTE_UNAVAILABLE` và `PATH_CROSSES_PORTAL` trả HTTP 422, dùng cùng envelope `success/error/errorCode/retryable`.
 
 ## WebSocket `/ws`
 
 Server gửi `initial_state`, `account_updated`, `account_log` và `bot_activity`. Client merge snapshot theo timestamp/context, không gửi command ngược qua WS. Runtime không chứa token, self id hoặc dữ liệu credential.
+
+### Shard runtime freshness
+
+Runtime includes boolean dataStale. When true, HP/MP, map/location/khu and downed state are unknown (null); hurtCount and lastHurtAt retain the last observed values and are explicitly marked as potentially old. The dashboard displays a stale-data badge.

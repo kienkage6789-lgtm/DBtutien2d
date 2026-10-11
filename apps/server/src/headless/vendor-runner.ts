@@ -195,6 +195,7 @@ export interface VendorRunnerOptions {
   supervisor?: Partial<AutoSupervisorConfig>;
   onSessionUpdated?: (session: AuthSession) => void;
   onLog?: VendorRunnerLogger;
+  onSnapshotChanged?: () => void;
 }
 
 const safeNumber = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -353,10 +354,12 @@ export class VendorRunner {
   /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
   private readonly watchdogLoggedAt = new Map<string, number>();
   private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectMaxRetries' | 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
+  private readonly onSnapshotChanged?: () => void;
   private transportClosed = false;
 
   public constructor(private readonly input: VendorRunnerOptions) {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
+    this.onSnapshotChanged = input.onSnapshotChanged;
     this.options = {
       reconnectMaxRetries: input.reconnectMaxRetries ?? 5,
       reconnectBaseDelayMs: input.reconnectBaseDelayMs ?? 1_000,
@@ -1745,6 +1748,7 @@ export class VendorRunner {
     }
     if (op === 'kill' && packet.by !== undefined && packet.by !== null && this.P?.Gateway?.selfId
       && String(packet.by) === String(this.P.Gateway.selfId)) this.killsBySelf += 1;
+    if (op === 'hurt' || op === 'down' || op === 'revived' || op === 'you') this.onSnapshotChanged?.();
   }
 
   private recordOutgoing(packet: Record<string, unknown>): void {

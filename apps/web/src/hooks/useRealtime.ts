@@ -270,6 +270,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
     if (hasOwn(payload, field) && (typeof payload[field] === 'string' || payload[field] === null)) next[field] = payload[field] as never;
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
+  if (hasOwn(payload, 'dataStale') && typeof payload.dataStale === 'boolean') next.dataStale = payload.dataStale;
   if (hasOwn(payload, 'hasProxy') && typeof payload.hasProxy === 'boolean') next.hasProxy = payload.hasProxy;
   if (hasOwn(payload, 'proxy')) {
     if (payload.proxy === null) next.proxy = null;
@@ -382,6 +383,18 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
       const khuList = sanitizeKhuList(payload.khuList);
       if (khuList !== undefined) next.khuList = khuList;
     }
+  }
+  if (next.dataStale) {
+    next.hp = next.maxHp = next.mp = next.maxMp = null;
+    next.vitals = { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, observedAt: null };
+    next.vitalsAgeMs = null;
+    next.downed = null; next.mapId = null; next.khu = next.x = next.y = null;
+    next.mapContext = { mapId: null, khu: null, soKhu: null, observedAt: null, fresh: false };
+    next.mapContextAgeMs = null; next.mapContextIsCurrent = false;
+    next.playersContext = { mapId: null, khu: null, observedAt: null, fresh: false };
+    next.monstersContext = { mapId: null, khu: null, observedAt: null, fresh: false };
+    next.khuList = null; next.monsters = []; next.players = [];
+    if (next.vendor) next.vendor = { ...next.vendor, dataStale: true, mapId: null, khu: null, x: null, y: null, hp: null, maxHp: null, mp: null, maxMp: null, downed: null };
   }
   return next;
 }

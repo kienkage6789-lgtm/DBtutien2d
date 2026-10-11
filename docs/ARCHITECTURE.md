@@ -1,6 +1,6 @@
 # Kiến trúc TuTien2D
 
-Cập nhật: 2026-10-11. `WorkerPool` quản lý runner qua `RunnerHandle`; hiện factory mặc định tạo `InProcessRunnerHandle`, composition quanh `VendorGateway` và `VendorRunner`. `RunnerHandle` giữ các lệnh bất đồng bộ, đọc snapshot đồng bộ kèm tuổi dữ liệu, và các sự kiện log/session/disconnect để sau này có thể thay bằng handle IPC. Chưa tạo tiến trình con hay shard. Chưa có `ProtocolGateway`. `vendor/` là nguồn tham chiếu chỉ đọc.
+Cập nhật: 2026-10-11. `WorkerPool` quản lý runner qua `RunnerHandle`. Mặc định `VENDOR_SHARDS=0` tạo `InProcessRunnerHandle`; khi đặt 1..16, `ShardManager` tạo các child process theo nhu cầu và dùng `RemoteRunnerHandle` qua IPC phiên bản 1. Chưa có `ProtocolGateway`. `vendor/` là nguồn tham chiếu chỉ đọc.
 
 ## Luồng chính
 
@@ -8,14 +8,16 @@ Cập nhật: 2026-10-11. `WorkerPool` quản lý runner qua `RunnerHandle`; hi�
 Dashboard REST/WS
         │
         ▼
-apps/server WorkerPool ── RunnerHandle ── InProcessRunnerHandle ── VendorGateway ── VendorRunner ── vendor client trong node:vm ── game server
-        │                                  │
-        └── runtime snapshot ──────────────┴── AutoSupervisor
+apps/server WorkerPool ── RunnerHandle ──┬── InProcessRunnerHandle ── VendorGateway ── VendorRunner ── vendor client ── game server
+        │                                  └── RemoteRunnerHandle ── IPC ── ShardManager ── child shard(s) ── VendorRunner
+        └── runtime snapshot / DB / auth / entitlement / proxy check
 ```
 
-- `WorkerPool.startAccount` giữ xác thực, proxy, entitlement và capacity ở tiến trình chính; factory tạo handle và mỗi account tối đa một handle/phiên.
+- `WorkerPool.startAccount` giữ credential lookup, kiểm tra proxy, entitlement và capacity ở tiến trình chính; shard tạo transport proxy/socket của runner bên trong child. Bản ghi account→shard ở `ShardManager` khóa một phiên cho mỗi account.
 - `RunnerHandle` nằm tại `apps/server/src/orchestrator/runner-handle.ts`; các giá trị đọc đồng bộ được trả dưới dạng cache (`ageMs`, `stale`), còn các lệnh điều khiển trả `Promise`.
-- `InProcessRunnerHandle` chỉ uỷ quyền qua `VendorGateway`/`VendorRunner`; không có child process, thay đổi nhịp frame hay logic Auto.
+- `InProcessRunnerHandle` uỷ quyền qua `VendorGateway`/`VendorRunner`. `RemoteRunnerHandle` đọc cache snapshot đẩy lên mỗi 500 ms; sau 1,5 giây dữ liệu nhạy cảm chuyển về unknown/stale. RPC giới hạn danh sách phương thức và có timeout; stop quá hạn giết shard.
+- Child không import API/DB/auth; khi parent mất IPC, dừng runner có hạn chót rồi thoát. Tắt server dừng runner rồi shard. Shard crash đánh dấu account `stopped`, ghi audit/log và báo chủ sở hữu; không tự bật lại.
+- `/api/admin/health` thêm `shards` cạnh `process`, gồm id/pid/count, RSS, event-loop, stale và bộ đếm packet IPC bị bỏ qua. `pnpm --filter @tutien2d/server measure:shards` chạy tải offline bằng socket giả.
 - `GameGateway` được định nghĩa tại `apps/server/src/gateway`; `VendorGateway` chỉ uỷ quyền, không giữ protocol hoặc safety logic riêng.
 - `DailyQuests` tiếp tục phụ thuộc `DailyClient`; `VendorGateway.daily` cung cấp cùng interface từ runner.
 - `VendorRunner` giữ auth/session, WebSocket chính thức, snapshot HP/MP/vị trí, counters, hurt/death và vòng đời Auto.

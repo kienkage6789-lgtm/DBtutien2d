@@ -113,6 +113,7 @@ async function handleShutdown(exitCode = 0): Promise<void> {
   workerPool.stopProxyChecks();
   try {
     await workerPool.stopAll(undefined, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+    await workerPool.shutdownShards(SHUTDOWN_TIMEOUT_MS);
     await Promise.race([
       httpClosed,
       new Promise<void>((resolve) => {

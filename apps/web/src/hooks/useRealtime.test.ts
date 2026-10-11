@@ -156,4 +156,15 @@ describe('frame metrics sanitizer', () => {
     expect(mergeAccountRuntime(undefined, { ...base, metrics: { frames: 1, avgMs: 1, p95Ms: 1, maxMs: 1, busyRatio: 0.5, windowMs: 2 } })?.metrics?.frames).toBe(1);
     expect(mergeAccountRuntime(undefined, { ...base })?.metrics).toBeNull();
   });
+
+  it('clears cached world and vital values when dataStale while preserving the last hurt count', () => {
+    const stale = mergeAccountRuntime(undefined, {
+      ...base, dataStale: true, hp: 50, mp: 20, khu: 3, x: 100, y: 200, mapId: 'tan_vien', downed: false,
+      vitals: { hp: 50, maxHp: 100, mp: 20, maxMp: 40, status: 'fresh', source: 'client', observedAt: 100 },
+      vendor: { autoRequested: true, hurtCount: 4, mapId: 'tan_vien', hp: 50, downed: false },
+    });
+    expect(stale).toMatchObject({ dataStale: true, hp: null, mp: null, khu: null, x: null, y: null, mapId: null, downed: null });
+    expect(stale?.vitals).toMatchObject({ hp: null, mp: null, status: 'unknown' });
+    expect(stale?.vendor).toMatchObject({ dataStale: true, hurtCount: 4, mapId: null, hp: null, downed: null });
+  });
 });

@@ -405,6 +405,7 @@ apiRouter.get('/admin/health', requireAdmin, (_req: Request, res: Response) => {
       memoryAvailableMb: availableMemoryMb(availableBytes),
       runningRunners: runtimes.filter((runtime) => runtime.status === 'running').length,
       process: processMetrics.snapshot(runtimes.filter((runtime) => runtime.status === 'running').length),
+      shards: workerPool.getShardHealth(),
       runnerLimit: CONFIG.MAX_TOTAL_RUNNERS,
       databaseBytes: db.getDatabaseSizeBytes(),
       users: db.getUserCount(),

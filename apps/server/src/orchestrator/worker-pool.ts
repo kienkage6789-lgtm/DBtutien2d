@@ -5,6 +5,7 @@ import { CONFIG } from '../config.js';
 import { PUBLIC_CLIENT_MAP_CATALOG } from '../config/map-catalog.js';
 import type { KhuInfo, VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import { createInProcessRunnerHandle, type RunnerHandle, type RunnerHandleFactory } from './runner-handle.js';
+import { shardManager } from './shard-manager.js';
 import type { AutoAnchor } from '../headless/auto-supervisor.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -59,6 +60,7 @@ export interface AccountRuntimeInfo {
   accountName: string;
   engine: 'vendor';
   status: 'running' | 'stopped' | 'error';
+  dataStale: boolean;
   connection: string;
   authError: string | null;
   hasProxy: boolean;
@@ -76,7 +78,7 @@ export interface AccountRuntimeInfo {
   lastHurtAt: number | null;
   derivedMax: DerivedMaxSnapshot;
   downed: boolean | null;
-  mapId: string;
+  mapId: string | null;
   khu: number | null;
   x: number | null;
   y: number | null;
@@ -164,6 +166,7 @@ const emptyEntityContext = (): MapEntityContext => ({
 
 export class WorkerPool {
   private readonly activeVendors = new Map<string, RunnerHandle>();
+  private readonly startingAccounts = new Set<string>();
   private runtimeBroadcastTimer: ReturnType<typeof setInterval> | null = null;
   private readonly observedMaps = new Map<string, ObservedMap>();
   private readonly proxyChecker = new ProxyChecker();
@@ -175,7 +178,22 @@ export class WorkerPool {
     gameApiBase: CONFIG.GAME_SERVER_URL.replace(/^ws/i, 'http'),
   });
 
-  public constructor(private readonly createRunnerHandle: RunnerHandleFactory = createInProcessRunnerHandle) {}
+  public constructor(private readonly createRunnerHandle: RunnerHandleFactory = createInProcessRunnerHandle) {
+    shardManager.setHooks({
+      onExit: (accountId, shardId, details) => {
+        this.activeVendors.delete(accountId);
+        const account = db.getAccountById(accountId);
+        db.updateAccount(accountId, { status: 'stopped' });
+        const exitInfo = `exitCode=${details?.exitCode ?? 'unknown'} signal=${details?.signal ?? 'none'}`;
+        const saved = db.addLog(accountId, 'error', 'Shard', `Shard exited; runner was stopped (${exitInfo}).${details?.stderr ? ` stderr: ${details.stderr}` : ''}`.slice(0, 5000));
+        wsHub.broadcastLog(saved);
+        const detail = `shard=${shardId}; ${exitInfo}${details?.stderr ? `; stderr=${details.stderr}` : ''}`.slice(0, 5000);
+        db.addAuditLog({ actorId: null, action: 'shard_runner_stopped', targetType: 'account', targetId: accountId, detail });
+        if (account?.ownerId) wsHub.broadcastSystemAlertToOwner(account.ownerId, { reason: 'shard_exit', message: 'Bot đã dừng do tiến trình shard bị lỗi.' });
+        wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+      },
+    });
+  }
 
   /** Verify credentials without starting a game session. */
   public async verifyLogin(accountName: string, password: string, transport?: ProxyTransport) {
@@ -196,14 +214,22 @@ export class WorkerPool {
     const account = db.getAccountById(accountId);
     if (!account) throw new Error(`Account not found: ${accountId}`);
     if (this.activeVendors.has(accountId)) return true;
-    this.assertCanStart(account);
-    const transport = await this.prepareProxyTransport(accountId);
+    if (this.startingAccounts.has(accountId)) throw new Error('START_IN_PROGRESS');
+    this.startingAccounts.add(accountId);
     try {
-      return await this.startVendorAccount(accountId, account, transport);
-    } catch (error) {
-      if (transport) await transport.close().catch(() => undefined);
-      throw error;
-    }
+      this.assertCanStart(account);
+      const transport = await this.prepareProxyTransport(accountId);
+      try {
+        if (CONFIG.VENDOR_SHARDS > 0) {
+          await transport?.close();
+          return await this.startVendorAccount(accountId, account, undefined, db.getAccountProxy(accountId)?.url ?? null);
+        }
+        return await this.startVendorAccount(accountId, account, transport);
+      } catch (error) {
+        if (transport) await transport.close().catch(() => undefined);
+        throw error;
+      }
+    } finally { this.startingAccounts.delete(accountId); }
   }
 
   private async prepareProxyTransport(accountId: string): Promise<ProxyTransport | undefined> {
@@ -233,9 +259,10 @@ export class WorkerPool {
         throw new Error(code);
       }
       const runningForOwner = this.getRunningAccountIdsForOwner(owner.id).filter((id) => id !== account.id).length;
-      if (runningForOwner >= owner.maxBots) throw new Error('BOT_LIMIT_REACHED');
+      const startingForOwner = Array.from(this.startingAccounts).filter((id) => id !== account.id && db.getOwnerId(id) === owner.id).length;
+      if (runningForOwner + startingForOwner >= owner.maxBots) throw new Error('BOT_LIMIT_REACHED');
     }
-    if (CONFIG.MAX_TOTAL_RUNNERS > 0 && this.activeVendors.size >= CONFIG.MAX_TOTAL_RUNNERS) {
+    if (CONFIG.MAX_TOTAL_RUNNERS > 0 && this.activeVendors.size + this.startingAccounts.size - 1 >= CONFIG.MAX_TOTAL_RUNNERS) {
       throw new Error('SERVER_CAPACITY');
     }
     if (!hasRunnerMemoryCapacity()) {
@@ -300,6 +327,7 @@ export class WorkerPool {
     accountId: string,
     account: NonNullable<ReturnType<typeof db.getAccountById>>,
     transport?: ProxyTransport,
+    proxyUrl?: string | null,
   ): Promise<boolean> {
     const creds = db.getCredentials(accountId);
     if (!creds.password && !creds.refreshToken && !creds.legacyToken) {
@@ -309,7 +337,7 @@ export class WorkerPool {
       throw new Error(message);
     }
 
-    const handle = this.createRunnerHandle({
+    const runnerOptions = {
       accountName: account.accountName,
       credentials: creds,
       gameServerUrl: CONFIG.GAME_SERVER_URL,
@@ -319,7 +347,10 @@ export class WorkerPool {
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
-    });
+    };
+    const handle = CONFIG.VENDOR_SHARDS > 0
+      ? shardManager.factory(runnerOptions, { accountId, proxyUrl })
+      : this.createRunnerHandle(runnerOptions);
     handle.onSessionUpdated((session) => {
       db.updateCredentials(accountId, { refreshToken: session.refreshToken });
     });
@@ -359,6 +390,11 @@ export class WorkerPool {
       this.activeVendors.delete(accountId);
       const rawCode = error instanceof Error ? error.message.split(':', 1)[0].trim() : '';
       const code = /^[A-Z][A-Z0-9_]{2,79}$/.test(rawCode) ? rawCode : 'UNKNOWN';
+      if (code === 'SHARD_EXITED' || code === 'SHARD_DISCONNECTED') {
+        db.updateAccount(accountId, { status: 'stopped' });
+        wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
+        throw error;
+      }
       if (code === 'ENTITLEMENT_EXPIRED' || code === 'ENTITLEMENT_NONE' || code === 'USER_DISABLED') {
         db.updateAccount(accountId, { status: 'stopped' });
         wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
@@ -466,6 +502,9 @@ export class WorkerPool {
     }
   }
 
+  public getShardHealth() { return CONFIG.VENDOR_SHARDS > 0 ? shardManager.health() : []; }
+  public shutdownShards(timeoutMs?: number): Promise<void> { return shardManager.shutdown(timeoutMs); }
+
   public async stopAccountsForOwner(ownerId: string): Promise<boolean> {
     const accountIds = db.getAccounts(ownerId).map((account) => account.id);
     let ok = true;
@@ -487,19 +526,24 @@ export class WorkerPool {
     return this.activeVendors.has(accountId) ? 'vendor' : null;
   }
 
+  private requireFresh<T>(cached: { value: T; stale: boolean }): T {
+    if (cached.stale) throw new Error('VENDOR_DATA_STALE');
+    return cached.value;
+  }
+
   public async startVendorAuto(accountId: string, anchor?: AutoAnchor): Promise<VendorRunnerSnapshot> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('ENGINE_VENDOR_REQUIRED: start the vendor engine first');
     await active.startAuto(anchor);
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
-    return active.getSnapshot().value;
+    return this.requireFresh(active.getSnapshot());
   }
 
   public async stopVendorAuto(accountId: string): Promise<VendorRunnerSnapshot> {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
     await active.stopAuto();
-    const snapshot = active.getSnapshot().value;
+    const snapshot = this.requireFresh(active.getSnapshot());
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return snapshot;
   }
@@ -516,7 +560,7 @@ export class WorkerPool {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
     if (!await active.cancelWalk(operationId)) throw new Error('OPERATION_NOT_FOUND');
-    const operation = active.getSnapshot().value.moveTo;
+    const operation = this.requireFresh(active.getSnapshot()).moveTo;
     if (!operation) throw new Error('OPERATION_NOT_FOUND');
     wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId));
     return operation;
@@ -525,7 +569,7 @@ export class WorkerPool {
   public getDaily(accountId: string): { status: DailyStatus; current: DailyOperation | null } {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const snapshot = active.getDailySnapshot(true).value;
+    const snapshot = this.requireFresh(active.getDailySnapshot(true));
     if (!snapshot.status) throw new Error('NOT_IN_GAME');
     return snapshot as { status: DailyStatus; current: DailyOperation | null };
   }
@@ -587,13 +631,13 @@ export class WorkerPool {
   public getKhuProbe(accountId: string) {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    return active.getKhuProbe().value;
+    return this.requireFresh(active.getKhuProbe());
   }
 
   public getReachableMaps(accountId: string): { currentMapId: string; maps: ReachableMapInfo[] } {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('NOT_IN_GAME');
-    const result = active.getReachableMaps().value;
+    const result = this.requireFresh(active.getReachableMaps());
     if (!result) throw new Error('VENDOR_MAP_NOT_READY');
     const names = new Map(PUBLIC_CLIENT_MAP_CATALOG.map((map) => [map.mapId, map.name] as const));
     return {
@@ -639,6 +683,7 @@ export class WorkerPool {
       engine: 'vendor',
       // Không có runner thì không thể đang chạy; DB có thể kẹt 'running' sau khi server tắt đột ngột.
       status: account?.status === 'error' ? 'error' : 'stopped',
+      dataStale: false,
       connection: 'DISCONNECTED',
       authError: account?.authError ?? null,
       hasProxy: !!account?.proxyId,
@@ -656,7 +701,7 @@ export class WorkerPool {
       lastHurtAt: null,
       derivedMax: emptyDerivedMax(),
       downed: null,
-      mapId: '',
+      mapId: null,
       khu: null,
       x: null,
       y: null,
@@ -693,14 +738,17 @@ export class WorkerPool {
     runner: RunnerHandle,
   ): AccountRuntimeInfo {
     const owner = account?.ownerId ? db.getUserById(account.ownerId) : undefined;
-    const snapshot = runner.getSnapshot().value;
-    const positionKnown = snapshot.mapId !== null && snapshot.x !== null && snapshot.y !== null;
-    const positionCurrent = snapshot.connection === 'IN_GAME' && positionKnown;
-    const locationKnown = positionCurrent && snapshot.khu !== null;
+    const cachedSnapshot = runner.getSnapshot();
+    const stale = cachedSnapshot.stale;
+    const snapshot = cachedSnapshot.value;
+    const cachedMetrics = runner.getFrameMetrics();
+    const positionKnown = !stale && snapshot.mapId !== null && snapshot.x !== null && snapshot.y !== null;
+    const positionCurrent = !stale && snapshot.connection === 'IN_GAME' && positionKnown;
+    const locationKnown = !stale && positionCurrent && snapshot.khu !== null;
     const vitalsFresh = snapshot.vitals.fresh;
     const now = Date.now();
 
-    if (snapshot.mapId) {
+    if (!stale && snapshot.mapId) {
       this.observedMaps.set(snapshot.mapId, {
         mapId: snapshot.mapId,
         soKhu: snapshot.soKhu,
@@ -708,7 +756,7 @@ export class WorkerPool {
       });
     }
 
-    const mapContext: MapDataContext = {
+    const mapContext: MapDataContext = stale ? emptyMapContext() : {
       mapId: snapshot.mapId,
       khu: snapshot.khu,
       soKhu: snapshot.soKhu,
@@ -716,13 +764,13 @@ export class WorkerPool {
       fresh: locationKnown,
     };
     const vitals: VitalSnapshot = {
-      hp: snapshot.hp,
-      maxHp: snapshot.maxHp,
-      mp: snapshot.mp,
-      maxMp: snapshot.maxMp,
-      status: vitalsFresh ? 'fresh' : 'unknown',
-      source: vitalsFresh ? 'client' : null,
-      observedAt: snapshot.vitals.observedAt,
+      hp: stale ? null : snapshot.hp,
+      maxHp: stale ? null : snapshot.maxHp,
+      mp: stale ? null : snapshot.mp,
+      maxMp: stale ? null : snapshot.maxMp,
+      status: !stale && vitalsFresh ? 'fresh' : 'unknown',
+      source: !stale && vitalsFresh ? 'client' : null,
+      observedAt: stale ? null : snapshot.vitals.observedAt,
     };
 
     return {
@@ -732,53 +780,54 @@ export class WorkerPool {
       accountName: account?.accountName || 'Unknown',
       engine: 'vendor',
       status: snapshot.lifecycle === 'error' ? 'error' : 'running',
-      connection: snapshot.connection,
+      dataStale: stale,
+      connection: stale ? 'DISCONNECTED' : snapshot.connection,
       authError: account?.authError ?? null,
       hasProxy: !!account?.proxyId,
       proxy: this.runtimeProxy(account),
       hasPassword: !!account?.encryptedPassword,
-      tokenExpiresAt: snapshot.tokenExpiresAt,
+      tokenExpiresAt: stale ? null : snapshot.tokenExpiresAt,
       characterName: account?.characterName || account?.accountName || 'Unknown',
-      hp: vitalsFresh ? snapshot.hp : null,
-      maxHp: vitalsFresh ? snapshot.maxHp : null,
-      mp: vitalsFresh ? snapshot.mp : null,
-      maxMp: vitalsFresh ? snapshot.maxMp : null,
+      hp: !stale && vitalsFresh ? snapshot.hp : null,
+      maxHp: !stale && vitalsFresh ? snapshot.maxHp : null,
+      mp: !stale && vitalsFresh ? snapshot.mp : null,
+      maxMp: !stale && vitalsFresh ? snapshot.maxMp : null,
       vitals,
-      vitalsAgeMs: vitalsFresh && snapshot.vitals.observedAt !== null
+      vitalsAgeMs: !stale && vitalsFresh && snapshot.vitals.observedAt !== null
         ? Math.max(0, now - snapshot.vitals.observedAt) : null,
       hurtCount: snapshot.hurtCount,
       lastHurtAt: snapshot.lastHurtAt,
       derivedMax: emptyDerivedMax(),
-      downed: snapshot.downed,
-      mapId: snapshot.mapId ?? '',
-      khu: snapshot.khu,
-      x: snapshot.x,
-      y: snapshot.y,
-      moveTo: snapshot.moveTo,
-      daily: snapshot.daily,
-      dailyStatus: snapshot.dailyStatus,
+      downed: stale ? null : snapshot.downed,
+      mapId: stale ? null : snapshot.mapId,
+      khu: stale ? null : snapshot.khu,
+      x: stale ? null : snapshot.x,
+      y: stale ? null : snapshot.y,
+      moveTo: stale ? null : snapshot.moveTo,
+      daily: stale ? null : snapshot.daily,
+      dailyStatus: stale ? null : snapshot.dailyStatus,
       latencyMs: 0,
-      activity: snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
-      metrics: runner.getFrameMetrics().value,
-      soKhu: snapshot.soKhu,
-      khuList: snapshot.khuList,
+      activity: stale ? 'unknown' : snapshot.lifecycle === 'farming' ? 'farming' : snapshot.lifecycle,
+      metrics: cachedMetrics.stale ? null : cachedMetrics.value,
+      soKhu: stale ? null : snapshot.soKhu,
+      khuList: stale ? null : snapshot.khuList,
       mapContext,
       mapContextAgeMs: mapContext.observedAt === null ? null : Math.max(0, now - mapContext.observedAt),
       mapContextIsCurrent: positionCurrent,
-      playersContext: snapshot.playersContext,
-      monstersContext: snapshot.monstersContext,
+      playersContext: stale ? emptyEntityContext() : snapshot.playersContext,
+      monstersContext: stale ? emptyEntityContext() : snapshot.monstersContext,
       dataStatus: {
-        hp: vitalsFresh && snapshot.hp !== null,
-        maxHp: vitalsFresh && snapshot.maxHp !== null,
-        mp: vitalsFresh && snapshot.mp !== null,
-        maxMp: vitalsFresh && snapshot.maxMp !== null,
-        location: positionCurrent,
-        monsters: snapshot.monstersContext.fresh,
-        players: snapshot.playersContext.fresh,
+        hp: !stale && vitalsFresh && snapshot.hp !== null,
+        maxHp: !stale && vitalsFresh && snapshot.maxHp !== null,
+        mp: !stale && vitalsFresh && snapshot.mp !== null,
+        maxMp: !stale && vitalsFresh && snapshot.maxMp !== null,
+        location: !stale && positionCurrent,
+        monsters: !stale && snapshot.monstersContext.fresh,
+        players: !stale && snapshot.playersContext.fresh,
       },
-      monsters: snapshot.monsters,
-      players: snapshot.players,
-      vendor: snapshot,
+      monsters: stale ? [] : snapshot.monsters,
+      players: stale ? [] : snapshot.players,
+      vendor: stale ? undefined : snapshot,
     };
   }
 

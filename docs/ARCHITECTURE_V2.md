@@ -90,7 +90,7 @@ Công cụ chạy cùng một kịch bản qua `VendorGateway` và `ProtocolGate
 
 ## 5. Mở rộng tới 50 bot
 
-**Trạng thái triển khai (2026-10-11):** Bước 5A thêm `RunnerHandle` và `InProcessRunnerHandle` làm seam tại `WorkerPool`; các snapshot đồng bộ có metadata tuổi dữ liệu. Chưa có child process, IPC, scheduler shard hay khóa liên tiến trình; các phần đó thuộc Bước 5B.
+**Trạng thái triển khai (2026-10-11):** Bước 5A thêm `RunnerHandle` và `InProcessRunnerHandle`. Bước 5B thêm tùy chọn `ShardManager`/`RemoteRunnerHandle`, IPC phiên bản 1, cache snapshot stale, timeout/kill và health shard. Mặc định `VENDOR_SHARDS=0` giữ đường in-process. Chưa xác minh bot thật hoặc số đo trên TV box/VPS.
 
 - **Shard bằng `child_process`:** mỗi shard chứa k bot, tiến trình chính giữ API/DB/WS/auth. Chọn tiến trình thay cho `worker_threads` vì watchdog RSS và cô lập lỗi theo PID (`watchdogMaxRssGrowthBytes` hiện đo cả tiến trình).
 - **IPC:** lệnh start/stop/auto từ chính xuống shard; snapshot, log, sự kiện hurt từ shard lên chính, có giới hạn tần suất.

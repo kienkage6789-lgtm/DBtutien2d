@@ -112,6 +112,7 @@ export interface ReachableMap {
 }
 
 export interface VendorRuntimeSnapshot {
+  dataStale?: boolean;
   lifecycle: string;
   connection: string;
   autoRequested: boolean;
@@ -182,6 +183,7 @@ export interface AccountRuntime {
   vendor?: VendorRuntimeSnapshot;
   metrics?: FrameMetricsSnapshot | null;
   status: 'running' | 'stopped' | 'error';
+  dataStale: boolean;
   connection: string;
   authError: string | null;
   hasProxy: boolean;
@@ -212,7 +214,7 @@ export interface AccountRuntime {
     observedAt: number | null;
   };
   downed: boolean | null;
-  mapId: string;
+  mapId: string | null;
   khu: number | null;
   x: number | null;
   y: number | null;

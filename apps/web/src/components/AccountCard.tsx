@@ -75,6 +75,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
         : <button onClick={() => onStart(account.id)} disabled={controlsDisabled} title={controlLockReason ?? 'Chạy bot'} className="flex items-center gap-1 px-3 py-1.5 text-xs rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 disabled:cursor-not-allowed disabled:opacity-40"><Play className="w-3.5 h-3.5 fill-emerald-400" /> Chạy</button>}
     </div>
 
+    {account.dataStale && <p role="status" className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-200">Dữ liệu cũ · trạng thái chưa biết</p>}
+
     {account.authError && <div className="mb-3 p-2 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs flex items-center justify-between gap-2">
       <span className="flex items-center gap-1.5 truncate"><AlertTriangle className="w-4 h-4 shrink-0" />{account.authError}</span>
       <button onClick={() => onUpdatePassword(account)} className="px-2 py-1 rounded bg-rose-600 text-white text-[10px] shrink-0">Đổi mật khẩu</button>

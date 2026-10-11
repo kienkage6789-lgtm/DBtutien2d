@@ -16,7 +16,8 @@ sudo mkdir -p /opt/tutien2d /var/lib/tutien2d /etc/tutien2d
 sudo chown -R tutien2d:tutien2d /opt/tutien2d /var/lib/tutien2d
 ```
 
-Cài Node 24 LTS và pnpm theo cách quản trị viên VPS đã chọn. `node --version` phải là 24 trở lên; chạy `command -v node` và dùng đường dẫn tuyệt đối đó trong `ExecStart` của unit mẫu.
+Cài Node 24 LTS và pnpm theo cách quản trị viên VPS đã chọn. 
+ode --version` phải là 24 trở lên; chạy `command -v node` và dùng đường dẫn tuyệt đối đó trong `ExecStart` của unit mẫu.
 
 ## 2. Lấy mã và build
 
@@ -40,6 +41,8 @@ sudoedit /etc/tutien2d/env
 
 `AUTO_ASSIGN_PROXY=1` là mặc định để account mới được gán proxy enabled có tải thấp nhất; bật `REQUIRE_PROXY=1` nếu mọi account bắt buộc phải có proxy. `PROXY_CHECK_INTERVAL_MS=300000` và `PROXY_CHECK_TIMEOUT_MS=8000` điều khiển checker. `ALLOW_PRIVATE_PROXY=0` phải giữ nguyên trên VPS; chỉ bật tạm thời cho test local. Proxy được nhập và kiểm tra trong tab quản trị, URL có credential chỉ lưu mã hóa và không xuất hiện trong response/log.
 
+Sharding tùy chọn dùng `child_process`: mặc định `VENDOR_SHARDS=0` giữ runner in-process. Sau khi test offline và soak trên chính VPS, có thể đặt `VENDOR_SHARDS=2` để tạo tối đa hai tiến trình shard theo nhu cầu. Mỗi shard tốn khoảng 66 MB RSS nền theo ước lượng ban đầu, chưa xác minh trên Linux/VPS. `SHARD_MAX_RUNNERS=0` không đặt giới hạn mỗi shard; `SHARD_RPC_TIMEOUT_MS=15000` và `SHARD_STOP_GRACE_MS=5000` điều khiển timeout RPC và dừng khẩn cấp. Tiến trình chính vẫn kiểm tra quota, entitlement, proxy và RAM trước khi start; shard chết thì runner chuyển sang `stopped`, không tự khởi động lại.
+
 `ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ dùng lần đầu. Đăng nhập, đổi mật khẩu ngay, rồi xóa hai biến này khỏi `/etc/tutien2/env`. Không đặt `API_TOKEN` trên VPS.
 
 ## 4. Preflight
@@ -50,7 +53,8 @@ sudo -u tutien2d node scripts/vps-preflight.mjs
 sudo -u tutien2d node scripts/vps-preflight.mjs --smoke --vendor-boot
 ```
 
-Preflight kiểm tra Node/`node:sqlite`, quyền thư mục, vendor client, hai thư mục `dist`, port, loopback, origin/proxy, RAM/lõi. `--smoke` chỉ bind localhost, dùng `DATA_DIR` tạm và admin tạm; `--vendor-boot` nạp client offline, không đăng nhập và không mở mạng ngoài. Script không in token, mật khẩu hay nội dung secret.
+Preflight kiểm tra Node/
+ode:sqlite`, quyền thư mục, vendor client, hai thư mục `dist`, port, loopback, origin/proxy, RAM/lõi. `--smoke` chỉ bind localhost, dùng `DATA_DIR` tạm và admin tạm; `--vendor-boot` nạp client offline, không đăng nhập và không mở mạng ngoài. Script không in token, mật khẩu hay nội dung secret.
 
 ## 5. systemd
 
@@ -114,3 +118,5 @@ sudo systemctl start tutien2d.service
 Chạy `scripts/soak-vendor.cjs` theo hướng dẫn hiện có, đo RSS/CPU và số runner trên chính VPS. Tăng `MAX_TOTAL_RUNNERS` từng bước, giữ `MIN_FREE_MEM_MB`, và dừng ngay khi `hurtCount` tăng. Lỗi thường gặp: port đã dùng, Node không phải 24, quyền `DATA_DIR` quá rộng, origin sai, WebSocket timeout do proxy hoặc firewall mở nhầm 4000.
 
 Chưa xác minh trên Linux/VPS thật: vendor runner/headless, RAM/CPU và soak dài, hiệu năng rate-limit với nhiều user, CSP trên mọi trình duyệt/màn hình, systemd/Caddy/Nginx thực tế và restore trên máy khác. Đây là các mục chủ dự án cần chạy và báo lại.
+
+Shard snapshots are watched by SHARD_STALE_KILL_MS (default 30000 ms; set to 0 to disable). A shard killed for missing snapshots marks its accounts stopped and does not restart them automatically.

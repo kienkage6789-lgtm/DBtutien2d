@@ -96,5 +96,6 @@ export class InProcessRunnerHandle implements RunnerHandle {
   public onSessionUpdated(listener: (session: AuthSession) => void) { this.sessionListeners.add(listener); return () => this.sessionListeners.delete(listener); }
 }
 
-export type RunnerHandleFactory = (options: VendorRunnerOptions) => RunnerHandle;
+export interface RunnerHandleContext { accountId: string; proxyUrl?: string | null }
+export type RunnerHandleFactory = (options: VendorRunnerOptions, context?: RunnerHandleContext) => RunnerHandle;
 export const createInProcessRunnerHandle: RunnerHandleFactory = (options) => new InProcessRunnerHandle(options);

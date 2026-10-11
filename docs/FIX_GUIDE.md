@@ -39,14 +39,16 @@ Lưu ý bảo mật: `test_ws.mjs` và `test_ping.mjs` hiện đọc token từ 
 Trong `MiniMap.tsx`, `clock` chỉ tăng mỗi 1 giây (`setInterval(..., 1000)`), còn tuổi context được tính bằng `clock - mapContext.observedAt`. Khi một frame mới về giữa hai lần tick, `observedAt` lớn hơn `clock` nên tuổi ra **số âm**. Code coi số âm là "timestamp không hợp lệ", đặt `mapContextStale = true`, và `contextValid = false`. Hệ quả:
 
 1. Status báo `Map context stale · tuổi timestamp không hợp lệ`.
-2. SVG không gắn `onClick` (`enabled=false`), nên click bị chặn ở UI. Vì vậy không có request nào đi ra và `moveTo` giữ nguyên `null`. Đây là câu trả lời cho câu hỏi "UI chặn hay request lỗi": UI chặn.
+2. SVG không gắn `onClick` (`enabled=false`), nên click bị chặn ở UI. Vì vậy không có request nào đi ra và `moveTo` giữ nguyên 
+ull`. Đây là câu trả lời cho câu hỏi "UI chặn hay request lỗi": UI chặn.
 3. Backend lại tự clamp bằng `Math.max(0, …)` ở `mapContextRuntime`, nên backend không bao giờ ra số âm.
 
 Ba lỗi nhỏ khác cùng khu vực:
 
 - `App.tsx` `handleMoveTo` có `if (!context ...) return;` rồi im lặng, người dùng không thấy lý do.
 - `App.tsx` effect tải geometry: map nào tải lỗi (ví dụ `long_uyen` chưa có walk-grid) bị xóa khỏi `geometryRequestsRef` ở `finally`, nên **mỗi frame realtime (tới 5 Hz) lại gọi API lần nữa** cho map đó.
-- Type web khai `MapDataContext.observedAt: number` và `mapId: string`, trong khi backend gửi `null` khi chưa có context.
+- Type web khai `MapDataContext.observedAt: number` và `mapId: string`, trong khi backend gửi 
+ull` khi chưa có context.
 
 ### A.1 Cập nhật type: `apps/web/src/types/index.ts`
 
@@ -415,7 +417,10 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
 
 Điểm cần kiểm tra khi áp dụng:
 
-- Mảng `for (const field of ['bag', 'training', 'worldSync', 'navigation'] ...)`: dòng gốc **không** có `navigation`, nhưng `MiniMap` đọc `account.navigation`. Nếu `navigation` đã được merge ở chỗ khác thì bỏ nó khỏi mảng này; kiểm tra bằng cách grep `navigation` trong `useRealtime.ts`. Nếu hiện tại không merge thì UI `movementLocked` không bao giờ biết đang đi cổng, nên thêm vào là đúng.
+- Mảng `for (const field of ['bag', 'training', 'worldSync', 'navigation'] ...)`: dòng gốc **không** có 
+avigation`, nhưng `MiniMap` đọc `account.navigation`. Nếu 
+avigation` đã được merge ở chỗ khác thì bỏ nó khỏi mảng này; kiểm tra bằng cách grep 
+avigation` trong `useRealtime.ts`. Nếu hiện tại không merge thì UI `movementLocked` không bao giờ biết đang đi cổng, nên thêm vào là đúng.
 - Frame có `mapContext` sai schema thì `incomingMapContext = undefined`, `worldAccepted` vẫn `true`, và `mapContext` cũ được giữ nguyên. Đây là hành vi "giữ trạng thái cũ khi payload hỏng", đúng với yêu cầu.
 
 ### A.6 Lỗi 4: vì sao sửa mà `:4000` không đổi
@@ -644,7 +649,8 @@ function withSaveVitals<T extends Record<string, unknown>>(packet: T): T {
 }
 ```
 
-Trong `updateVitalsOnly`, đổi đối số đầu của `normalizeVitals`:
+Trong `updateVitalsOnly`, đổi đối số đầu của 
+ormalizeVitals`:
 
 ```ts
     const snapshot = normalizeVitals(
@@ -656,9 +662,11 @@ Trong `updateVitalsOnly`, đổi đối số đầu của `normalizeVitals`:
     );
 ```
 
-Một bẫy khi gộp: `{hp: undefined, ...}` đặt khóa với giá trị `undefined`; `normalizeVitals` dùng `standard !== undefined` nên bỏ qua đúng. Vì `updateState` đang tự gộp theo cách riêng, có thể thay bằng `withSaveVitals` luôn để đồng nhất (tùy bạn, không bắt buộc).
+Một bẫy khi gộp: `{hp: undefined, ...}` đặt khóa với giá trị `undefined`; 
+ormalizeVitals` dùng `standard !== undefined` nên bỏ qua đúng. Vì `updateState` đang tự gộp theo cách riêng, có thể thay bằng `withSaveVitals` luôn để đồng nhất (tùy bạn, không bắt buộc).
 
-Test (đặt trong `packages/core-client`, dùng `node:test` nếu chưa có runner):
+Test (đặt trong `packages/core-client`, dùng 
+ode:test` nếu chưa có runner):
 
 ```ts
 const store = new GameStateStore('t');
@@ -1162,7 +1170,8 @@ Một lưu ý: hiện nhiều route trả `err.message` thẳng cho client (ví 
 1. Rotate token game đã từng nằm trong `test_ws.mjs`/`test_ping.mjs` (đăng nhập lại để lấy phiên mới); xem token cũ là đã lộ. Bản hiện tại đã đọc từ `TUTIEN_TEST_TOKEN`, giữ nguyên cách này.
 2. Dùng `.env` cho `API_TOKEN`, `ENCRYPTION_SECRET`; không đưa vào repo. `data/.secret` và `data/tutien_db.json` chứa credential đã mã hóa: không chia sẻ, không đưa vào backup công khai.
 3. `SUPABASE_ANON_KEY` trong `config.ts` là khóa công khai do chính game phát hành, không phải bí mật.
-4. Dự án không có `.git`: nên chạy `git init` và thêm `.gitignore` gồm `.env`, `data/`, `node_modules/`, `apps/web/dist/`, `docs/evidence/`, để từ nay có lịch sử thay đổi và tránh commit nhầm bí mật.
+4. Dự án không có `.git`: nên chạy `git init` và thêm `.gitignore` gồm `.env`, `data/`, 
+ode_modules/`, `apps/web/dist/`, `docs/evidence/`, để từ nay có lịch sử thay đổi và tránh commit nhầm bí mật.
 
 ### E.8 Validate packet game bằng schema (thay `any`)
 
@@ -1296,7 +1305,8 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 - `downed=null` trong khi vitals unknown phải chặn move-to: **bác bỏ**; gate mới cho move-to đi qua, nhưng training/attack vẫn chặn nghiêm.
 - Max HP/MP suy ra được là vitals server: **bác bỏ**; `derivedMax` là trường riêng, UI đánh dấu “suy ra” và không ghi vào `VitalSnapshot`.
 - `tan_vien` không có quái (C.0): **được hỗ trợ bởi capture**, trong khi map đích có quái; chưa chứng minh cho mọi thời điểm/tầm nhìn.
-- `navigation` có đang được `useRealtime` merge hay chưa (A.5, điểm kiểm tra đầu): **đã xác nhận**, field có trong merge và UI nhận trạng thái portal.
+- 
+avigation` có đang được `useRealtime` merge hay chưa (A.5, điểm kiểm tra đầu): **đã xác nhận**, field có trong merge và UI nhận trạng thái portal.
 - Worker bỏ toàn bộ quái do lọc id: **bác bỏ cho live run này**; counters `ef/e` tăng và runtime giữ nhiều quái.
 - Tên gói dùng để xác nhận đòn đánh (D.2 điểm 2) chỉ biết sau capture.
 - `you` chỉ xuất hiện sau mọi move: **bác bỏ cho move đứng yên**, nhưng **xác nhận trong probe này** sau move có dịch chuyển 42.45px; chưa xác minh ngưỡng tối thiểu kích ACK.
@@ -1310,7 +1320,8 @@ Các giả định chưa kiểm chứng (cần xác nhận khi áp dụng, khôn
 3. [x] Test guard: `downed`, quái trong 300, move-to, navigation, thiếu vị trí; test env tắt; test one-shot và bound 20 move.
 4. [x] Evidence live redacted: `docs/evidence/packet-tap-2026-10-07T15-34-28-827Z.json`; A `seq 1..10`, `idle`, `you seq=10`, delay 106ms, HP/MP 225/188, `dn=0`, `fix=0`, vị trí không đổi.
 5. [~] H2 `walk` chưa chạy vì A đã thành công; full `pnpm build`/Vitest/server TS chưa tự chạy được do toolchain sandbox (`pnpm`/`tsx`/`ws`/`vitest`/symlink express).
-6. [~] Đã thêm mode `TUTIEN_PROBE_STATIONARY=offset`: đúng `4 + 10` move `idle`, nhãn `offset-0`/`offset-1`, ghi `youDuringPostMoveWait`, guard và one-shot; test source bằng Node type-transform pass, nhưng build/dist và `node --test` chuẩn bị chặn bởi `EPERM` của toolchain.
+6. [~] Đã thêm mode `TUTIEN_PROBE_STATIONARY=offset`: đúng `4 + 10` move `idle`, nhãn `offset-0`/`offset-1`, ghi `youDuringPostMoveWait`, guard và one-shot; test source bằng Node type-transform pass, nhưng build/dist và 
+ode --test` chuẩn bị chặn bởi `EPERM` của toolchain.
 7. [ ] Live evidence của mode offset và bảng phân biệt M1/M2/M3: **chưa xác minh**; không được tạo evidence giả khi chưa có build và phiên game thật.
 8. [x] `vitalsAgeMs` được tính ở backend khi snapshot fresh; web merge giữ `observedAt` không lùi, tính tuổi không âm và AccountCard đánh dấu cũ sau 5s.
 9. [~] `refreshVitals` đã tách coordinator có lock/rate-limit theo account, guard dùng chung với stationary probe, API/auth/UI/training đã nối; build/test sandbox chưa chạy do `pnpm`/TypeScript/Vitest bị chặn `EPERM`.
@@ -1324,7 +1335,8 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 2. [x] Ghi rõ ánh xạ `t`, ý nghĩa `hp` tuyệt đối, cờ `d`, event `kill`, các state `st` và payload combat vào `AUTO_SPEC.md`.
 3. [x] Thêm kiểu/parser pure, fixture tổng hợp, `deriveLearnedSkills`, export công khai; chưa nối vào `GameStateStore`/luồng bot.
 4. [x] Kiểm tra cú pháp generator/fixture/test và chạy lại hai generator với cross-check nguồn.
-5. [~] `pnpm build` bị chặn do TypeScript dưới `.pnpm` bị `EPERM`; `node --test packages/core-client/test/auto-data.test.mjs` đã gọi nhưng dừng ở `ERR_MODULE_NOT_FOUND` vì `dist` chưa build. Không đánh dấu build/test pass cho tới khi chạy lại trong môi trường phù hợp.
+5. [~] `pnpm build` bị chặn do TypeScript dưới `.pnpm` bị `EPERM`; 
+ode --test packages/core-client/test/auto-data.test.mjs` đã gọi nhưng dừng ở `ERR_MODULE_NOT_FOUND` vì `dist` chưa build. Không đánh dấu build/test pass cho tới khi chạy lại trong môi trường phù hợp.
 6. [ ] Đo live các miền giá trị server, biến thể `act`, nguồn `hurt.byId`, thứ tự kill/loot và lock/preference kỹ năng trước P1–P3.
 
 ## J. P1 target + collision/spawn — checklist cập nhật 2026-10-08
@@ -1340,7 +1352,8 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 
 ## K. P2 approach — checklist static/live
 
-1. [x] Pure `computeApproachGoal` + `ApproachTracker`: deterministic, chỉ trả goal walkable hoặc `none`; test fixture `thanh_truc_lam` quét 62 điểm sinh.
+1. [x] Pure `computeApproachGoal` + `ApproachTracker`: deterministic, chỉ trả goal walkable hoặc 
+one`; test fixture `thanh_truc_lam` quét 62 điểm sinh.
 2. [x] `runApproach`: dependency injection, guard vitals/context/connection, lock theo account, cancel-and-wait trước replan và không nối training/attack/skill.
 3. [x] `approach-probe`: `TUTIEN_PROBE_APPROACH=1`, one-shot sau 20 giây, lọc boss/human/tuSi/contact/khoảng cách/path/aggro, arrived thì đứng yên 3 giây; packet tap redact.
 4. [x] Tài liệu `docs/LIVE_SCENARIO_APPROACH.md` đã mô tả điều kiện, API map/enter, vitals/refresh, tiêu chí thành công và dừng khẩn.
@@ -1380,7 +1393,8 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 2. [x] Runner ưu tiên `observedMapId`, xóa trạng thái khi reset/đóng kết nối/reconnect; snapshot không ghép map với tọa độ cũ trong lúc chưa biết/chuyển cảnh.
 3. [x] `startAuto` chặn map chưa sẵn sàng và anchor khác map; API error envelope có HTTP 409 và retry semantics tương ứng.
 4. [x] Test source thêm fake map khác `tan_vien`, map delay, snapshot trước/trong/sau transition, gate map và anchor mismatch; không phát sẵn kết quả snapshot.
-5. [~] Chưa chạy được test/build trong sandbox do `tsx` lỗi `uv_os_get_passwd returned ENOMEM`; cần người giao việc chạy `npx tsx --test src/headless/vendor-runner.test.ts`, contract test và `pnpm build`.
+5. [~] Chưa chạy được test/build trong sandbox do `tsx` lỗi `uv_os_get_passwd returned ENOMEM`; cần người giao việc chạy 
+px tsx --test src/headless/vendor-runner.test.ts`, contract test và `pnpm build`.
 6. [ ] Chưa xác minh timing/reconnect/anchor trên game thật.
 
 ## P. Vendor walkTo bản 1 — checklist 2026-10-08
@@ -1453,11 +1467,13 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 
 ## X. Bước 1 multi-user — SQLite/auth/ownership (2026-10-09)
 
-1. [x] Thêm SQLite `node:sqlite` với WAL, foreign keys, users/sessions/game_accounts/bot_configs/logs/audit_log; giữ facade DatabaseService và mã hóa AES-256-GCM cho bí mật.
+1. [x] Thêm SQLite 
+ode:sqlite` với WAL, foreign keys, users/sessions/game_accounts/bot_configs/logs/audit_log; giữ facade DatabaseService và mã hóa AES-256-GCM cho bí mật.
 2. [x] Thêm scrypt password hash, admin đầu tiên, session bearer trượt 7 ngày/tối đa 5, rate-limit login theo IP + username, logout/đổi mật khẩu/thu hồi session.
 3. [x] Gắn ownership cho REST account/log/orchestrator/status và lọc WS initial/broadcast; user khác nhận 404, admin route của user thường nhận 403.
 4. [x] Dashboard có login, user/role, logout, đổi mật khẩu và banner `mustChangePassword`; WS dùng session token.
-5. [~] Smoke password hash, migration/auth/session test mới và kiểm tra Node 24 `node:sqlite` đã pass; `pnpm build`/Vitest chưa chạy được vì `pnpm` không có PATH và package TypeScript/Vitest dưới `.pnpm` trả `EPERM` (test server liên quan đã chạy bằng binary tsx trực tiếp với preload môi trường).
+5. [~] Smoke password hash, migration/auth/session test mới và kiểm tra Node 24 
+ode:sqlite` đã pass; `pnpm build`/Vitest chưa chạy được vì `pnpm` không có PATH và package TypeScript/Vitest dưới `.pnpm` trả `EPERM` (test server liên quan đã chạy bằng binary tsx trực tiếp với preload môi trường).
 6. [ ] Chưa xác minh độ bền WAL khi crash, hành vi Linux, đóng WS khi session hết hạn trên server thật và hiệu năng broadcast nhiều account; chưa chạm game thật/mạng.
 
 ## Y. Bước 2 multi-user — entitlement/quota/watcher (offline 2026-10-09)
@@ -1467,7 +1483,8 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 3. [x] Thêm `MAX_TOTAL_RUNNERS`, giới hạn user đang chạy, watcher có clock/interval tiêm được, dừng runner khi expired/none/disabled, audit/log/system alert riêng owner; không chạy chồng.
 4. [x] Dashboard hiển thị đếm hạn/Bot n/max, banner khóa điều khiển, ánh xạ mã lỗi mới và thông báo `system_alert`; admin không hiện banner hạn.
 5. [x] Test source cho grant/entitlement/watcher và mở rộng e2e cấp hạn → qua gate vendor không mở game → thu hồi → 403; chưa chạy chính thức trong sandbox.
-6. [~] `pnpm build`, Vitest và từng file `npx tsx --test` cần chạy ở môi trường người giao việc; TypeScript toolchain sandbox hiện trả `EPERM` khi đọc package dưới `.pnpm`.
+6. [~] `pnpm build`, Vitest và từng file 
+px tsx --test` cần chạy ở môi trường người giao việc; TypeScript toolchain sandbox hiện trả `EPERM` khi đọc package dưới `.pnpm`.
 7. [ ] Chưa xác minh live lệch giờ server/trình duyệt, watcher với nhiều trăm user, dừng runner giữa nhiệm vụ và `MAX_TOTAL_RUNNERS` theo RAM/soak Linux.
 
 ## Z. Bước 4 multi-user — giao diện quản trị (offline 2026-10-09)
@@ -1518,18 +1535,22 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 
 1. [x] Collector frame dùng đồng hồ tiêm, vòng đệm 600 mẫu, EMA/p95/max/tỷ lệ chiếm vòng lặp; reset khi runner start/stop và `finally` đóng khung.
 2. [x] Process metrics đo event-loop p50/p99/max, RSS/heap và runner count; bật khi server chạy, tắt khi shutdown.
-3. [x] Runtime account có `metrics` theo quyền owner/admin; runner dừng trả `null`; admin health thêm `process`; e2e xác nhận health 403 với user thường và account người khác 404.
+3. [x] Runtime account có `metrics` theo quyền owner/admin; runner dừng trả 
+ull`; admin health thêm `process`; e2e xác nhận health 403 với user thường và account người khác 404.
 4. [x] Web type/sanitizer và admin card hiển thị ms/khung, p95, phần trăm chiếm; dữ liệu thiếu/sai kiểu hiển thị “chưa biết”.
 5. [x] Unit/e2e: collector/process 6/6, `vendor-runner.test.ts` 20/20 (metrics tăng; `finally` vẫn đóng khung và giữ nguyên lỗi), `multi-user.e2e.test.ts` 1/1; web Vitest 48/48. Fault injection đơn vị ns→ms bị test bắt và đã khôi phục.
 6. [~] Build toàn workspace pass khi dùng shim `pnpm.cmd` và `--configLoader runner` tạm do PATH/quyền sandbox; các thay đổi tạm đã hoàn nguyên. Web Vitest pass với cùng loader; test server cần preload tạm vì `uv_os_get_passwd ... ENOMEM`. Lệnh gốc không qua được hạn chế môi trường, xem `SESSION_LOG.md`.
 7. [ ] Chưa đo bot thật trên TV box (Bước 0b); số liệu smoke server cục bộ không phải benchmark phần cứng.
-8. [x] Hiệu chỉnh `eventLoopDelay` trừ `resolutionMs` khỏi p50/p99/max và clamp 0; test histogram giả kiểm tra trừ, clamp, ns→ms, `null` khi chưa có mẫu. Fault injection bỏ phép trừ làm 2 test fail; đã phục hồi.
+8. [x] Hiệu chỉnh `eventLoopDelay` trừ `resolutionMs` khỏi p50/p99/max và clamp 0; test histogram giả kiểm tra trừ, clamp, ns→ms, 
+ull` khi chưa có mẫu. Fault injection bỏ phép trừ làm 2 test fail; đã phục hồi.
 
 ## AF. ARCHITECTURE_V2 Bước 1 — GameGateway + VendorGateway (2026-10-10)
 
-1. [x] Định nghĩa `GameGateway` theo lifecycle/disconnect, state chỉ đọc (`null` cho dữ liệu chưa biết), walk, Auto/khu, metrics và phần `DailyClient`; thêm adapter composition `VendorGateway` uỷ quyền sang `VendorRunner`.
+1. [x] Định nghĩa `GameGateway` theo lifecycle/disconnect, state chỉ đọc (
+ull` cho dữ liệu chưa biết), walk, Auto/khu, metrics và phần `DailyClient`; thêm adapter composition `VendorGateway` uỷ quyền sang `VendorRunner`.
 2. [x] `WorkerPool` tạo `VendorGateway` và dùng giao diện mới cho start/stop, Auto, walk/cancel và thao tác khu; `DailyQuests` giữ nguyên `DailyClient` hiện có. Runtime snapshot, API daily và probe vẫn dùng runner vì hiện chưa thuộc `GameGateway` và phải giữ payload/API hiện tại.
-3. [x] Hợp đồng chạy trên gateway đã start: stop đóng socket/hủy walk/idempotent; cancel chỉ đúng ID và kết thúc waiter; down chặn walk, Auto và đổi khu bằng đúng mã; disconnect/unsubscribe và listener lỗi không cản reconnect; start lặp không tạo phiên; hurt count không giảm; HP/MP/isDown chưa xác nhận giữ `null`. Bảy bất biến mỗi implementation; test tổng gateway 15/15.
+3. [x] Hợp đồng chạy trên gateway đã start: stop đóng socket/hủy walk/idempotent; cancel chỉ đúng ID và kết thúc waiter; down chặn walk, Auto và đổi khu bằng đúng mã; disconnect/unsubscribe và listener lỗi không cản reconnect; start lặp không tạo phiên; hurt count không giảm; HP/MP/isDown chưa xác nhận giữ 
+ull`. Bảy bất biến mỗi implementation; test tổng gateway 15/15.
 4. [x] Test server 135/135 trên 27 file (125 trước thay đổi), `vendor-runner.test.ts` 20/20, web 48/48. Mutation HP→0, isDown null→false, bỏ operationId, stop no-op đều làm test VendorGateway fail; đã khôi phục.
 5. [~] Server/core-client build và web Vite build với `--configLoader runner` pass. `pnpm build` không có PATH; `corepack pnpm build` vướng script lồng; build workspace bằng shim bị sandbox chặn esbuild đọc config Vite. Preload test tạm xử lý `uv_os_get_passwd ... ENOMEM`, đã xóa. Chưa chạy bot thật.
 
@@ -1541,3 +1562,23 @@ Giả định/giới hạn còn lại: `idle` đã được đối chiếu với
 4. [x] Bảy mutation trên handle thật (HP chưa biết→0, stop no-op, cancel sai ID, bỏ forward session/log, bỏ `jsonClone`, `stale: true`) đều fail gọn; stop no-op không treo nhờ cleanup fixture. Test liên quan 42/42: `runner-handle.test.ts` 11/11, `vendor-runner.test.ts` 31/31. Toàn server 157/157 trên 28 file; web 48/48.
 5. [~] Server/core-client build và web TypeScript/Vite production build pass riêng; workspace `pnpm build` bị lỗi sandbox khi Vite/esbuild đọc config mặc định. Lệnh pnpm gốc không có PATH; Vitest 48/48 với `--configLoader runner`. Server cần preload `os.userInfo` do môi trường Node `uv_os_get_passwd returned ENOMEM`. Chi tiết lệnh/kết quả ở `SESSION_LOG.md`.
 6. [ ] Chưa chạy bot thật; chưa tạo child process/IPC/shard hay xác minh cho Bước 5B.
+
+## AH. ARCHITECTURE_V2 Bước 5B — shard đa tiến trình (2026-10-11)
+
+1. [x] `VENDOR_SHARDS` (mặc định 0), `SHARD_MAX_RUNNERS`, `SHARD_RPC_TIMEOUT_MS`, `SHARD_STOP_GRACE_MS`; env parse có fallback/kẹp và unit test.
+2. [x] IPC typed/versioned, allowlist RPC, `RemoteRunnerHandle`, snapshot đẩy 500 ms và stale sau 1,5 s; unknown vitals/location/entity trở về 
+ull`/rỗng.
+3. [x] Child shard tạo transport proxy, nhiều runner, thoát theo parent; manager giữ account→shard, least runners, stop timeout kill và crash không tự restart.
+4. [x] Health API thêm metrics shard; có offline `measure:shards`; e2e API start hai account giả với `VENDOR_SHARDS=2` và kiểm tra không còn PID con sau shutdown.
+5. [x] Remote contract và fork integration kiểm tra IPC timeout/error, stale, hai shard, crash→stopped, stop timeout→kill, parent shutdown.
+6. [~] `pnpm build` và `pnpm --filter @tutien2d/web test` không chạy do executable `pnpm` không có PATH; `corepack pnpm build` dừng khi script con gọi `pnpm`. Thay thế trực tiếp: `tsc` core/server/web pass, Vite build với `--configLoader runner` pass, Vitest web 48/48; server suite 173/173. Xem `SESSION_LOG.md` để biết lệnh chính xác.
+7. [ ] Chưa chạy bot thật/shard live, chưa đo trên TV box/VPS; độ trễ khi nhiều bot và sức chịu RAM shard chưa xác minh. Không áp dụng `VENDOR_SHARDS>0` trên VPS trước soak.
+
+## Step 5B acceptance repair
+
+- [x] Verify least-loaded placement/capacity, account-scoped start timeout recovery, stale runtime sanitization/kill, TypeScript entry spawn, redacted stderr, allowlist, single-account assignment, and no automatic restart.
+- [x] A stale WorkerPool snapshot exposes unknown position/vitals/down/map/khu/moveTo/daily/mapContext values, leaves `observedMaps` untouched, preserves `hurtCount`, and reports `activity: 'unknown'`; fresh values remain unchanged.
+- [x] Exercise `ShardManager.start()` through a fake child process: timeout stops only the assigned bot when a peer remains, clears its assignment, and kills the shard when that bot is alone.
+- [x] Fault injection directly in source fails promptly for forced `stale = false`, stale `mapContext` built from the cached snapshot, and shard-wide kill on start timeout; all mutations were reverted.
+- [x] Current checks: related tests 21/21, all 32 server test files 181/181, web 49/49, direct core/server/web TypeScript and web production build pass. `pnpm build` remains unrun successfully because `pnpm` is absent from this shell; see `SESSION_LOG.md` for commands and the Node test preload limitation.
+- [ ] Live game behavior and shard soak on VPS/TV box remain unverified.

@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'node:url';
+import { boundedEnvInt } from './orchestrator/shard-config.js';
 
 dotenv.config();
 
@@ -54,6 +55,11 @@ const parseNonNegativeInt = (value: string | undefined, fallback: number): numbe
 };
 const MAX_TOTAL_RUNNERS = parseNonNegativeInt(process.env.MAX_TOTAL_RUNNERS, 0);
 const MIN_FREE_MEM_MB = parseNonNegativeInt(process.env.MIN_FREE_MEM_MB, 300);
+const VENDOR_SHARDS = boundedEnvInt(process.env.VENDOR_SHARDS, 0, 0, 16);
+const SHARD_MAX_RUNNERS = boundedEnvInt(process.env.SHARD_MAX_RUNNERS, 0, 0, 10_000);
+const SHARD_RPC_TIMEOUT_MS = boundedEnvInt(process.env.SHARD_RPC_TIMEOUT_MS, 15_000, 100, 120_000);
+const SHARD_STOP_GRACE_MS = boundedEnvInt(process.env.SHARD_STOP_GRACE_MS, 5_000, 100, 60_000);
+const SHARD_STALE_KILL_MS = boundedEnvInt(process.env.SHARD_STALE_KILL_MS, 30_000, 0, 3_600_000);
 // Chu kỳ vòng lặp mô phỏng của mỗi bot (ms). 16 = ~60 Hz (mặc định, hành vi gốc). Tăng (vd 33 = ~30 Hz) giảm CPU nhưng
 // làm thô nhịp di chuyển/đánh: chỉ đổi sau khi thử live từng bước nhỏ. Kẹp trong 8..50 (dt tối đa 0,05 s của client).
 const VENDOR_LOOP_INTERVAL_MS = Math.min(50, Math.max(8, parseNonNegativeInt(process.env.VENDOR_LOOP_INTERVAL_MS, 16)));
@@ -116,6 +122,11 @@ export const CONFIG = {
   ALLOW_LEGACY_API_TOKEN,
   MAX_TOTAL_RUNNERS,
   MIN_FREE_MEM_MB,
+  VENDOR_SHARDS,
+  SHARD_MAX_RUNNERS,
+  SHARD_RPC_TIMEOUT_MS,
+  SHARD_STOP_GRACE_MS,
+  SHARD_STALE_KILL_MS,
   VENDOR_LOOP_INTERVAL_MS,
   ENTITLEMENT_SWEEP_MS,
   REQUIRE_PROXY,

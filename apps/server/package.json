@@ -11,7 +11,8 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "measure": "tsx tools/measure-runner.ts"
+    "measure": "tsx tools/measure-runner.ts",
+    "measure:shards": "tsx tools/measure-shards.ts"
   },
   "dependencies": {
     "@tutien2d/core-client": "workspace:*",
