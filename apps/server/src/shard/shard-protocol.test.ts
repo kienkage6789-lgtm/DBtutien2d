@@ -169,7 +169,7 @@ test('RemoteRunnerHandle propagates RPC errors without changing stable code', as
 registerRunnerHandleContract('RemoteRunnerHandle', () => {
   const options = { accountName: 'fixture', credentials: {}, gameServerUrl: 'wss://fixture.invalid', vendorClientDir: '' } as VendorRunnerOptions;
   let handle!: RemoteRunnerHandle; let down = false; let socketClosed = true; let starts = 0;
-  const inventoryReference = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean }>, totalKinds: null, totalCount: null, caveChest: null, at: 1 };
+  const inventoryReference = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean; type: string | null; grade: string | number | null; slot: string | null; icon: string | null; desc: string | null; group: 'vat-pham' | 'trang-bi' | 'dao-thuat' | null }>, bag: null, equipment: null, totalKinds: null, totalCount: null, caveChest: null, at: 1 };
   let operation: import('../headless/walk-navigator.js').WalkOperation | null = null;
   const update = (lifecycle: VendorRunnerSnapshot['lifecycle'], connection: VendorRunnerSnapshot['connection'] = 'IN_GAME') => {
     const snapshot = { ...blank, lifecycle, connection, downed: down, moveTo: operation } as VendorRunnerSnapshot;

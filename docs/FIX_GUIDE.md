@@ -1603,3 +1603,32 @@ ull`/rỗng.
 - [x] Offline coverage includes item packet, box classification, cave flags, 300 item kinds, JSON serialization, ownership and unknown display; fault injections for all five requested guards were caught and reverted.
 - [x] Related server tests 72/72, full server suite 191/191, web Vitest 51/51; direct core/server/web TypeScript builds and web production build pass. `pnpm build` and `pnpm --filter @tutien2d/web test` were unavailable because `pnpm` is missing from PATH.
 - [ ] Browser layout at 334 px and live game behavior remain unverified; no real game session or external network was used.
+
+## Dashboard inventory grid — 2026-10-11
+
+- [x] Runner returns item metadata and compatible grouping; fallback categories follow slot/type, unknown metadata remains `null`; bag capacity and equipment are nullable per field and JSON-safe.
+- [x] Existing async RunnerHandle/shard RPC carries the expanded payload without adding it to periodic snapshots; inventory is still read-only.
+- [x] Modal has category tabs/counts, CSS square grid, selection/details, keyboard arrows, shared capacity display, equipped slots, safe storage fallback, text-only rendering, and a neutral grade fallback with light/dark contrast.
+- [x] Tests cover `Market.group`, slot/type fallback (`bi_tich`, `phu_chu`), missing metadata, description cleaning/truncation, null bag/equipment values, sanitizer malformed data, tab counts, grade fallback, and JSON clone behavior.
+- [x] Five source fault injections each failed their guarding test and were reverted. `InventoryModal` has no `dangerouslySetInnerHTML`.
+- [x] Verification: core/server/web TypeScript pass; Vite production build pass; web 54/54; server 191/191 over 32 files; related runner/handle/shard 71/71.
+- [~] `pnpm build` and `pnpm --filter @tutien2d/web test` unavailable because `pnpm` is absent from PATH; direct package commands were used. Server test process required a temporary `os.userInfo` preload for `uv_os_get_passwd returned ENOMEM`.
+- [ ] Visual review at 1280, 768 and 334 px remains unverified because no browser/app was available through CUA. Real game behavior and real pixel art remain unverified; pixel art is a separate item.
+
+## Dashboard inventory visual correction — 2026-10-11
+
+- [x] Inventory modal uses the dashboard's fixed dark palette, dark amber cave panel, readable dark surfaces for empty slots, selected/hover/focus states, quantity badges, and an internal scroll area.
+- [x] The 12 confirmed Vietnamese grade names follow `Loot.gradeKey` precedence and four CSS colors; unknown/missing grades use a neutral fallback.
+- [x] Each of the 16 real item types and 8 equipment slots has a Vietnamese-labeled symbol; lookup order is slot, type, openable, then default.
+- [x] Web test guards cover all grades, types and slots, neutral fallback and accessibility labels. Four requested direct-source fault injections failed their tests and were restored.
+- [x] Verification: web Vitest 56/56; all 32 server test files 191/191; direct TypeScript builds for core-client/server/web and Vite production build pass. `pnpm` commands could not start because `pnpm` is not on PATH.
+- [ ] Browser comparison at 1280, 768 and 334 px remains unverified. The user will perform the visual review; do not report a browser inspection as completed.
+
+## Kiểm tra UI túi đồ — 2026-10-11
+
+- [x] Lưới ô 50 px ở màn hẹp, tối thiểu 62 px từ `sm`, giữ vuông và không cuộn ngang.
+- [x] Ô trống nằm ngay trong grid sau vật phẩm; tính `capacity - usedSlots`, chặn 24 ô và không vẽ khi dữ liệu thiếu. Chú thích ghi rõ sức chứa dùng chung cho cả túi.
+- [x] Panel chi tiết thu gọn khi chưa chọn; Hang Động hiển thị chip flex-wrap có màu theo trạng thái; hộp mở được dùng 🎁 và vẫn có nhãn “Hộp mở được”.
+- [x] Web 58/58; server 191/191; TypeScript core-client/server/web và Vite production build pass. Bốn mutation trực tiếp nguồn đều làm test fail gọn rồi được khôi phục.
+- [~] `pnpm build`/lệnh test pnpm không khởi chạy do thiếu `pnpm` trong PATH; đã chạy lệnh compiler/Vite/Vitest/tsx trực tiếp thay thế.
+- [ ] Chưa kiểm tra trực quan bằng trình duyệt ở 1280/768/334 px; chờ người dùng chụp.

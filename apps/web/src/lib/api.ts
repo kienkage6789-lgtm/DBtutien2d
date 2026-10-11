@@ -1,4 +1,4 @@
-import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, InventorySnapshot, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, InventoryEquipmentItem, InventorySnapshot, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired, setToken } from './auth';
@@ -732,7 +732,7 @@ export function sanitizeInventory(value: unknown): InventorySnapshot | undefined
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
   if (typeof item.known !== 'boolean') return undefined;
-  if (!item.known) return { known: false, items: [], totalKinds: null, totalCount: null, caveChest: null,
+  if (!item.known) return { known: false, items: [], bag: null, equipment: null, totalKinds: null, totalCount: null, caveChest: null,
     at: isFiniteNumber(item.at) && item.at >= 0 ? item.at : null };
   if (!Array.isArray(item.items)) return undefined;
   const rawItems = item.items;
@@ -743,8 +743,36 @@ export function sanitizeInventory(value: unknown): InventorySnapshot | undefined
       || typeof entry.name !== 'string' || entry.name.length > 160
       || !isFiniteNumber(entry.count) || !Number.isSafeInteger(entry.count) || entry.count < 0
       || typeof entry.openable !== 'boolean') return [];
-    return [{ id: entry.id, name: entry.name, count: entry.count, openable: entry.openable }];
+    const groups = ['vat-pham', 'trang-bi', 'dao-thuat'];
+    const grade = typeof entry.grade === 'string' || typeof entry.grade === 'number' && Number.isFinite(entry.grade) ? entry.grade as string | number : null;
+    return [{ id: entry.id, name: entry.name, count: entry.count, openable: entry.openable,
+      type: typeof entry.type === 'string' && entry.type.length <= 80 ? entry.type : null,
+      grade,
+      slot: typeof entry.slot === 'string' && entry.slot.length <= 80 ? entry.slot : null,
+      icon: typeof entry.icon === 'string' && entry.icon.length <= 128 ? entry.icon : null,
+      desc: typeof entry.desc === 'string' ? entry.desc.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) : null,
+      group: typeof entry.group === 'string' && groups.includes(entry.group) ? entry.group as 'vat-pham' | 'trang-bi' | 'dao-thuat' : null }];
   });
+  const rawBag = item.bag;
+  const bag = rawBag && typeof rawBag === 'object' && !Array.isArray(rawBag)
+    ? Object.fromEntries(['usedSlots', 'capacity', 'extraSlots', 'maxExtraSlots', 'nextSlotPrice'].map((key) => {
+      const value = (rawBag as Record<string, unknown>)[key];
+      return [key, isFiniteNumber(value) && Number.isSafeInteger(value) && value >= 0 ? value : null];
+    })) as InventorySnapshot['bag'] : null;
+  const rawEquipment = item.equipment;
+  const equipment = Array.isArray(rawEquipment) ? rawEquipment.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const slot = raw as Record<string, unknown>;
+    if (typeof slot.slotId !== 'string' || slot.slotId.length > 80 || typeof slot.slotName !== 'string' || slot.slotName.length > 120) return [];
+    let equipped: InventoryEquipmentItem | null = null;
+    if (slot.item && typeof slot.item === 'object' && !Array.isArray(slot.item)) {
+      const value = slot.item as Record<string, unknown>;
+      if (typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 128 && typeof value.name === 'string' && value.name.length <= 160) {
+        equipped = { id: value.id, name: value.name, grade: typeof value.grade === 'string' || typeof value.grade === 'number' && Number.isFinite(value.grade) ? value.grade : null };
+      }
+    }
+    return [{ slotId: slot.slotId, slotName: slot.slotName, item: equipped }];
+  }) : null;
   const rawCave = item.caveChest;
   const caveChest = rawCave && typeof rawCave === 'object' && !Array.isArray(rawCave)
     && isFiniteNumber((rawCave as Record<string, unknown>).keyCount)
@@ -754,7 +782,7 @@ export function sanitizeInventory(value: unknown): InventorySnapshot | undefined
     && typeof (rawCave as Record<string, unknown>).active === 'boolean'
     ? { keyCount: (rawCave as Record<string, unknown>).keyCount as number, claimed: (rawCave as Record<string, unknown>).claimed as boolean, active: (rawCave as Record<string, unknown>).active as boolean }
     : null;
-  return { known: true, items,
+  return { known: true, items, bag, equipment,
     totalKinds: isFiniteNumber(item.totalKinds) && Number.isSafeInteger(item.totalKinds) && item.totalKinds >= 0 ? item.totalKinds : null,
     totalCount: isFiniteNumber(item.totalCount) && Number.isSafeInteger(item.totalCount) && item.totalCount >= 0 ? item.totalCount : null,
     caveChest, at: isFiniteNumber(item.at) && item.at >= 0 ? item.at : null };

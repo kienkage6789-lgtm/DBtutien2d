@@ -15,7 +15,7 @@ const emptyDaily = { status: { today: null, stage: null, checkin: { done: false,
 
 /** Small contract double: it models only the public handle boundary, without any game transport. */
 class FakeRunnerHandle implements RunnerHandle {
-  private readonly inventory = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean }>, totalKinds: null, totalCount: null, caveChest: null, at: 0 };
+  private readonly inventory = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean; type: string | null; grade: string | number | null; slot: string | null; icon: string | null; desc: string | null; group: 'vat-pham' | 'trang-bi' | 'dao-thuat' | null }>, bag: null, equipment: null, totalKinds: null, totalCount: null, caveChest: null, at: 0 };
   private lifecycle: 'stopped' | 'in_game' = 'stopped';
   private down: boolean | null = null;
   private operation: WalkOperation | null = null;

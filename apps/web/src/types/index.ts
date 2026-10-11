@@ -171,11 +171,22 @@ export interface InventoryItem {
   name: string;
   count: number;
   openable: boolean;
+  type: string | null;
+  grade: string | number | null;
+  slot: string | null;
+  icon: string | null;
+  desc: string | null;
+  group: 'vat-pham' | 'trang-bi' | 'dao-thuat' | null;
 }
+
+export interface InventoryEquipmentItem { id: string; name: string; grade: string | number | null }
+export interface InventoryEquipmentSlot { slotId: string; slotName: string; item: InventoryEquipmentItem | null }
 
 export interface InventorySnapshot {
   known: boolean;
   items: InventoryItem[];
+  bag: { usedSlots: number | null; capacity: number | null; extraSlots: number | null; maxExtraSlots: number | null; nextSlotPrice: number | null } | null;
+  equipment: InventoryEquipmentSlot[] | null;
   totalKinds: number | null;
   totalCount: number | null;
   caveChest: { keyCount: number; claimed: boolean; active: boolean } | null;

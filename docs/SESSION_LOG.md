@@ -1,3 +1,21 @@
+# 2026-10-11 — Hiệu chỉnh giao diện túi đồ (offline)
+
+Chỉnh `InventoryModal` sang bảng màu tối cố định theo dashboard; ô tìm kiếm, sức chứa, Hang Động (amber tối), tab, chi tiết, ô trang bị, ô trống, trạng thái hover/chọn/focus đều dùng nền tối. Nội dung cuộn bên trong modal. Ô đồ có viền theo CSS game: common `#8a6a45`, fine `#79a477`, spirit `#5bb4bd`, earth `#8b65b5`; chữ/số lượng dùng màu sáng trên nền tối. Nhóm phẩm cấp theo thứ tự client (`Địa` → earth, `Linh` → spirit, `thượng` → fine, còn lại common) trong danh sách 12 tên phẩm cấp đã xác nhận; giá trị lạ/null dùng màu trung tính. Bảng ký hiệu có nhãn tiếng Việt cho 16 `type` và 8 `slot`, ưu tiên slot, rồi type, rồi openable.
+
+Kiểm tra: `pnpm build`, `pnpm --filter @tutien2d/web test` và lệnh pnpm cho server không khởi chạy do `pnpm` không có trong PATH. Thay thế: TypeScript core-client/server/web và Vite production build pass; web Vitest 56/56 trên 11 file; toàn bộ 32 file test server pass 191/191 bằng `tsx` trực tiếp (preload `os.userInfo`, `DATA_DIR` tạm để tránh lỗi môi trường `uv_os_get_passwd returned ENOMEM`). Bốn fault injection trực tiếp nguồn đều làm test fail: “Linh phẩm hạ” bị chuyển khỏi nhóm Linh, bỏ nhánh Địa, xóa ký hiệu `nguyen_lieu_ren_khi`, và ném lỗi với grade lạ; đã khôi phục nguồn và chạy lại test pass. Không sửa API/vendor, không commit.
+
+Chưa xác minh trực quan trên trình duyệt; không tuyên bố đã xem ở 1280/768/334 px. Việc đối chiếu bằng mắt với client/game vẫn chờ người dùng. Không chạy game thật hoặc mạng ngoài.
+
+# 2026-10-11 — Túi đồ dạng lưới, giai đoạn 2 (offline, chỉ đọc)
+
+Runner `getInventory()` giờ trả metadata `type`, `grade`, `slot`, `icon`, mô tả đã làm sạch/cắt 300 ký tự và nhóm tương thích `Market.group`/quy tắc dự phòng; thêm dữ liệu dung lượng túi và các ô đang mặc. Giá trị chưa có giữ `null`; truy vấn vẫn là RPC bất đồng bộ ngoài snapshot 500 ms. RunnerHandle và RPC shard đã có sẵn từ giai đoạn 1 nên vẫn dùng nguyên kênh, dữ liệu mới đi theo kết quả JSON clone. Sanitizer web lọc kiểu/độ dài từng trường.
+
+Modal đổi sang lưới CSS vuông có ba tab và tab Khác khi cần, bộ đếm tab, điều hướng phím mũi tên, chi tiết, trạng thái dung lượng chung, ô trang bị, màu phẩm cấp sáng/tối có màu dự phòng, ký hiệu nội tuyến và nhãn hộp. Tab lưu an toàn khi `localStorage` lỗi. Vì dung lượng là chung cho túi và không có số ô theo nhóm, lưới không bịa ô trống riêng cho từng tab. Mọi tên/mô tả được render như văn bản; không có nút thao tác game. Biểu tượng pixel thật chưa có và được ghi là hạng mục riêng.
+
+Kiểm tra: `pnpm build` không chạy vì `pnpm` không có trong PATH; `pnpm --filter @tutien2d/web test` cũng không chạy vì cùng lý do. Build thay thế: core-client, server và web TypeScript pass; Vite production build pass. Web Vitest 54/54 trên 11 file. Server `npx.cmd tsx --test` chạy đủ 32 file, 191/191 pass; test liên quan runner/handle/shard 71/71. Node test cần preload tạm `os.userInfo` vì `uv_os_get_passwd returned ENOMEM`; `DATA_DIR` dùng thư mục tạm. Năm fault injection trực tiếp nguồn (group `bi_tich`, `capacity null`, bỏ cắt desc, sai đếm tab, phẩm cấp lạ ném lỗi) đều làm test bảo vệ thất bại gọn và từng được khôi phục. Kiểm tra tĩnh xác nhận InventoryModal không dùng `dangerouslySetInnerHTML`.
+
+Chưa xác minh trực quan ở 1280/768/334 px: CUA không trả app hoặc browser nào (`apps=[]`, `browsers=[]`), nên không thể mở modal trong trình duyệt. Không chạy phiên game thật, không mở mạng ngoài, không sửa vendor hoặc `auto-supervisor.ts`; không commit.
+
 # 2026-10-11 — Túi đồ dashboard, giai đoạn 1 (offline, chỉ đọc)
 
 `VendorRunner.getInventory()` now reads the client-owned `Inventory.bag`, item display names from `P.ITEMS`, openable boxes from `Inventory.HOP`, and cave key/chest flags from `P.Quest`. It returns `known:false` with null totals before the game state is loaded; known inventory includes every positive stack and totals. The read sends no game command. `RunnerHandle.getInventory()` is an async call (not part of the 500 ms snapshot); RPC allowlisting, in-process/remote adapters and shard dispatch are wired. Both adapters return JSON-safe copies, and stale remote shard data returns `VENDOR_DATA_STALE`.
@@ -26,6 +44,14 @@ Verification: related files pass individually (`shard-protocol.test.ts` 19/19; `
 
 All three requested direct-source fault injections fail promptly and were reverted: forcing `stale = false` fails the stale runtime test; rebuilding `mapContext` from the old snapshot fails with stale map/khu values; killing the shard on `start()` timeout fails because the peer shard disappears. `VENDOR_SHARDS=0` remains the default and no shard configuration or default engine behavior was changed. `git diff --check` reports pre-existing trailing whitespace in several already-modified docs/API files; the new lines add none. Live game behavior remains unverified and was not exercised.
 # Nhật ký phiên triển khai
+
+## 2026-10-11 — Cân chỉnh lưới túi đồ (offline)
+
+- Ô lưới giữ 50 px tối thiểu ở màn hẹp và chuyển sang 62 px từ breakpoint `sm`; huy hiệu số lượng co theo kích thước, có viền sáng/nền đậm để dễ đọc. Ô trống nằm liền sau vật phẩm trong cùng grid; số ô được tính từ `capacity - usedSlots`, tối đa 24. Thiếu một trong hai số thì không vẽ ô và hiện “Chưa biết”. Chú thích xác nhận ô trống dùng chung cả túi.
+- Khi chưa chọn vật phẩm, panel chi tiết chỉ còn một dòng gọn; khi chọn thì mở nội dung. Hang Động dùng chip flex-wrap theo từng trạng thái, màu emerald khi có/đã và slate khi chưa. Hộp mở được dùng 🎁, giữ nhãn truy cập tiếng Việt.
+- Test web tăng từ 56 lên 58. Test kiểm tra số ô trống/trần, dữ liệu chưa biết, sáu trạng thái chip và ký hiệu hộp. Bốn mutation trực tiếp nguồn đều fail gọn đúng test tương ứng rồi được hoàn nguyên: bỏ trần; vẽ ô khi thiếu dữ liệu; đảo trạng thái chìa khóa; đổi 🎁 về ▣.
+- `pnpm build` và `pnpm --filter @tutien2d/web test` không chạy được vì `pnpm` không có trong PATH. Thay thế: `tsc` core-client/server/web pass, Vite production build pass, Vitest web 58/58; toàn bộ 32 file test server 191/191 pass bằng `tsx` trực tiếp với preload tạm cho lỗi môi trường `uv_os_get_passwd returned ENOMEM` (preload đã xóa). Không sửa API/vendor, không commit.
+- Chưa xác minh trực quan trên trình duyệt ở 1280/768/334 px; người dùng sẽ tự chụp. Không chạy game thật hoặc mạng ngoài.
 
 ## 2026-10-11 — ARCHITECTURE_V2 Bước 5B: shard đa tiến trình (offline)
 

@@ -160,7 +160,9 @@ export interface VendorRunnerSnapshot {
 
 export interface VendorInventorySnapshot {
   known: boolean;
-  items: Array<{ id: string; name: string; count: number; openable: boolean }>;
+  items: Array<{ id: string; name: string; count: number; openable: boolean; type: string | null; grade: string | number | null; slot: string | null; icon: string | null; desc: string | null; group: 'vat-pham' | 'trang-bi' | 'dao-thuat' | null }>;
+  bag: { usedSlots: number | null; capacity: number | null; extraSlots: number | null; maxExtraSlots: number | null; nextSlotPrice: number | null } | null;
+  equipment: Array<{ slotId: string; slotName: string; item: { id: string; name: string; grade: string | number | null } | null }> | null;
   totalKinds: number | null;
   totalCount: number | null;
   caveChest: { keyCount: number; claimed: boolean; active: boolean } | null;
@@ -1294,7 +1296,7 @@ export class VendorRunner {
     const inventory = this.P?.Inventory;
     const bag = inventory?.bag;
     if (this.connectionState() !== 'IN_GAME' || !bag || typeof bag !== 'object' || Array.isArray(bag)) {
-      return { known: false, items: [], totalKinds: null, totalCount: null, caveChest: null, at };
+      return { known: false, items: [], bag: null, equipment: null, totalKinds: null, totalCount: null, caveChest: null, at };
     }
     const definitions = this.P?.ITEMS && typeof this.P.ITEMS === 'object' ? this.P.ITEMS as Record<string, unknown> : {};
     const openable = inventory?.HOP && typeof inventory.HOP === 'object' ? inventory.HOP as Record<string, unknown> : {};
@@ -1303,7 +1305,19 @@ export class VendorRunner {
       if (count === null) return [];
       const definition = definitions[id] && typeof definitions[id] === 'object' ? definitions[id] as Record<string, unknown> : null;
       const name = typeof definition?.name === 'string' && definition.name.trim() ? definition.name.trim() : id;
-      return [{ id, name, count, openable: Object.prototype.hasOwnProperty.call(openable, id) }];
+      const rawType = typeof definition?.type === 'string' ? definition.type : null;
+      const rawGrade = typeof definition?.grade === 'string' || typeof definition?.grade === 'number' ? definition.grade : null;
+      const slot = typeof definition?.slot === 'string' ? definition.slot : null;
+      const market = this.P?.Market as { group?: (item: Record<string, unknown>) => unknown } | undefined;
+      let marketGroup: unknown = null;
+      try { marketGroup = typeof market?.group === 'function' ? market.group(definition ?? {}) : null; } catch { /* use documented fallback */ }
+      const validGroups = ['vat-pham', 'trang-bi', 'dao-thuat'];
+      const group = typeof marketGroup === 'string' && validGroups.includes(marketGroup) ? marketGroup as 'vat-pham' | 'trang-bi' | 'dao-thuat'
+        : slot ? 'trang-bi' : rawType === 'bi_tich' || rawType === 'phu_chu' ? 'dao-thuat'
+          : definition && rawType ? 'vat-pham' : null;
+      const desc = typeof definition?.desc === 'string' ? definition.desc.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) : null;
+      return [{ id, name, count, openable: Object.prototype.hasOwnProperty.call(openable, id), type: rawType, grade: rawGrade,
+        slot, icon: typeof definition?.icon === 'string' ? definition.icon.slice(0, 128) : null, desc, group }];
     }).sort((a, b) => Number(b.openable) - Number(a.openable) || a.name.localeCompare(b.name, 'vi') || a.id.localeCompare(b.id));
     const quest = this.P?.Quest;
     const flags = quest?.flags && typeof quest.flags === 'object' ? quest.flags as Record<string, unknown> : null;
@@ -1312,7 +1326,27 @@ export class VendorRunner {
     const keyCount = typeof rawKeyCount === 'number' && Number.isSafeInteger(rawKeyCount) && rawKeyCount >= 0 ? rawKeyCount : 0;
     const claimed = flags ? flags.hang_dong_da_lay_ruong === true : false;
     const active = typeof quest?.hangDongActive === 'function' ? quest.hangDongActive() === true : false;
-    return { known: true, items, totalKinds: items.length, totalCount: items.reduce((sum, item) => sum + item.count, 0),
+    const readNumber = (method: unknown): number | null => {
+      try { const value = typeof method === 'function' ? (method as () => unknown).call(inventory) : method;
+        return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      } catch { return null; }
+    };
+    const bagInfo = { usedSlots: readNumber(inventory?.usedSlots), capacity: readNumber(inventory?.capacity),
+      extraSlots: readNumber(inventory?.extraSlots), maxExtraSlots: readNumber(inventory?.MAX_EXTRA_SLOTS), nextSlotPrice: readNumber(inventory?.nextSlotPrice) };
+    const rawSlots = inventory?.slots && typeof inventory.slots === 'object' ? inventory.slots as Record<string, unknown> : null;
+    const equipment = rawSlots ? Object.entries(rawSlots).map(([slotId, rawSlot]) => {
+      const slotName = typeof rawSlot === 'string' ? rawSlot : rawSlot && typeof rawSlot === 'object' && typeof (rawSlot as Record<string, unknown>).name === 'string'
+        ? String((rawSlot as Record<string, unknown>).name) : slotId;
+      let equipped: unknown = null;
+      try { equipped = inventory?.equipped?.(slotId); } catch { equipped = null; }
+      const equippedId = typeof equipped === 'string' ? equipped : equipped && typeof equipped === 'object' && typeof (equipped as Record<string, unknown>).id === 'string'
+        ? String((equipped as Record<string, unknown>).id) : null;
+      const itemDef = equippedId && definitions[equippedId] && typeof definitions[equippedId] === 'object' ? definitions[equippedId] as Record<string, unknown> : null;
+      return { slotId, slotName, item: equippedId ? { id: equippedId,
+        name: typeof itemDef?.name === 'string' ? itemDef.name.trim() : equippedId,
+        grade: typeof itemDef?.grade === 'string' || typeof itemDef?.grade === 'number' ? itemDef.grade : null } : null };
+    }) : null;
+    return { known: true, items, bag: bagInfo, equipment, totalKinds: items.length, totalCount: items.reduce((sum, item) => sum + item.count, 0),
       caveChest: flags && keyId ? { keyCount, claimed, active } : null, at };
   }
 
