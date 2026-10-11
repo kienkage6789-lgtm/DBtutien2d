@@ -1,5 +1,15 @@
 # Nhật ký phiên triển khai
 
+## 2026-10-11 — Đo hiệu năng bot: hiệu chỉnh giữa máy phát triển và TV box (offline)
+
+Công cụ mới: `scripts/summarize-cpuprofile.mjs` (tóm tắt `.cpuprofile`) và `apps/server/tools/measure-runner.ts` (`cd apps/server && pnpm measure`; chạy `VendorRunner` với socket giả, không mạng, in avg/p95/max khung và `busyRatio` kèm thông tin máy). Không chạm game thật.
+
+Đo trên máy phát triển (i7-4790K 4 GHz, Node 24.16): `VendorRunner` + Auto bật, map `thanh_truc_lam`, KHÔNG có quái và không có lưu lượng gói thật: khung ~0,56 ms (p95 ~1,6), chiếm ~2%, RSS ~92-234 MB tuỳ mẫu. Spike offline `spike-vendor-auto-offline.cjs` (62 quái mô phỏng cục bộ, Auto đánh): mỗi `update` ~0,33 ms (p95 0,93). Profile `--cpu-prof`: ~73% thời gian mẫu nằm trong `art_rung_truc.js`/`art_tan_vien.js` (tạo ảnh map), nhưng là chi phí MỘT LẦN mỗi lần vào/đổi map (vào map đầu ~7,3 s, đổi map ~7,9 s trong spike), không phải chi phí mỗi khung; kéo dài mô phỏng 5 s lên 40 s không đổi tổng.
+
+Số đo của chủ dự án trên TV box (Cortex-A53 4 nhân 1,2 GHz): bot trạng thái bình thường khung 7-9 ms chiếm 45-50%; Auto đánh quái thật khung 14,7 ms (p95 21,5) chiếm 86,9% (~59 khung/giây). Tỉ lệ A53/máy phát triển ở trạng thái rảnh ~12 lần. Giả thuyết "mô phỏng thế giới ở trạng thái ổn định là nguyên nhân chính" KHÔNG được ủng hộ bởi số đo trên máy phát triển.
+
+Chưa xác minh: tải đánh quái thật trên máy x86 (mẫu offline không có lưu lượng gói thật), tỉ lệ thật giữa TV box và VPS (cần chạy `pnpm measure` trên cả hai), việc tạo ảnh map có chạy trong runner thật và tốn bao nhiêu trên A53, `process.memoryUsage()` mỗi khung trên Linux/ARM. Ước lượng cho 50 bot Auto (~5-10 vCPU x86) là suy luận, chưa đo.
+
 ## 2026-10-10 — ARCHITECTURE_V2 Bước 1: củng cố hợp đồng GameGateway
 
 Thay đổi: mở rộng `game-gateway.contract.ts` để mọi bất biến chạy trên gateway đã start với fixture offline cho `FakeGateway` và `VendorGateway`. Bảy test riêng cho từng implementation kiểm tra stop đóng socket/hủy walk/idempotent, cancel chỉ đúng `operationId`, gate khi gục, disconnect listener/unsubscribe và reconnect kể cả listener ném lỗi, start lặp không sinh phiên thứ hai, hurt count không giảm, cùng vitals/trạng thái gục tiếp tục `null` khi chưa nhận `you`. Mỗi fixture được stop trong `t.after()` để không giữ loop/timer sau test. `VendorGateway.getState().isDown` giờ trả `null` khi vitals chưa được xác nhận; đây là hook nhỏ cần để giữ trạng thái chưa biết đúng hợp đồng.
