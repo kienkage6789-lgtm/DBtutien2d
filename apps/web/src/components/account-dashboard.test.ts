@@ -1,13 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountRuntime } from '../types';
 import { sanitizeCharacter } from '../hooks/useRealtime';
-import { accountRowStatus, filterAccounts, isAccountTabActive, readDashboardStorage, realmLabel, resolveSelectedAccountId, vitalPercent, writeDashboardStorage, ACCOUNT_TABS } from './account-dashboard';
+import { accountRowStatus, canPlay, copyAccountName, filterAccounts, isAccountTabActive, OFFICIAL_GAME_URL, readDashboardStorage, realmLabel, resolveSelectedAccountId, vitalPercent, writeDashboardStorage, ACCOUNT_TABS } from './account-dashboard';
 
 const account = (id: string, status: AccountRuntime['status'], extra: Partial<AccountRuntime> = {}) => ({ id, status, accountName: `user-${id}`, characterName: `Nhân vật ${id}`, dataStale: false, connection: 'CONNECTED', downed: false, ...extra }) as AccountRuntime;
 const originalWindow = globalThis.window;
 afterEach(() => { vi.stubGlobal('window', originalWindow); });
 
 describe('dashboard sidebar helpers', () => {
+  it('allows play only when stopped and not reconnecting', () => {
+    expect(canPlay(account('run', 'running'))).toBe(false);
+    expect(canPlay(account('stop', 'stopped'))).toBe(true);
+    expect(canPlay(account('error', 'error'))).toBe(true);
+    expect(canPlay(account('retry', 'stopped', { connection: 'RECONNECTING' }))).toBe(false);
+    expect(canPlay(account('starting', 'stopped', { connection: 'CONNECTING' }))).toBe(false);
+  });
+
+  it('copies the account name safely when clipboard APIs are unavailable', async () => {
+    await expect(copyAccountName('account-fixture')).resolves.toBe(false);
+    expect(OFFICIAL_GAME_URL).toBe('https://tutien2d.online/');
+  });
+
   it('formats vital percentage without inventing unknown values and clamps bounds', () => {
     expect(vitalPercent(null, 100)).toBeNull();
     expect(vitalPercent(0, 100)).toBe(0);
@@ -45,8 +58,11 @@ describe('dashboard sidebar helpers', () => {
   it('renders one active tab at a time and keeps missing character data unknown', () => {
     for (const tab of ACCOUNT_TABS) expect(ACCOUNT_TABS.filter((candidate) => isAccountTabActive(tab.id, candidate.id))).toEqual([tab]);
     expect(sanitizeCharacter(undefined)).toBeUndefined();
-    expect(sanitizeCharacter({ realmName: 7, sp: 'bad', spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4 })).toEqual({ realmId: null, realmName: null, sp: null, spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4, fresh: false, observedAt: null });
-    expect(sanitizeCharacter({ realmId: 'a'.repeat(80), realmName: 'X\u0000Y', sp: '12', exp: Infinity, fresh: true, observedAt: 'bad' })).toEqual({ realmId: 'a'.repeat(64), realmName: 'XY', sp: null, spMax: null, bp: null, bpMax: null, exp: null, expMax: null, fresh: false, observedAt: null });
+    expect(sanitizeCharacter({ realmName: 7, sp: 'bad', spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4 })).toEqual({ realmId: null, realmName: null, sp: null, spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4, stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null, fresh: false, observedAt: null });
+    expect(sanitizeCharacter({ realmId: 'a'.repeat(80), realmName: 'X\u0000Y', sp: '12', exp: Infinity, fresh: true, observedAt: 'bad' })).toMatchObject({ realmId: 'a'.repeat(64), realmName: 'XY', sp: null, spMax: null, bp: null, bpMax: null, exp: null, expMax: null, fresh: false, observedAt: null, stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null });
+    expect(sanitizeCharacter({ stones: '12', stonesToday: -1, stonesCap: NaN, stonesSessionNet: '4' })).toMatchObject({ stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null });
+    expect(sanitizeCharacter({ stones: 0, stonesToday: 0, stonesCap: 0, stonesSessionNet: -1 })).toMatchObject({ stones: 0, stonesToday: 0, stonesCap: 0, stonesSessionNet: -1 });
+    expect(sanitizeCharacter({ stones: 3, fresh: true })).toMatchObject({ stones: 3, fresh: true });
     expect(realmLabel(undefined)).toBe('—');
     expect(realmLabel(sanitizeCharacter({}) )).toBe('—');
   });

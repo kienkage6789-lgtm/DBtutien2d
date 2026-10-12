@@ -12,7 +12,7 @@ const makeSnapshot = (lifecycle: VendorRunnerSnapshot['lifecycle'] = 'farming'):
   mapId: 'map-fixture', khu: 2, soKhu: 5, khuList: { mapId: 'map-fixture', khu: 2, soKhu: 5, list: [] },
   x: 12, y: 34, hp: 80, maxHp: 100, mp: 30, maxMp: 40, downed: false, vitalsProbeMoves: 0,
   vitals: { hp: 80, maxHp: 100, mp: 30, maxMp: 40, status: 'client', source: 'client', fresh: true, observedAt: 8000 },
-  character: { realmId: 'realm-fixture', realmName: 'Realm fixture', sp: 2, spMax: 8, bp: 3, bpMax: 9, exp: 4, expMax: 10, fresh: true, observedAt: 8000 },
+  character: { realmId: 'realm-fixture', realmName: 'Realm fixture', sp: 2, spMax: 8, bp: 3, bpMax: 9, exp: 4, expMax: 10, stones: 130, stonesToday: 10, stonesCap: 1500, stonesSessionNet: 30, fresh: true, observedAt: 8000 },
   monsters: [], players: [], monstersContext: { mapId: 'map-fixture', khu: 2, observedAt: 8000, fresh: true },
   playersContext: { mapId: 'map-fixture', khu: 2, observedAt: 8000, fresh: true },
   moveTo: { operationId: 'move-fixture', status: 'accepted' }, daily: { operationId: 'daily-fixture' },
@@ -77,7 +77,7 @@ test('WorkerPool runtime preserves current snapshot values when not stale', () =
   assert.ok(runtime.mapContext.observedAt !== null); assert.equal(runtime.mapContext.fresh, true);
   assert.equal(runtime.mapContextIsCurrent, true);
   assert.equal(runtime.vendor?.mapId, 'map-fixture');
-  assert.deepEqual(runtime.character, { realmId: 'realm-fixture', realmName: 'Realm fixture', sp: 2, spMax: 8, bp: 3, bpMax: 9, exp: 4, expMax: 10, fresh: true, observedAt: 8000 });
+  assert.deepEqual(runtime.character, { realmId: 'realm-fixture', realmName: 'Realm fixture', sp: 2, spMax: 8, bp: 3, bpMax: 9, exp: 4, expMax: 10, stones: 130, stonesToday: 10, stonesCap: 1500, stonesSessionNet: 30, fresh: true, observedAt: 8000 });
   assert.deepEqual(pool.getObservedMaps().map(({ mapId, soKhu }) => ({ mapId, soKhu })), [{ mapId: 'map-fixture', soKhu: 5 }]);
 });
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import nodeTest from 'node:test';
 import { AuthError, type AuthSession } from '@tutien2d/core-client';
-import { VendorRunner, type VendorTokenManagerLike } from './vendor-runner.js';
+import { getCharacter, StoneSessionBaseline, VendorRunner, type VendorTokenManagerLike } from './vendor-runner.js';
 import type { VendorSocketLike } from './vendor-env.js';
 import { InProcessRunnerHandle } from '../orchestrator/runner-handle.js';
 import { registerRunnerHandleContract } from '../orchestrator/runner-handle.contract.js';
@@ -11,6 +11,47 @@ import { registerRunnerHandleContract } from '../orchestrator/runner-handle.cont
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 const vendorClientDir = path.join(repoRoot, 'vendor/tutien2d-public-client/2026-10-06');
 const test = (name: string, fn: () => void | Promise<void>) => nodeTest(name, { timeout: 20_000 }, fn);
+
+test('getCharacter sanitizes stone totals and keeps unavailable values null', () => {
+  const player = { realmId: 'r', sp: 1, bp: 2, exp: 3 };
+  const full = getCharacter(player, [{ id: 'r', name: 'R' }], true, 7, { stones: 12, stonesToday: 3, stonesCap: 40, stonesSessionNet: -2 });
+  assert.deepEqual(full && { stones: full.stones, stonesToday: full.stonesToday, stonesCap: full.stonesCap, stonesSessionNet: full.stonesSessionNet },
+    { stones: 12, stonesToday: 3, stonesCap: 40, stonesSessionNet: -2 });
+  const unknown = getCharacter(player, [], true, 7);
+  assert.deepEqual(unknown && [unknown.stones, unknown.stonesToday, unknown.stonesCap, unknown.stonesSessionNet], [null, null, null, null]);
+  const invalid = getCharacter(player, [], true, 7, { stones: NaN, stonesToday: -1, stonesCap: Infinity, stonesSessionNet: NaN });
+  assert.deepEqual(invalid && [invalid.stones, invalid.stonesToday, invalid.stonesCap, invalid.stonesSessionNet], [null, null, null, null]);
+  const zeros = getCharacter(player, [], true, 7, { stones: 0, stonesToday: 0, stonesCap: 0, stonesSessionNet: 0 });
+  assert.deepEqual(zeros && [zeros.stones, zeros.stonesToday, zeros.stonesCap, zeros.stonesSessionNet], [0, 0, 0, 0]);
+  assert.equal(getCharacter(player, [], false, 7, { stones: 8 }), null);
+});
+
+test('stone session baseline tracks gains/spending and resets for a new connection', () => {
+  const session = new StoneSessionBaseline();
+  assert.equal(session.net(null), null);
+  assert.equal(session.net(100), 0);
+  assert.equal(session.net(125), 25);
+  assert.equal(session.net(90), -10);
+  session.reset();
+  assert.equal(session.net(90), 0);
+});
+
+test('VendorRunner resets stone session baseline when its run starts again', async () => {
+  resetKhuFixture(); FakeSocket.instances = [];
+  const runner = createKhuRunner();
+  const session = (runner as unknown as { stonesSession: StoneSessionBaseline }).stonesSession;
+  try {
+    await runner.start(); await waitUntil(() => runner.getSnapshot().connection === 'IN_GAME');
+    session.reset();
+    const progress = (runner as unknown as { P: { Progress: { stones: number } } }).P.Progress;
+    progress.stones = 100; assert.equal(runner.getSnapshot().character?.stonesSessionNet, 0);
+    progress.stones = 150; assert.equal(runner.getSnapshot().character?.stonesSessionNet, 50);
+    await runner.stop();
+    progress.stones = 155;
+    await runner.start(); await waitUntil(() => runner.getSnapshot().connection === 'IN_GAME');
+    assert.equal(runner.getSnapshot().character?.stonesSessionNet, 0);
+  } finally { await runner.stop(); }
+});
 
 class ManualReconnectClock {
   public nowMs = 0;

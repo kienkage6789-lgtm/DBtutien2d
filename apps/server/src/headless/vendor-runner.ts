@@ -168,12 +168,26 @@ export interface VendorCharacterSnapshot {
   bpMax: number | null;
   exp: number | null;
   expMax: number | null;
+  stones: number | null;
+  stonesToday: number | null;
+  stonesCap: number | null;
+  stonesSessionNet: number | null;
   fresh: boolean;
   observedAt: number | null;
 }
 
+export class StoneSessionBaseline {
+  private start: number | null = null;
+  public reset(): void { this.start = null; }
+  public net(stones: number | null): number | null {
+    if (stones === null || !Number.isFinite(stones) || stones < 0) return null;
+    if (this.start === null) this.start = stones;
+    return stones - this.start;
+  }
+}
+
 /** Read-only projection of HUD fields. Maxima are client-model values; their live source is unverified. */
-export function getCharacter(player: unknown, realms: unknown, inGame: boolean, observedAt = Date.now()): VendorCharacterSnapshot | null {
+export function getCharacter(player: unknown, realms: unknown, inGame: boolean, observedAt = Date.now(), stoneState?: { stones?: unknown; stonesToday?: unknown; stonesCap?: unknown; stonesSessionNet?: unknown }): VendorCharacterSnapshot | null {
   if (!inGame || !player || typeof player !== 'object' || Array.isArray(player)) return null;
   const source = player as Record<string, unknown>;
   const safeNumber = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -189,9 +203,11 @@ export function getCharacter(player: unknown, realms: unknown, inGame: boolean, 
     sp: safeNumber(source.sp), spMax: safeNumber(source.spMax),
     bp: safeNumber(source.bp), bpMax: safeNumber(source.bpMax),
     exp: safeNumber(source.exp), expMax: safeNumber(source.expMax),
+    stones: safeNumber(stoneState?.stones), stonesToday: safeNumber(stoneState?.stonesToday),
+    stonesCap: safeNumber(stoneState?.stonesCap), stonesSessionNet: typeof stoneState?.stonesSessionNet === 'number' && Number.isFinite(stoneState.stonesSessionNet) ? stoneState.stonesSessionNet : null,
     fresh: false, observedAt: null as number | null,
   };
-  character.fresh = [character.sp, character.bp, character.exp].some((value) => value !== null);
+  character.fresh = [character.sp, character.bp, character.exp, character.stones, character.stonesToday, character.stonesCap].some((value) => value !== null);
   character.observedAt = character.fresh && Number.isFinite(observedAt) ? observedAt : null;
   return character;
 }
@@ -415,6 +431,7 @@ export class VendorRunner {
   private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'reconnectGiveUpMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
   private readonly onSnapshotChanged?: () => void;
   private transportClosed = false;
+  private readonly stonesSession = new StoneSessionBaseline();
 
   public constructor(private readonly input: VendorRunnerOptions) {
     assertAllowedGameUrl(input.gameServerUrl, input.allowedGameServerUrl ?? input.gameServerUrl);
@@ -448,6 +465,7 @@ export class VendorRunner {
   public async start(): Promise<void> {
     if (this.lifecycle !== 'stopped' && this.lifecycle !== 'error') return;
     this.frameMetrics.reset();
+    this.stonesSession.reset();
     this.stopRequested = false;
     this.transportClosed = false;
     this.lifecycle = 'starting';
@@ -567,7 +585,14 @@ export class VendorRunner {
     const elapsed = this.startedAt > 0 ? Math.max(0, now - this.startedAt) : 0;
     const fps = elapsed > 0 ? this.frames / (elapsed / 1000) : 0;
     const vitals = this.getVitals(player);
-    const character = getCharacter(player, this.P?.REALMS, this.connectionState() === 'IN_GAME' && player !== null, now);
+    const stoneValue = this.P?.Progress?.stones;
+    const stones = typeof stoneValue === 'number' && Number.isFinite(stoneValue) && stoneValue >= 0 ? stoneValue : null;
+    const stoneToday = this.P?.Loot?.stoneToday?.(this.P);
+    const stonesToday = typeof stoneToday?.da === 'number' && Number.isFinite(stoneToday.da) && stoneToday.da >= 0 ? stoneToday.da : null;
+    const stonesCap = typeof stoneToday?.tran === 'number' && Number.isFinite(stoneToday.tran) && stoneToday.tran >= 0 ? stoneToday.tran : null;
+    const inGame = this.connectionState() === 'IN_GAME' && player !== null;
+    const stonesSessionNet = inGame ? this.stonesSession.net(stones) : null;
+    const character = getCharacter(player, this.P?.REALMS, inGame, now, { stones, stonesToday, stonesCap, stonesSessionNet });
     const mapReady = this.isMapReady();
     const mapId = mapReady ? this.getMapId() : null;
     const khu = mapReady ? this.getKhu() : null;
@@ -778,6 +803,7 @@ export class VendorRunner {
   private async connectAndBuild(reconnect: boolean): Promise<void> {
     if (!this.P || !this.env || !this.tokenManager) throw new Error('VENDOR_NOT_INITIALIZED');
     const reconnectHurtCount = reconnect ? this.hurtCount : null;
+    if (reconnect) this.stonesSession.reset();
     this.lifecycle = reconnect ? 'connecting' : 'connecting';
     const P = this.P;
     P.Net.online = true;

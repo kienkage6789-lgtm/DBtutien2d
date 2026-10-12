@@ -2,6 +2,12 @@
 
 Ngày rà soát: 2026-10-11. Nguồn tham chiếu protocol vẫn là client chính thức tại `vendor/tutien2d-public-client/2026-10-06`; thư mục vendor không được sửa.
 
+## Linh Thạch và mở trang game — 2026-10-12
+
+AccountPanel có nút **Chơi** mở `https://tutien2d.online/` trong tab mới, chỉ thao tác được khi account đã dừng và không ở trạng thái đang kết nối/nối lại. Chú thích nhắc dừng bot vì mỗi tài khoản chỉ có một phiên đăng nhập. Nút **Sao chép đạo hiệu** chỉ sao chép `accountName`; mật khẩu/token không được đọc hay đưa vào URL. Chức năng không gọi API.
+
+Sidebar hiển thị ví Linh Thạch và số hôm nay/trần. Tab Tổng quan có thẻ **Linh Thạch** với ví, hôm nay từ quái/trần theo cảnh giới và biến động kể từ lúc runner kết nối. Giá trị null hoặc stale hiển thị “—”. `stonesToday`/`stonesCap` do client tính từ cờ quest ngày và cảnh giới; độ khớp với hạch toán máy chủ chưa xác minh.
+
 ## Chức năng dashboard còn giữ
 
 | Khu vực | Trạng thái | Ghi chú |

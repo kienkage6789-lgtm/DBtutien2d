@@ -23,16 +23,24 @@ const callbacks = {
 
 describe('character snapshot display', () => {
   it('shows em dashes for null or stale values and values with percentages when fresh', () => {
-    const unknown = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, character: null }} />);
+    const unknown = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, status: 'stopped', character: null }} />);
     expect(unknown).toContain('Thần thức');
     expect(unknown).toContain('—');
+    expect(unknown).toContain('Linh Thạch');
+    expect(unknown).toContain('rel="noopener noreferrer"');
+    expect(unknown).toContain('href="https://tutien2d.online/"');
+    const disabled = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, status: 'running' }} />);
+    expect(disabled).toContain('aria-disabled="true"');
+    expect(disabled).not.toContain('href="https://tutien2d.online/"');
+    expect(disabled).toContain('Dừng bot trước khi chơi: game chỉ cho một phiên đăng nhập mỗi tài khoản');
 
-    const freshCharacter = { realmId: 'realm-fixture', realmName: 'Cảnh giới thử', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 25, expMax: 100, fresh: true, observedAt: 10 };
+    const freshCharacter = { realmId: 'realm-fixture', realmName: 'Cảnh giới thử', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 25, expMax: 100, stones: 1200, stonesToday: 50, stonesCap: 500, stonesSessionNet: -25, fresh: true, observedAt: 10 };
     const fresh = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, character: freshCharacter }} />);
     expect(fresh).toContain('Cảnh giới thử');
     expect(fresh).toContain('5'); expect(fresh).toContain('50%');
     expect(fresh).toContain('6'); expect(fresh).toContain('50%');
     expect(fresh).toContain('25'); expect(fresh).toContain('25%');
+    expect(fresh).toContain('1,200'); expect(fresh).toContain('50'); expect(fresh).toContain('/ 500'); expect(fresh).toContain('−25');
 
     const stale = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, dataStale: true, character: freshCharacter }} />);
     expect(stale).not.toContain('Cảnh giới thử');
@@ -40,7 +48,7 @@ describe('character snapshot display', () => {
   });
 
   it('renders the sidebar values only when the character snapshot is fresh', () => {
-    const items = [{ ...base, character: { realmId: null, realmName: 'Realm', sp: 5, spMax: 10, bp: 2, bpMax: 4, exp: 1, expMax: 2, fresh: true, observedAt: 2 } }];
+    const items = [{ ...base, character: { realmId: null, realmName: 'Realm', sp: 5, spMax: 10, bp: 2, bpMax: 4, exp: 1, expMax: 2, stones: 1, stonesToday: 2, stonesCap: 3, stonesSessionNet: 0, fresh: true, observedAt: 2 } }];
     const markup = renderToStaticMarkup(<AccountSidebar accounts={items} selectedId={null} onSelect={() => {}} />);
     expect(markup).toContain('5');
     const staleMarkup = renderToStaticMarkup(<AccountSidebar accounts={[{ ...items[0], character: { ...items[0].character, fresh: false } }]} selectedId={null} onSelect={() => {}} />);

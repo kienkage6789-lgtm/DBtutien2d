@@ -5,7 +5,7 @@ Cập nhật: 2026-10-12. Giai đoạn 1 và giai đoạn 2 đã triển khai; n
 ## 1. Hiện trạng [đọc từ mã]
 - `apps/web/src/App.tsx`: Navbar + `StatsBar` + lưới 1–3 cột `AccountCard` + `LogTerminal`. Mỗi `AccountCard` (157 dòng) chứa tất cả: HP/MP, vị trí, `MiniMap`, `MapTravelControl`, `KhuControl`, `DailyControl`, khối Auto, Túi đồ, đổi mật khẩu, xoá. Thẻ rất cao, nhiều tài khoản thì phải cuộn dài.
 - Dữ liệu có sẵn trong `AccountRuntime`: tên nhân vật, `vitals` (hp/mp và max, trạng thái fresh/stale), `derivedMax`, vị trí, `downed`, `activity`, `vendor.*` (Auto, hurt, supervisor), `daily`, `dailyStatus`, `metrics`.
-- **CHƯA có trong snapshot**: cảnh giới (tên), Thần thức (`sp`), Giáp (`bp`), Đạo Hạnh/exp và `expMax`. Client vendor có các trường này trên `player` (`sp`, `spMax`, `bp`, `bpMax`, `exp`, `expMax`, `realmId`; xem `core/config.js` `REALMS`). Chưa xác minh chúng cập nhật từ gói nào và có đáng tin (fresh) như `you`.
+- Snapshot có `character`: cảnh giới, Thần thức (`sp`), Giáp (`bp`), Đạo Hạnh (`exp`) cùng số Linh Thạch (`Progress.stones`), `Loot.stoneToday().da/.tran` và biến động phiên. Các trường character là client model; nguồn gói/cập nhật và độ tin cậy live của `sp/bp/exp` chưa xác minh.
 
 ## 2. Bố cục đích
 ```
@@ -70,3 +70,9 @@ Cập nhật: 2026-10-12. Giai đoạn 1 và giai đoạn 2 đã triển khai; n
 - [x] Offline: getCharacter, RunnerHandle, WorkerPool, shard, sanitizer và render test; không tạo tài khoản hoặc dùng game server thật.
 - [ ] CHƯA XÁC MINH: `Progress` không có định nghĩa trong cây client tham chiếu; `Player.create` dùng `Progress.realm()` và player copy `Progress.exp`. Nguồn/gói cập nhật, tần suất cập nhật và độ tin cậy live của `sp/bp/exp` chưa xác minh. `spMax/bpMax/expMax` là mô hình client tính từ cảnh giới/trang bị, chưa xác minh live; không phải vitals wire.
 - [ ] Kiểm tra trực quan bằng trình duyệt chưa xác minh.
+
+## Giai đoạn 3 — Linh Thạch và nút Chơi (2026-10-12)
+- [x] Sidebar hiện số ví và hôm nay/trần; Tổng quan có thẻ Linh Thạch, thanh % và biến động phiên, null/stale hiển thị “—”.
+- [x] Trần/ngày là số client tính qua `Loot.stoneToday()` và `Quest.flags.linh_thach_ngay`; chưa xác minh khớp hạch toán máy chủ.
+- [x] Nút Chơi dùng phương án thay thế ở `PLAN_PLAY_BUTTON.md`; không đăng nhập tự động và không gọi API.
+- [ ] Chưa xác minh trực quan trên trình duyệt hoặc giá trị Linh Thạch trong phiên game thật.

@@ -44,6 +44,9 @@ const AccountRow: React.FC<{ account: AccountRuntime; selected: boolean; onClick
   const mpMax = account.vitals.maxMp ?? account.derivedMax.maxMp;
   const char = account.character;
   const characterFresh = char?.fresh === true && !account.dataStale;
+  const stones = characterFresh ? char?.stones ?? null : null;
+  const stonesToday = characterFresh ? char?.stonesToday ?? null : null;
+  const stonesCap = characterFresh ? char?.stonesCap ?? null : null;
   const status = accountRowStatus(account);
   const values: Array<{ label: string; value: number | null; max: number | null; color: 'rose' | 'sky' | 'violet' | 'amber' | 'emerald' }> = [
     { label: 'HP', value: hp, max: hpMax, color: 'rose' }, { label: 'Linh lực', value: mp, max: mpMax, color: 'sky' },
@@ -55,6 +58,7 @@ const AccountRow: React.FC<{ account: AccountRuntime; selected: boolean; onClick
     <div className="mb-2 flex min-w-0 items-center justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold text-slate-100">{account.characterName || account.accountName}</span><span className="flex shrink-0 items-center gap-1.5 text-[10px] text-slate-300"><i className={`h-2 w-2 rounded-full ${status.className}`} />{status.label}</span></div>
     <p className="mb-2 truncate text-[10px] text-slate-400">{characterFresh ? realmLabel(char) : '—'}</p>
     <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">{values.map((item) => <TinyVital key={item.label} {...item} />)}</div>
+    <p className="mt-2 truncate text-[10px] text-amber-200">Linh Thạch: {stones === null ? '—' : stones.toLocaleString()} · hôm nay {stonesToday === null ? '—' : stonesToday.toLocaleString()}/{stonesCap === null ? '—' : stonesCap.toLocaleString()}</p>
   </button>;
 };
 

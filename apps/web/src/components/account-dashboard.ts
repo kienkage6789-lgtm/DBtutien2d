@@ -2,6 +2,23 @@ import type { AccountRuntime } from '../types';
 
 export type AccountFilter = 'all' | 'running' | 'stopped' | 'error';
 export type AccountTab = 'overview' | 'map' | 'daily' | 'inventory' | 'auto' | 'logs' | 'account';
+export const OFFICIAL_GAME_URL = 'https://tutien2d.online/';
+export function canPlay(account: Pick<AccountRuntime, 'status' | 'connection'>): boolean {
+  return account.status !== 'running' && account.connection !== 'RECONNECTING' && account.connection !== 'CONNECTING';
+}
+export async function copyAccountName(accountName: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(accountName); return true;
+    }
+  } catch { /* Dùng fallback bên dưới khi clipboard bị từ chối. */ }
+  try {
+    if (typeof document === 'undefined') return false;
+    const input = document.createElement('textarea'); input.value = accountName; input.setAttribute('readonly', '');
+    input.style.position = 'fixed'; input.style.opacity = '0'; document.body.appendChild(input); input.select();
+    try { return document.execCommand('copy'); } finally { input.remove(); }
+  } catch { return false; }
+}
 export const ACCOUNT_TABS: Array<{ id: AccountTab; label: string }> = [
   { id: 'overview', label: 'Tổng quan' }, { id: 'map', label: 'Bản đồ' }, { id: 'daily', label: 'Hằng ngày' },
   { id: 'inventory', label: 'Túi đồ' }, { id: 'auto', label: 'Auto' }, { id: 'logs', label: 'Nhật ký' }, { id: 'account', label: 'Tài khoản' },

@@ -106,6 +106,8 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     const character = snapshot.character;
     assert.deepEqual(JSON.parse(JSON.stringify(character)), character);
     if (character) {
+      for (const value of [character.stones, character.stonesToday, character.stonesCap]) assert.ok(value === null || (Number.isFinite(value) && value >= 0));
+      assert.ok(character.stonesSessionNet === null || Number.isFinite(character.stonesSessionNet));
       const originalSp = character.sp;
       character.sp = 99;
       assert.equal(handle.getSnapshot().value.character?.sp, originalSp);

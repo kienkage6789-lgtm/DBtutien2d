@@ -18,6 +18,16 @@ test('IPC protocol accepts only known versioned child packet types', () => {
   assert.equal((RUNNER_RPC_METHODS as readonly string[]).includes('constructor'), false);
 });
 
+test('IPC snapshot validates stone fields and accepts null when unavailable', () => {
+  const base = { lifecycle: 'in_game', character: { realmId: null, realmName: null, sp: null, spMax: null, bp: null, bpMax: null,
+    exp: null, expMax: null, stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null, fresh: false, observedAt: null } };
+  const message: any = { v: SHARD_PROTOCOL_VERSION, type: 'snapshot', accountId: 'fixture', at: 1, snapshot: base, metrics: {} };
+  assert.equal(isChildMessage(message), true);
+  assert.equal(isChildMessage({ ...message, snapshot: { ...base, character: { ...base.character, stones: '5' } } }), false);
+  assert.equal(isChildMessage({ ...message, snapshot: { ...base, character: { ...base.character, stonesToday: -1 } } }), false);
+  assert.equal(isChildMessage({ ...message, snapshot: { ...base, character: { ...base.character, stonesCap: NaN } } }), false);
+});
+
 test('shard placement balances runners, uses the lower id on ties, and respects capacity', () => {
   const allocation = [{ id: 'shard-1', accounts: new Set<string>() }, { id: 'shard-2', accounts: new Set<string>() }];
   for (let index = 0; index < 6; index += 1) chooseLeastLoadedShard(allocation, 0)!.accounts.add(`bot-${index}`);
@@ -147,7 +157,7 @@ test('RemoteRunnerHandle marks old pushed state stale and clears unknown values'
     const options = { accountName: 'fixture', credentials: {}, gameServerUrl: 'wss://fixture.invalid', vendorClientDir: '' } as VendorRunnerOptions;
     const handle = new RemoteRunnerHandle('account-fixture', options, transport);
     const snapshot = { ...handle.getSnapshot().value, connection: 'IN_GAME', mapId: 'known', x: 12, y: 34, hp: 50,
-      character: { realmId: 'realm-fixture', realmName: 'Fixture', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 7, expMax: 14, fresh: true, observedAt: now },
+      character: { realmId: 'realm-fixture', realmName: 'Fixture', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 7, expMax: 14, stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null, fresh: true, observedAt: now },
       vitals: { hp: 50, maxHp: null, mp: null, maxMp: null, status: 'client', source: 'client', fresh: true, observedAt: now } } as VendorRunnerSnapshot;
     handle.update({ lifecycle: 'in_game', snapshot, metrics: { frames: 10, avgMs: 1, p95Ms: 2, maxMs: 3, busyRatio: 0.2, windowMs: 10 },
       reachableMaps: null, khuProbe: { events: [], mapId: null, khu: null, soKhu: null }, dailySnapshot: { status: null, current: null }, at: now });

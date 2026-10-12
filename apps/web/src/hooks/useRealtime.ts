@@ -236,10 +236,14 @@ export function sanitizeCharacter(value: unknown): NonNullable<AccountRuntime['c
   const numeric = (field: string) => item[field] === null ? null : isFiniteNumber(item[field]) ? item[field] as number : null;
   const safeString = (field: string) => typeof item[field] === 'string' ? item[field].replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 64) || null : null;
   const sp = numeric('sp'); const bp = numeric('bp'); const exp = numeric('exp');
+  const nonNegativeNumeric = (field: string) => { const value = numeric(field); return value !== null && value >= 0 ? value : null; };
+  const stones = nonNegativeNumeric('stones'); const stonesToday = nonNegativeNumeric('stonesToday'); const stonesCap = nonNegativeNumeric('stonesCap');
   const result: NonNullable<AccountRuntime['character']> = {
     realmId: safeString('realmId'), realmName: safeString('realmName'),
     sp, spMax: numeric('spMax'), bp, bpMax: numeric('bpMax'), exp, expMax: numeric('expMax'),
-    fresh: item.fresh === true && [sp, bp, exp].some((number) => number !== null),
+    stones, stonesToday, stonesCap,
+    stonesSessionNet: isFiniteNumber(item.stonesSessionNet) ? item.stonesSessionNet : null,
+    fresh: item.fresh === true && [sp, bp, exp, stones, stonesToday, stonesCap].some((number) => number !== null),
     observedAt: item.observedAt === null ? null : isFiniteNumber(item.observedAt) ? item.observedAt : null,
   };
   return result;

@@ -219,7 +219,7 @@ export interface AccountRuntime {
   hasPassword: boolean;
   tokenExpiresAt: number | null;
   characterName: string;
-  character?: { realmId?: string | null; realmName: string | null; sp: number | null; spMax: number | null; bp: number | null; bpMax: number | null; exp: number | null; expMax: number | null; fresh?: boolean; observedAt?: number | null } | null;
+  character?: { realmId?: string | null; realmName: string | null; sp: number | null; spMax: number | null; bp: number | null; bpMax: number | null; exp: number | null; expMax: number | null; stones: number | null; stonesToday: number | null; stonesCap: number | null; stonesSessionNet: number | null; fresh?: boolean; observedAt?: number | null } | null;
   hp: number | null;
   maxHp: number | null;
   mp: number | null;

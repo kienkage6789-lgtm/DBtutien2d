@@ -1,3 +1,13 @@
+# 2026-10-12 — Nút Chơi và Linh Thạch (offline)
+
+Mốc trước nhiệm vụ: server 197/197, web 66/66. AccountPanel có **Chơi** mở tab mới tới trang chính thức; `canPlay` khóa running/connecting/reconnecting, link khi khóa không có `href` và chặn click/Enter. **Sao chép đạo hiệu** chỉ dùng `accountName`, dùng Clipboard API hoặc fallback DOM và báo trạng thái. Không thêm API.
+
+`character` mở rộng với `stones` từ `Progress.stones`, `stonesToday/stonesCap` từ client `Loot.stoneToday().da/.tran`, và `stonesSessionNet` so với ví đầu tiên quan sát trong lượt kết nối runner. Reset ở start và reconnect. Giá trị chưa biết giữ `null`; ví/hôm nay/trần phải hữu hạn không âm, session net cho phép âm. Snapshot qua RunnerHandle/shard là JSON thuần/bản sao; stale, dừng, lỗi và ngoài game giữ `character: null`. UI sidebar/Tổng quan hiển thị “—” khi null/stale, có định dạng nghìn, thanh % và nhãn “Từ quái; trần theo cảnh giới”. Mã vendor chỉ đọc; không sửa `auto-supervisor.ts`.
+
+Kiểm tra: `pnpm build` qua `%TEMP%\\pnpmshim\\pnpm.cmd` không chạy được vì shim gọi `pnpm` nhưng executable không có trong PATH; `pnpm --filter @tutien2d/web test` qua shim cũng lỗi resolve config/esbuild trong sandbox. Build thay thế trực tiếp pass: TypeScript core-client/server/web và Vite production build. Web Vitest 68/68 trên 13 file; server 201/201 trên 33 file bằng `tsx --test` và preload `os.userInfo` tạm để né lỗi môi trường `uv_os_get_passwd returned ENOMEM`; `DATA_DIR` test ở `%TEMP%`. Test liên quan được chạy riêng 70/70. Năm fault injection sửa trực tiếp nguồn (null→0, bỏ stale character clearing, `canPlay=true`, bỏ reset baseline khi start lại, sanitizer nhận numeric string) đều làm test bảo vệ fail gọn và đã được hoàn nguyên.
+
+Không dùng game server, account thật hoặc mạng ngoài; không tạo account, không commit. CUA báo không có browser/app nên chưa xác minh trực quan. `Loot.stoneToday()` đọc cờ `Quest.flags.linh_thach_ngay` và trần cảnh giới do client tính; khớp với hạch toán server, tần suất cập nhật và giao diện trong trình duyệt chưa xác minh. Không thấy file định nghĩa riêng có tên `progress` trong cây tham chiếu; chỉ dùng trường runtime `Progress.stones` theo yêu cầu.
+
 # 2026-10-12 — Dashboard sidebar giai đoạn 2: character snapshot
 
 Mốc trước nhiệm vụ: server 192/192, web 63/63. Thêm `VendorRunnerSnapshot.character` và hàm thuần `getCharacter`; nguồn hiển thị theo HUD là `player.sp/spMax`, `player.bp/bpMax`, `player.exp/expMax`. `realmId` lấy trên player (được `Player.create` đặt từ `Progress.realm()`); `realmName` tra `REALMS` từ client. Số âm, thiếu, NaN/Infinity thành `null`; chuỗi làm sạch/giới hạn 64 ký tự. Character chỉ fresh trong game khi có ít nhất một số hữu hạn trong sp/bp/exp; không thêm maxima mô hình vào `VitalSnapshot`.

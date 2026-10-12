@@ -1652,3 +1652,12 @@ ull`/rỗng.
 - [x] RunnerHandle/shard dùng snapshot định kỳ hiện có, trả bản sao JSON thuần; stale shard và WorkerPool vô hiệu hóa character; runner stopped/error trả `null`.
 - [x] Runtime REST/WS, sanitizer và UI sidebar/Tổng quan hiển thị null/stale là “—” và giá trị fresh kèm phần trăm.
 - [ ] Chưa xác minh live: cách/tần suất cập nhật `sp/bp/exp`, độ tin cậy thực tế; `spMax/bpMax/expMax` chỉ suy ra từ client. Chưa xác minh bố cục qua trình duyệt.
+
+## Checklist Linh Thạch và nút Chơi — 2026-10-12
+
+- [x] Runner chiếu `Progress.stones`, `Loot.stoneToday().da/.tran` và mốc biến động phiên; unknown giữ `null`, số ví/hôm nay/trần không âm, session net cho phép âm.
+- [x] RunnerHandle/shard giữ snapshot JSON thuần, bản sao; không vào game/stale/dừng/lỗi thì `character: null`. WorkerPool stale/dừng/lỗi xóa dữ liệu character.
+- [x] UI sidebar/Tổng quan hiện Linh Thạch, % trần và delta phiên; null/stale hiện “—”, dùng định dạng nghìn.
+- [x] Chơi chỉ mở trang chính thức khi account stopped; sao chép chỉ `accountName`, có fallback clipboard và không gọi API.
+- [x] Fault injection trực tiếp nguồn: stones null→0, bỏ stale invalidation, `canPlay` luôn true, bỏ reset session khi start lại và sanitizer nhận chuỗi số đều làm test tương ứng fail; đã khôi phục nguồn.
+- [ ] `stonesToday`/`stonesCap` là số client tính từ `Quest.flags.linh_thach_ngay`; chưa xác minh khớp máy chủ. Chưa xác minh trực quan bằng trình duyệt (CUA không có app/browser) hoặc trên game thật.

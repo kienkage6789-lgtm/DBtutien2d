@@ -40,9 +40,14 @@ export function isChildMessage(value: unknown): value is ChildMessage {
     case 'snapshot': {
       const snapshot = message.snapshot as Record<string, unknown> | null;
       const character = snapshot && snapshot.character;
+      const validStones = !character || character === null || (['stones', 'stonesToday', 'stonesCap'].every((field) => {
+        const value = (character as Record<string, unknown>)[field];
+        return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+      }) && ((character as Record<string, unknown>).stonesSessionNet === null
+        || (typeof (character as Record<string, unknown>).stonesSessionNet === 'number' && Number.isFinite((character as Record<string, unknown>).stonesSessionNet))));
       return typeof message.accountId === 'string' && typeof message.at === 'number'
         && !!snapshot && typeof snapshot === 'object'
-        && (character === undefined || character === null || (typeof character === 'object' && !Array.isArray(character)))
+        && (character === undefined || character === null || (typeof character === 'object' && !Array.isArray(character) && validStones))
         && !!message.metrics && typeof message.metrics === 'object';
     }
     case 'log': return typeof message.accountId === 'string' && !!message.event && typeof message.event === 'object';
