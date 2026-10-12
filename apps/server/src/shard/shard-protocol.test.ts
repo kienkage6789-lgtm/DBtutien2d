@@ -147,14 +147,19 @@ test('RemoteRunnerHandle marks old pushed state stale and clears unknown values'
     const options = { accountName: 'fixture', credentials: {}, gameServerUrl: 'wss://fixture.invalid', vendorClientDir: '' } as VendorRunnerOptions;
     const handle = new RemoteRunnerHandle('account-fixture', options, transport);
     const snapshot = { ...handle.getSnapshot().value, connection: 'IN_GAME', mapId: 'known', x: 12, y: 34, hp: 50,
+      character: { realmId: 'realm-fixture', realmName: 'Fixture', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 7, expMax: 14, fresh: true, observedAt: now },
       vitals: { hp: 50, maxHp: null, mp: null, maxMp: null, status: 'client', source: 'client', fresh: true, observedAt: now } } as VendorRunnerSnapshot;
     handle.update({ lifecycle: 'in_game', snapshot, metrics: { frames: 10, avgMs: 1, p95Ms: 2, maxMs: 3, busyRatio: 0.2, windowMs: 10 },
       reachableMaps: null, khuProbe: { events: [], mapId: null, khu: null, soKhu: null }, dailySnapshot: { status: null, current: null }, at: now });
     assert.equal(handle.getSnapshot().stale, false);
+    assert.deepEqual(handle.getSnapshot().value.character, snapshot.character);
+    const copied = handle.getSnapshot(); copied.value.character!.sp = 99;
+    assert.equal(handle.getSnapshot().value.character?.sp, 5);
     now += 1_501;
     const stale = handle.getSnapshot();
     assert.equal(stale.stale, true); assert.equal(stale.value.hp, null); assert.equal(stale.value.mapId, null); assert.equal(stale.value.x, null);
     assert.equal(stale.value.vitals.fresh, false);
+    assert.equal(stale.value.character, null);
   } finally { Date.now = originalNow; }
 });
 
@@ -208,7 +213,7 @@ const blank = { lifecycle: 'stopped', connection: 'DISCONNECTED', autoRequested:
   hurtCount: 0, lastHurtAt: null, killsBySelf: 0, packetErrors: 0, updateErrors: 0, consoleErrors: [], frames: 0, fps: 0, uptimeMs: 0, memory: { rssBytes: 0, rssGrowthBytes: 0 }, tokenExpiresAt: null,
   mapId: null, khu: null, x: null, y: null, hp: null, maxHp: null, mp: null, maxMp: null, downed: null, vitalsProbeMoves: 0, soKhu: null, khuList: null, monsters: [], players: [],
   monstersContext: { mapId: null, khu: null, observedAt: null, fresh: false }, playersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
-  vitals: { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null }, moveTo: null, daily: null, dailyStatus: null, logs: [] } as unknown as VendorRunnerSnapshot;
+  vitals: { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null }, character: null, moveTo: null, daily: null, dailyStatus: null, logs: [] } as unknown as VendorRunnerSnapshot;
 
 function expectShard(actual: unknown, expected: unknown): void { assert.equal(actual, expected); }
 

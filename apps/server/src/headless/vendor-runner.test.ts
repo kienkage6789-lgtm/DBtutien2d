@@ -366,6 +366,10 @@ test('VendorRunner logs in through fake WebSocket, counts packets, reconnects, a
     await new Promise((resolve) => setTimeout(resolve, 25));
     const started = runner.getSnapshot();
     assert.equal(started.lifecycle, 'in_game');
+    assert.equal(started.character?.fresh, true);
+    assert.ok(started.character?.realmId);
+    assert.ok(started.character?.realmName);
+    assert.deepEqual(JSON.parse(JSON.stringify(started.character)), started.character);
     assert.ok(started.packets.incoming.welcome >= 1);
     assert.ok(started.packets.incoming.state >= 1);
     assert.ok(started.packets.outgoing.hello >= 1);

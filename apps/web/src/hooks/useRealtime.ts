@@ -230,6 +230,21 @@ export function sanitizeLog(value: unknown): LogEntry | undefined {
   return { id: item.id, accountId: item.accountId, timestamp: item.timestamp, level: item.level, module: item.module, message: item.message };
 }
 
+export function sanitizeCharacter(value: unknown): NonNullable<AccountRuntime['character']> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const numeric = (field: string) => item[field] === null ? null : isFiniteNumber(item[field]) ? item[field] as number : null;
+  const safeString = (field: string) => typeof item[field] === 'string' ? item[field].replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 64) || null : null;
+  const sp = numeric('sp'); const bp = numeric('bp'); const exp = numeric('exp');
+  const result: NonNullable<AccountRuntime['character']> = {
+    realmId: safeString('realmId'), realmName: safeString('realmName'),
+    sp, spMax: numeric('spMax'), bp, bpMax: numeric('bpMax'), exp, expMax: numeric('expMax'),
+    fresh: item.fresh === true && [sp, bp, exp].some((number) => number !== null),
+    observedAt: item.observedAt === null ? null : isFiniteNumber(item.observedAt) ? item.observedAt : null,
+  };
+  return result;
+}
+
 export function sanitizeSystemAlert(value: unknown): { reason: string; message: string } | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
@@ -248,6 +263,11 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   if (!previous && (typeof payload.status !== 'string' || !ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status']))) return null;
 
   const next = { ...(previous ?? {} as AccountRuntime), id: payload.id } as AccountRuntime;
+  if (hasOwn(payload, 'character')) {
+    const character = sanitizeCharacter(payload.character);
+    if (character) next.character = character;
+    else delete next.character;
+  }
   next.metrics = sanitizeFrameMetrics(payload.metrics);
   if (!previous) next.hasProxy = payload.hasProxy === true;
   const owner = sanitizeAccountOwner(payload);
@@ -270,6 +290,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
     if (hasOwn(payload, field) && (typeof payload[field] === 'string' || payload[field] === null)) next[field] = payload[field] as never;
   }
   if (hasOwn(payload, 'status') && typeof payload.status === 'string' && ACCOUNT_STATUSES.has(payload.status as AccountRuntime['status'])) next.status = payload.status as AccountRuntime['status'];
+  if (payload.status === 'stopped' || payload.status === 'error') next.character = null;
   if (hasOwn(payload, 'dataStale') && typeof payload.dataStale === 'boolean') next.dataStale = payload.dataStale;
   if (hasOwn(payload, 'hasProxy') && typeof payload.hasProxy === 'boolean') next.hasProxy = payload.hasProxy;
   if (hasOwn(payload, 'proxy')) {
@@ -385,6 +406,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
     }
   }
   if (next.dataStale) {
+    next.character = null;
     next.hp = next.maxHp = next.mp = next.maxMp = null;
     next.vitals = { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, observedAt: null };
     next.vitalsAgeMs = null;
@@ -411,6 +433,7 @@ function mergeAccountList(previous: AccountRuntime[], incoming: unknown): Accoun
 
 export function useRealtime() {
   const [accounts, setAccounts] = useState<AccountRuntime[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -421,8 +444,9 @@ export function useRealtime() {
     const data = await fetchAccounts();
     // A WebSocket frame arrived while the HTTP snapshot was in flight. The
     // snapshot may now be older, so let the realtime stream remain authoritative.
-    if (versionAtRequest !== realtimeVersionRef.current) return;
+    if (versionAtRequest !== realtimeVersionRef.current) { setAccountsLoaded(true); return; }
     setAccounts((prev) => mergeAccountList(prev, data));
+    setAccountsLoaded(true);
   };
 
   // Initial fetch
@@ -431,6 +455,7 @@ export function useRealtime() {
       if (!getToken()) {
         setAccounts([]);
         setLogs([]);
+        setAccountsLoaded(false);
         return;
       }
       mergeFetchedAccounts().catch(console.error);
@@ -475,6 +500,7 @@ export function useRealtime() {
             case 'initial_state':
               // Re-fetch full runtime data to refresh the authoritative snapshot.
               setAccounts((prev) => mergeAccountList(prev, msg.data?.accounts));
+              setAccountsLoaded(true);
               mergeFetchedAccounts().catch(console.error);
               if (Array.isArray(msg.data?.logs)) {
                 setLogs(msg.data.logs.flatMap((item: unknown) => {
@@ -574,6 +600,7 @@ export function useRealtime() {
 
   return {
     accounts,
+    accountsLoaded,
     logs,
     isConnected,
     refreshAccounts,

@@ -38,3 +38,17 @@ Dung lượng `usedSlots/capacity` áp dụng cho toàn bộ túi. API không cu
 
 - Marker/entity và trường `khu` trên game thật chưa được xác minh live.
 - Túi đồ chưa được xem trực quan ở 1280, 768 hoặc 334 px; không có browser/app khả dụng qua CUA trong lần rà soát này.
+
+## Character snapshot — giai đoạn 2 (2026-10-12)
+
+Sidebar và tab Tổng quan hiển thị cảnh giới, Thần thức, Giáp và Đạo Hạnh dưới dạng giá trị/tối đa và phần trăm khi character fresh. Null hoặc stale hiển thị “—”; cảnh giới cũng bị ẩn khi snapshot cũ. REST/WS runtime cung cấp `character` theo quyền sở hữu/admin hiện có. `realmName` được ánh xạ từ `REALMS` trong client tham chiếu; id lạ không bị đổi tên.
+
+Nguồn được xác định trong mã client: HUD dùng `player.sp/spMax`, `player.bp/bpMax` và `player.exp/expMax`; `Player.create` lấy `realmId` từ `Progress.realm()` và exp từ `Progress.exp`. Định nghĩa Progress không nằm trong cây client tham chiếu. `spMax/bpMax/expMax` là giá trị mô hình client theo cảnh giới/trang bị. Cách các số hiện tại được cập nhật, tần suất và độ tin cậy trên game thật đều CHƯA XÁC MINH.
+
+## Sidebar tài khoản và bảng chi tiết — giai đoạn 1 (2026-10-12)
+
+Dashboard web có sidebar lọc theo trạng thái/tìm tên và bảng chi tiết bảy tab. Chưa chọn account thì giữ StatsBar tổng cùng nhật ký chung; chọn account thì chuyển sang Tổng quan, Bản đồ, Hằng ngày, Túi đồ, Auto, Nhật ký hoặc Tài khoản. Sidebar hỗ trợ listbox, focus bàn phím và cuộn riêng; dưới 1024 px danh sách nằm phía trên, khi mở chi tiết có nút quay lại. Account đang chọn, bộ lọc và tab được lưu trong localStorage với fallback nếu storage ném lỗi.
+
+HP/MP hiển thị khi vitals fresh và chưa quá hạn; thanh rỗng/“—” biểu thị chưa biết. Cảnh giới, Thần thức, Giáp và Đạo Hạnh vẫn “—” trong giai đoạn 1 vì server chưa có `character`. Chế độ Túi đồ nhúng sử dụng lại InventoryModal; các tab còn lại dùng component hiện có. AccountCard đã xóa sau khi bảng chi tiết nhận lại đầy đủ các thao tác.
+
+Kiểm tra: web 63/63, server 192/192, TypeScript core/server/web và Vite production build pass; năm fault injection bị test bắt và khôi phục. Chưa xác minh trực quan ở 1280/768/334 px vì CUA không có browser khả dụng.

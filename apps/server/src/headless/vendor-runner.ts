@@ -152,10 +152,48 @@ export interface VendorRunnerSnapshot {
     fresh: boolean;
     observedAt: number | null;
   };
+  character: VendorCharacterSnapshot | null;
   moveTo: WalkOperation | null;
   daily: DailyOperation | null;
   dailyStatus: DailyStatus | null;
   logs: Array<{ code: string; phase?: string; reasonCode?: string; detail?: string; at: number }>;
+}
+
+export interface VendorCharacterSnapshot {
+  realmId: string | null;
+  realmName: string | null;
+  sp: number | null;
+  spMax: number | null;
+  bp: number | null;
+  bpMax: number | null;
+  exp: number | null;
+  expMax: number | null;
+  fresh: boolean;
+  observedAt: number | null;
+}
+
+/** Read-only projection of HUD fields. Maxima are client-model values; their live source is unverified. */
+export function getCharacter(player: unknown, realms: unknown, inGame: boolean, observedAt = Date.now()): VendorCharacterSnapshot | null {
+  if (!inGame || !player || typeof player !== 'object' || Array.isArray(player)) return null;
+  const source = player as Record<string, unknown>;
+  const safeNumber = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  const safeString = (value: unknown): string | null => typeof value === 'string'
+    ? value.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 64) || null : null;
+  const realmId = safeString(source.realmId);
+  const realmRows = Array.isArray(realms) ? realms : [];
+  const realm = realmId === null ? null : realmRows.find((entry) => !!entry && typeof entry === 'object' && !Array.isArray(entry)
+    && safeString((entry as Record<string, unknown>).id) === realmId) as Record<string, unknown> | undefined;
+  const realmName = realm ? safeString(realm.name) : null;
+  const character = {
+    realmId, realmName,
+    sp: safeNumber(source.sp), spMax: safeNumber(source.spMax),
+    bp: safeNumber(source.bp), bpMax: safeNumber(source.bpMax),
+    exp: safeNumber(source.exp), expMax: safeNumber(source.expMax),
+    fresh: false, observedAt: null as number | null,
+  };
+  character.fresh = [character.sp, character.bp, character.exp].some((value) => value !== null);
+  character.observedAt = character.fresh && Number.isFinite(observedAt) ? observedAt : null;
+  return character;
 }
 
 export interface VendorInventorySnapshot {
@@ -529,6 +567,7 @@ export class VendorRunner {
     const elapsed = this.startedAt > 0 ? Math.max(0, now - this.startedAt) : 0;
     const fps = elapsed > 0 ? this.frames / (elapsed / 1000) : 0;
     const vitals = this.getVitals(player);
+    const character = getCharacter(player, this.P?.REALMS, this.connectionState() === 'IN_GAME' && player !== null, now);
     const mapReady = this.isMapReady();
     const mapId = mapReady ? this.getMapId() : null;
     const khu = mapReady ? this.getKhu() : null;
@@ -576,6 +615,7 @@ export class VendorRunner {
       monstersContext: world.monstersContext,
       playersContext: world.playersContext,
       vitals,
+      character,
       moveTo: this.walkNavigator.getOperation(),
       daily: this.dailyQuests.getOperation(),
       dailyStatus: this.getDailyStatusSnapshot(),

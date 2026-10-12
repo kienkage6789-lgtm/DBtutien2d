@@ -37,8 +37,14 @@ export function isChildMessage(value: unknown): value is ChildMessage {
       && (message.ok || (!!message.error && typeof message.error === 'object'
         && typeof (message.error as Record<string, unknown>).code === 'string'
         && typeof (message.error as Record<string, unknown>).message === 'string'));
-    case 'snapshot': return typeof message.accountId === 'string' && typeof message.at === 'number'
-      && !!message.snapshot && typeof message.snapshot === 'object' && !!message.metrics && typeof message.metrics === 'object';
+    case 'snapshot': {
+      const snapshot = message.snapshot as Record<string, unknown> | null;
+      const character = snapshot && snapshot.character;
+      return typeof message.accountId === 'string' && typeof message.at === 'number'
+        && !!snapshot && typeof snapshot === 'object'
+        && (character === undefined || character === null || (typeof character === 'object' && !Array.isArray(character)))
+        && !!message.metrics && typeof message.metrics === 'object';
+    }
     case 'log': return typeof message.accountId === 'string' && !!message.event && typeof message.event === 'object';
     case 'session': return typeof message.accountId === 'string' && typeof message.refreshToken === 'string';
     case 'proc': return typeof message.rssBytes === 'number' && typeof message.runners === 'number';

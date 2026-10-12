@@ -188,3 +188,7 @@ Server gửi `initial_state`, `account_updated`, `account_log` và `bot_activity
 ### Shard runtime freshness
 
 Runtime includes boolean dataStale. When true, HP/MP, map/location/khu and downed state are unknown (null); hurtCount and lastHurtAt retain the last observed values and are explicitly marked as potentially old. The dashboard displays a stale-data badge.
+
+### Character snapshot
+
+Account runtime responses (REST and WebSocket) include `character`, either `null` or `{ realmId, realmName, sp, spMax, bp, bpMax, exp, expMax, fresh, observedAt }`. Realm and current values are read from the vendor client's player model; unknown values remain `null`, unknown realm IDs are retained with `realmName: null`, and `observedAt` records the local snapshot read time. A character is exposed as fresh only while in game and when at least one finite `sp`, `bp`, or `exp` value is available. Stale shard data, stale runtime, stopped runner, and runner error clear `character` to `null`; clients must not display cached character numbers as current. `spMax`, `bpMax`, and `expMax` are client-model values derived from realm/equipment and are not wire vitals; this is inferred from client code and has not been verified live.

@@ -1634,3 +1634,21 @@ ull`/rỗng.
 - [ ] Chưa kiểm tra trực quan bằng trình duyệt ở 1280/768/334 px; chờ người dùng chụp.
 - [x] Walk navigator: đi tiếp tới cổng khi `portal_no_transition` gần cổng (2 lần); test 192/192, build pass.
 - [ ] Xác nhận live: log `move_to_gate_resume` rồi qua được cổng ở `truc_gia`.
+
+## Dashboard sidebar giai đoạn 1 — 2026-10-12
+
+- [x] Chỉ sửa web: sidebar hai cột, tìm/lọc/cuộn, 7 tab chi tiết, responsive dưới 1024 px; StatsBar và nhật ký chung vẫn hiện khi chưa chọn.
+- [x] Tái dùng MiniMap, MapTravelControl, KhuControl, DailyControl, InventoryModal và LogTerminal; giữ nguyên callback nghiệp vụ, entitlement lock, activeView/AdminPanel. Xóa AccountCard đã hết nơi dùng.
+- [x] `AccountRuntime.character?` tùy chọn và sanitizer chịu payload thiếu/sai kiểu; cảnh giới/Thần thức/Giáp/Đạo Hạnh chưa có dữ liệu hiển thị “—”. VitalBar dùng chung; null/stale không thành 0, % bị chặn trong 0–100.
+- [x] Lưu account đang chọn, filter và tab qua localStorage an toàn; listbox/tab accessibility, phím mũi tên/Enter.
+- [x] Baseline web 58/58, server 192/192; hiện web 63/63 và server 192/192. Direct TypeScript core/server/web và Vite production build pass. Năm fault injection bắt được và đã hoàn nguyên.
+- [~] `pnpm build` shim không chạy vì lệnh `pnpm` con không có PATH; thay bằng compiler/Vite trực tiếp. `npx tsx` vướng PATH và tsx gặp `uv_os_get_passwd ... ENOMEM`; server suite chạy pass với preload tạm và DATA_DIR tạm.
+- [ ] Chưa xác minh trực quan 1280/768/334 px: không có app/browser CUA và `iab` không khả dụng. Không dùng server game/mạng ngoài.
+
+## Checklist character snapshot — giai đoạn 2 (2026-10-12)
+
+- [x] Snapshot chỉ đọc `player` khi `IN_GAME`; HUD fields `sp/spMax`, `bp/bpMax`, `exp/expMax`, realm name từ `REALMS`; chuỗi giới hạn 64 ký tự và bỏ control chars.
+- [x] Giữ số thiếu, âm, NaN/Infinity thành `null`; không đưa maxima mô hình vào `VitalSnapshot`.
+- [x] RunnerHandle/shard dùng snapshot định kỳ hiện có, trả bản sao JSON thuần; stale shard và WorkerPool vô hiệu hóa character; runner stopped/error trả `null`.
+- [x] Runtime REST/WS, sanitizer và UI sidebar/Tổng quan hiển thị null/stale là “—” và giá trị fresh kèm phần trăm.
+- [ ] Chưa xác minh live: cách/tần suất cập nhật `sp/bp/exp`, độ tin cậy thực tế; `spMax/bpMax/expMax` chỉ suy ra từ client. Chưa xác minh bố cục qua trình duyệt.

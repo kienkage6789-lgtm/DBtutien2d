@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRealtime } from './hooks/useRealtime';
 import { Navbar } from './components/Navbar';
 import { StatsBar } from './components/StatsBar';
-import { AccountCard } from './components/AccountCard';
+import { AccountSidebar } from './components/AccountSidebar';
+import { AccountPanel } from './components/AccountPanel';
+import { ACCOUNT_TABS, readDashboardStorage, writeDashboardStorage, resolveSelectedAccountId, type AccountTab } from './components/account-dashboard';
 import { AddAccountModal } from './components/AddAccountModal';
 import { DialogHost } from './components/DialogHost';
 import { UpdatePasswordModal } from './components/UpdatePasswordModal';
@@ -21,7 +23,7 @@ import { clearToken, getToken, onAuthRequired } from './lib/auth';
 import type { AuthUser } from './types';
 
 export const App: React.FC = () => {
-  const { accounts, logs, isConnected, refreshAccounts, setLogs } = useRealtime();
+  const { accounts, accountsLoaded, logs, isConnected, refreshAccounts, setLogs } = useRealtime();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(() => !!getToken());
   const [mapGeometryById, setMapGeometryById] = useState<Record<string, WorldBounds>>({});
@@ -33,10 +35,23 @@ export const App: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeView, setActiveView] = useState<'dashboard' | 'admin'>('dashboard');
   const [logAccountId, setLogAccountId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(() => readDashboardStorage('tutien2d.dashboard.selectedAccount', '') || null);
+  const [accountTab, setAccountTab] = useState<AccountTab>(() => {
+    const saved = readDashboardStorage('tutien2d.dashboard.accountTab', 'overview');
+    return ACCOUNT_TABS.some((tab) => tab.id === saved) ? saved as AccountTab : 'overview';
+  });
   const [clock, setClock] = useState(Date.now());
   const runningCount = accounts.filter((account) => account.status === 'running').length;
   const entitlementLock = user ? entitlementLockReason(user, clock) : null;
   const quotaFull = user?.role === 'user' && user.usage !== undefined && user.usage.accounts >= user.usage.maxBots;
+  const selectedAccount = accounts.find((account) => account.id === selectedAccountId) ?? null;
+
+  useEffect(() => {
+    const resolved = resolveSelectedAccountId(accounts, selectedAccountId, accountsLoaded);
+    if (resolved !== selectedAccountId) setSelectedAccountId(resolved);
+  }, [accounts, accountsLoaded, selectedAccountId]);
+  useEffect(() => { writeDashboardStorage('tutien2d.dashboard.selectedAccount', selectedAccountId ?? ''); }, [selectedAccountId]);
+  useEffect(() => { writeDashboardStorage('tutien2d.dashboard.accountTab', accountTab); }, [accountTab]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
@@ -139,12 +154,12 @@ export const App: React.FC = () => {
   };
   const handleDelete = async (id: string) => {
     if (!(await confirmAction('Bạn có chắc chắn muốn xóa tài khoản này khỏi Dashboard?', { confirmLabel: 'Xóa', danger: true }))) return;
-    try { await deleteAccount(id); await refreshAccounts(); } catch (error) { notify(error); }
+    try { await deleteAccount(id); if (selectedAccountId === id) setSelectedAccountId(null); await refreshAccounts(); } catch (error) { notify(error); }
   };
   const handleStartAll = async () => { try { await startAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleStopAll = async () => { try { await stopAllBots(); await refreshAccounts(); } catch (error) { notify(error); } };
   const handleRefresh = async () => { await refreshAccounts(); };
-  const handleOpenAccountLog = (accountId: string) => { setLogAccountId(accountId); setActiveView('dashboard'); };
+  const handleOpenAccountLog = (accountId: string) => { setLogAccountId(accountId); setSelectedAccountId(null); setActiveView('dashboard'); };
 
   const handleLogout = async () => {
     try { await logout(); } catch { /* local token is cleared even when the server session is already gone */ }
@@ -159,17 +174,16 @@ export const App: React.FC = () => {
     <Navbar user={user} onLogout={handleLogout} onOpenAccount={() => setIsUserPasswordOpen(true)} isConnected={isConnected} totalAccounts={accounts.length} runningCount={runningCount} onStartAll={handleStartAll} onStopAll={handleStopAll} onRefresh={handleRefresh} onOpenAddModal={() => setIsAddModalOpen(true)} activeView={activeView} onViewChange={setActiveView} />
     {user.mustChangePassword && <div className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">Bạn đang dùng mật khẩu mặc định. Hãy đổi mật khẩu (nút Quản lý tài khoản) trước khi mở ra internet.</div>}
     {user.role !== 'admin' && entitlementLock && <div role="alert" className="sticky top-[5.5rem] z-30 border-b border-rose-500/40 bg-rose-950/95 px-4 py-2 text-center text-xs font-semibold text-rose-100">{entitlementLock}. Các điều khiển bot đã khóa; bạn vẫn có thể dừng, xóa tài khoản và đổi mật khẩu.</div>}
-    <main className="min-w-0 flex-1 w-full max-w-7xl mx-auto px-4 lg:px-8 py-6 space-y-6">
+    <main className="min-w-0 flex-1 w-full max-w-[1500px] mx-auto px-3 sm:px-4 lg:px-6 py-4 lg:py-6">
       {activeView === 'admin' && user.role === 'admin'
         ? <AdminPanel currentUserId={user.id} accounts={accounts} onRefreshAccounts={refreshAccounts} onOpenAccountLog={handleOpenAccountLog} />
-        : <><StatsBar accounts={accounts} />
-          <section>
-            <h2 className="text-base font-bold uppercase tracking-wider text-slate-200 font-title mb-4">Ma trận tài khoản ({accounts.length})</h2>
-            {accounts.length === 0
-              ? <div className="glass-panel rounded-2xl p-12 text-center border border-dashed border-slate-800"><h3 className="text-lg font-bold text-slate-200 mb-2">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} disabled={quotaFull} title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : undefined} className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-emerald-600 text-white disabled:cursor-not-allowed disabled:opacity-40">+ Thêm tài khoản</button></div>
-              : <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{accounts.map((account) => <AccountCard key={account.id} account={account} ownerLabel={user.role === 'admin' && account.ownerId !== user.id ? account.ownerUsername ?? account.ownerId ?? 'chưa biết' : null} controlsDisabled={!!entitlementLock} controlLockReason={entitlementLock} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(account); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />)}</div>}
-          </section>
-          <section className="pt-2"><LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} initialAccountId={logAccountId} /></section></>}
+        : <div className="grid min-w-0 gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+          {accounts.length > 0 && <div className={`${selectedAccount ? 'hidden lg:block' : 'block'} min-w-0`}><AccountSidebar accounts={accounts} selectedId={selectedAccountId} onSelect={(id) => setSelectedAccountId((current) => current === id ? null : id)} /></div>}
+          <div className="min-w-0">
+            {selectedAccount ? <AccountPanel key={selectedAccount.id} account={selectedAccount} tab={accountTab} onTabChange={setAccountTab} logs={logs} onClearLogs={() => setLogs([])} ownerLabel={user.role === 'admin' && selectedAccount.ownerId !== user.id ? selectedAccount.ownerUsername ?? selectedAccount.ownerId ?? 'chưa biết' : null} controlsDisabled={!!entitlementLock} controlLockReason={entitlementLock} mapCatalog={mapCatalog} mapGeometry={(() => { const view = resolveMapContext(selectedAccount); return view.usable ? mapGeometryById[view.mapId] ?? null : null; })()} onBack={() => setSelectedAccountId(null)} onStart={handleStart} onStop={handleStop} onStartVendorAuto={handleStartAuto} onStopVendorAuto={handleStopAuto} onMoveTo={handleMoveTo} onCancelMoveTo={handleCancelMoveTo} onUpdatePassword={setActivePasswordAccount} onDelete={handleDelete} />
+              : <><StatsBar accounts={accounts} />{accounts.length === 0 && <div className="glass-panel mb-5 rounded-2xl border border-dashed border-slate-800 p-8 text-center"><h3 className="mb-2 text-lg font-bold text-slate-200">Chưa có tài khoản nào được kết nối</h3><button onClick={() => setIsAddModalOpen(true)} disabled={quotaFull} title={quotaFull ? `Đã đủ ${user.maxBots} tài khoản` : undefined} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">+ Thêm tài khoản</button></div>}<LogTerminal logs={logs} accounts={accounts} onClearLogs={() => setLogs([])} initialAccountId={logAccountId} /></>}
+          </div>
+        </div>}
     </main>
     <footer className="border-t border-slate-900 bg-black/40 py-4 px-4 text-center text-xs text-slate-600">TuTien2D Automation · client chính thức headless</footer>
     <UpdatePasswordModal account={activePasswordAccount} onClose={() => setActivePasswordAccount(null)} onUpdated={refreshAccounts} />

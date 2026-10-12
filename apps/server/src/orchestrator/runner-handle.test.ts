@@ -10,7 +10,7 @@ import type { VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 
 const cache = <T>(value: T): CachedValue<T> => ({ value, ageMs: 0, stale: false });
-const emptySnapshot = { lifecycle: 'stopped', connection: 'DISCONNECTED', hurtCount: 0, mapId: null, khu: null, x: null, y: null, hp: null, mp: null, downed: null, moveTo: null, daily: null, dailyStatus: null } as unknown as VendorRunnerSnapshot;
+const emptySnapshot = { lifecycle: 'stopped', connection: 'DISCONNECTED', hurtCount: 0, mapId: null, khu: null, x: null, y: null, hp: null, mp: null, downed: null, character: null, moveTo: null, daily: null, dailyStatus: null } as unknown as VendorRunnerSnapshot;
 const emptyDaily = { status: { today: null, stage: null, checkin: { done: false, total: null }, seedTasks: [], activeSeedTask: null, stones: null, duocCong: null, canhKho: null, namLinhChi: null, fishInBag: null }, current: null } as { status: DailyStatus; current: DailyOperation | null };
 
 /** Small contract double: it models only the public handle boundary, without any game transport. */

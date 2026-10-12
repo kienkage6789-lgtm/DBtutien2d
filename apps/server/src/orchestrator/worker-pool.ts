@@ -74,6 +74,7 @@ export interface AccountRuntimeInfo {
   mp: number | null;
   maxMp: number | null;
   vitals: VitalSnapshot;
+  character: VendorRunnerSnapshot['character'];
   vitalsAgeMs: number | null;
   hurtCount: number;
   lastHurtAt: number | null;
@@ -722,6 +723,7 @@ export class WorkerPool {
       mp: null,
       maxMp: null,
       vitals: emptyVitals(),
+      character: null,
       vitalsAgeMs: null,
       hurtCount: 0,
       lastHurtAt: null,
@@ -772,6 +774,8 @@ export class WorkerPool {
     const positionCurrent = !stale && snapshot.connection === 'IN_GAME' && positionKnown;
     const locationKnown = !stale && positionCurrent && snapshot.khu !== null;
     const vitalsFresh = snapshot.vitals.fresh;
+    const character = !stale && snapshot.lifecycle !== 'stopped' && snapshot.lifecycle !== 'error'
+      && snapshot.connection === 'IN_GAME' && snapshot.character?.fresh ? snapshot.character : null;
     const now = Date.now();
 
     if (!stale && snapshot.mapId) {
@@ -819,6 +823,7 @@ export class WorkerPool {
       mp: !stale && vitalsFresh ? snapshot.mp : null,
       maxMp: !stale && vitalsFresh ? snapshot.maxMp : null,
       vitals,
+      character,
       vitalsAgeMs: !stale && vitalsFresh && snapshot.vitals.observedAt !== null
         ? Math.max(0, now - snapshot.vitals.observedAt) : null,
       hurtCount: snapshot.hurtCount,

@@ -102,3 +102,9 @@ Nguồn [Client]: `core/config.js` (`SKILL_POWER`, `BASE_ATK`), `systems/skills.
 2. Nếu dps bền vững < ~17 thì phó bản không thể hạ hết một mình; chỉ tổ đội đông (2–6) mới khả thi, mỗi người kite riêng và boss chia mục tiêu.
 3. Rủi ro lớn nhất vẫn là hồi sinh bị khoá: một cú trượt = gục = không có đường xử lý an toàn.
 4. Lộ trình an toàn: (a) chỉ đọc trạng thái nhân vật/kỹ năng, (b) tính dps trên giấy, (c) mới bàn tới né chiêu vồ.
+
+## 12. Hiệu chỉnh mục 11: bỏ sót đòn đánh thường (2026-10-12)
+[Client] `entities/player.js` (`meleeDamage`), `systems/skills.js` (`boostWeapon`), `systems/items.js`.
+- Đòn đánh thường = `baseAttack(realm)` + `atkBonus` trang bị (hoặc `baseAttack + weapon.damage` nếu vũ khí có `damage`), mỗi `attackTime` giây; tầm đánh = 26 + `reachBonus`.
+- Luyện Khí 13: `baseAttack` = 4. Vũ khí có `requireRealm` <= Luyện Khí 10, atk +5, reach +73, `attackTime` 0,9 => (4+5)/0,9 ≈ **10 sát thương/giây ở tầm ~99 px**, lớn hơn Hỏa Cầu (~4,5/giây). Mục 11 chỉ tính kỹ năng nên ước lượng dps quá thấp; cần tính lại cùng đòn thường. [Suy ra] Chưa xác minh đòn thường có dùng được trong lúc kite (đứng yên khi vung, `hitAt`).
+- Kỹ năng có `boostWeapon`: sát thương x1 khi có đúng vũ khí/vật phẩm chỉ định, x0,5 nếu không (`WEAPON_NO_BOOST_MULT`). Vũ khí ảnh hưởng kỹ năng chỉ qua `boostWeapon`, không qua tầm đánh.

@@ -36,6 +36,7 @@ const blankSnapshot = (): VendorRunnerSnapshot => ({
   monstersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
   playersContext: { mapId: null, khu: null, observedAt: null, fresh: false },
   vitals: { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null },
+  character: null,
   moveTo: null, daily: null, dailyStatus: null, logs: [],
 });
 
@@ -76,6 +77,7 @@ export class RemoteRunnerHandle implements RunnerHandle {
       value.connection = 'DISCONNECTED'; value.mapId = null; value.khu = null; value.x = null; value.y = null;
       value.hp = null; value.maxHp = null; value.mp = null; value.maxMp = null; value.downed = null;
       value.vitals = { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null };
+      value.character = null;
       value.monsters = []; value.players = []; value.monstersContext = { mapId: null, khu: null, observedAt: null, fresh: false };
       value.playersContext = { mapId: null, khu: null, observedAt: null, fresh: false }; value.khuList = null; value.soKhu = null;
     }

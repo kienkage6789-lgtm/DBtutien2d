@@ -17,7 +17,7 @@ const readTab = (): InventoryTab => {
   catch { return 'vat-pham'; }
 };
 
-export const InventoryModal: React.FC<{ accountId: string; accountLabel: string; onClose: () => void }> = ({ accountId, accountLabel, onClose }) => {
+export const InventoryModal: React.FC<{ accountId: string; accountLabel: string; onClose?: () => void; embedded?: boolean }> = ({ accountId, accountLabel, onClose = () => {}, embedded = false }) => {
   const [inventory, setInventory] = useState<InventorySnapshot | null>(null);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<InventoryTab>(readTab);
@@ -51,13 +51,13 @@ export const InventoryModal: React.FC<{ accountId: string; accountLabel: string;
     if (next) { setSelectedId(next.id); document.getElementById(`inventory-item-${encodeURIComponent(next.id)}`)?.focus(); }
   };
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section role="dialog" aria-modal="true" aria-labelledby="inventory-title" className="flex max-h-[94dvh] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[#0c101a] text-slate-100 shadow-2xl">
+  return <div className={embedded ? 'min-w-0' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2 backdrop-blur-sm'} onMouseDown={(event) => { if (!embedded && event.target === event.currentTarget) onClose(); }}>
+    <section role={embedded ? undefined : 'dialog'} aria-modal={embedded ? undefined : true} aria-labelledby="inventory-title" className={embedded ? 'flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-800 bg-[#0c101a] text-slate-100' : 'flex max-h-[94dvh] w-full max-w-3xl min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-800 bg-[#0c101a] text-slate-100 shadow-2xl'}>
       <header className="flex items-start justify-between gap-2 border-b border-slate-800 p-3 sm:p-4">
         <div className="min-w-0"><h2 id="inventory-title" className="font-title text-base font-bold">Túi đồ</h2><p className="truncate text-xs text-slate-400">{accountLabel}</p></div>
         <div className="flex shrink-0 gap-1.5">
           <button type="button" onClick={() => void refresh()} disabled={loading} aria-label="Làm mới túi đồ" className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Làm mới</button>
-          <button type="button" onClick={onClose} aria-label="Đóng túi đồ" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"><X className="h-4 w-4" /></button>
+          {!embedded && <button type="button" onClick={onClose} aria-label="Đóng túi đồ" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"><X className="h-4 w-4" /></button>}
         </div>
       </header>
       <div className="min-h-0 space-y-3 overflow-y-auto p-3 sm:p-4">

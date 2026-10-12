@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mergeAccountRuntime, sanitizeAccountOwner, sanitizeDaily, sanitizeDailyStatus, sanitizeFrameMetrics, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
+import { mergeAccountRuntime, sanitizeAccountOwner, sanitizeCharacter, sanitizeDaily, sanitizeDailyStatus, sanitizeFrameMetrics, sanitizeLog, sanitizeMoveTo, sanitizeSystemAlert } from './useRealtime';
 
 const base = {
   id: 'account-test', status: 'running' as const, accountName: 'test', characterName: 'test',
@@ -143,6 +143,20 @@ describe('account ownership sanitizer', () => {
     expect(sanitizeAccountOwner({ ownerId: 'user-1', ownerUsername: 'alice' })).toEqual({ ownerId: 'user-1', ownerUsername: 'alice' });
     expect(sanitizeAccountOwner({ ownerId: 42 })).toBeUndefined();
     expect(sanitizeAccountOwner({ ownerUsername: '' })).toBeUndefined();
+  });
+});
+
+describe('character runtime sanitization', () => {
+  it('keeps numeric strings unknown and clears character values on stale, stopped, or error updates', () => {
+    const malformed = sanitizeCharacter({ sp: '5', bp: Infinity, exp: 3, fresh: true });
+    expect(malformed).toMatchObject({ sp: null, bp: null, exp: 3, fresh: true });
+    expect(sanitizeCharacter({ sp: '5', bp: '6', exp: '7', fresh: true })?.fresh).toBe(false);
+    const character = { realmId: 'r1', realmName: 'Realm', sp: 5, spMax: 10, bp: 6, bpMax: 12, exp: 7, expMax: 14, fresh: true, observedAt: 10 };
+    const running = mergeAccountRuntime(undefined, { ...base, character });
+    expect(running?.character?.sp).toBe(5);
+    expect(mergeAccountRuntime(running!, { ...base, dataStale: true })?.character).toBeNull();
+    expect(mergeAccountRuntime(running!, { ...base, status: 'stopped' })?.character).toBeNull();
+    expect(mergeAccountRuntime(running!, { ...base, status: 'error' })?.character).toBeNull();
   });
 });
 

@@ -40,6 +40,7 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     assert.equal(snapshot.value.x, null);
     assert.equal(snapshot.value.y, null);
     assert.equal(snapshot.value.downed, null);
+    assert.equal(snapshot.value.character, null);
   });
 
   test(`${name}: stop reaches stopped and is idempotent`, timeout, async (t) => {
@@ -101,6 +102,14 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
       await handle.questProbe('status', {}), await handle.khuProbe('xem'));
     const checkin = await handle.startDailyCheckin(); values.push(checkin, await handle.cancelDaily(checkin.operationId));
     for (const value of values) assert.deepEqual(JSON.parse(JSON.stringify(value)), value);
+    const snapshot = handle.getSnapshot().value;
+    const character = snapshot.character;
+    assert.deepEqual(JSON.parse(JSON.stringify(character)), character);
+    if (character) {
+      const originalSp = character.sp;
+      character.sp = 99;
+      assert.equal(handle.getSnapshot().value.character?.sp, originalSp);
+    }
   });
 
   test(`${name}: event subscriptions forward and unsubscribe`, timeout, async (t) => {
@@ -133,8 +142,11 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     fixture.pinSnapshotReference?.();
     const first = handle.getSnapshot();
     (first.value as { connection: string }).connection = 'MUTATED_BY_READER';
+    const originalSp = first.value.character?.sp;
+    if (first.value.character) first.value.character.sp = 99;
     const second = handle.getSnapshot();
     assert.notEqual(second.value.connection, 'MUTATED_BY_READER');
+    if (originalSp !== undefined) assert.equal(second.value.character?.sp, originalSp);
   });
 
   test(`${name}: fresh cached reads are not stale`, timeout, async (t) => {
