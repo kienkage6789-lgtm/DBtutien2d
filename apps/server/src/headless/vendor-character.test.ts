@@ -26,3 +26,22 @@ test('getCharacter bounds and cleans strings and rejects characters outside an a
   assert.equal(getCharacter({ realmId: 'realm_1', sp: 1 }, realms, false), null);
   assert.equal(getCharacter(null, realms, true), null);
 });
+
+test('lockAlwaysRun forces Input.run true and ignores toggles, blur resets and later assignments', async () => {
+  const { lockAlwaysRun } = await import('./vendor-runner.js');
+  const input: { run: boolean; toggleRun: () => boolean } = { run: false, toggleRun() { this.run = !this.run; return this.run; } };
+  assert.equal(lockAlwaysRun(input), true);
+  assert.equal(input.run, true);
+  input.toggleRun();
+  assert.equal(input.run, true);
+  input.run = false;
+  assert.equal(input.run, true);
+  assert.equal(lockAlwaysRun(input), true, 'idempotent on reconnect');
+});
+
+test('lockAlwaysRun reports failure instead of throwing for missing or frozen input', async () => {
+  const { lockAlwaysRun } = await import('./vendor-runner.js');
+  assert.equal(lockAlwaysRun(undefined), false);
+  assert.equal(lockAlwaysRun(null), false);
+  assert.equal(lockAlwaysRun(Object.freeze({ run: false })), false);
+});

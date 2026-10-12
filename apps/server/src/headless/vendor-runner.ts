@@ -176,6 +176,15 @@ export interface VendorCharacterSnapshot {
   observedAt: number | null;
 }
 
+/** Khoá Input.run = true: phím Shift/nút Chạy/blur của client không đổi được. Trả true nếu đã khoá. */
+export function lockAlwaysRun(input: unknown): boolean {
+  if (!input || typeof input !== 'object') return false;
+  try {
+    Object.defineProperty(input, 'run', { configurable: true, enumerable: true, get: () => true, set: () => undefined });
+    return (input as { run?: unknown }).run === true;
+  } catch { return false; }
+}
+
 export class StoneSessionBaseline {
   private start: number | null = null;
   public reset(): void { this.start = null; }
@@ -258,6 +267,8 @@ export interface VendorRunnerOptions {
   };
   loginTimeoutMs?: number;
   loopIntervalMs?: number;
+  /** Giữ Input.run = true (chạy) suốt phiên. Mặc định true; false giữ hành vi đi bộ. */
+  alwaysRun?: boolean;
   watchdogMaxFrameDelayMs?: number;
   watchdogMaxRssGrowthBytes?: number;
   watchdogRestart?: boolean;
@@ -809,6 +820,7 @@ export class VendorRunner {
     P.Net.online = true;
     P.Net.client = { auth: { getSession: async () => ({ data: { session: { access_token: await this.tokenManager!.getAccessToken() } } }) } };
     if (!reconnect) P.Game.init();
+    if (this.input.alwaysRun !== false && !lockAlwaysRun(P.Input)) this.recordLog('always_run_unavailable');
     const loggedIn = await P.Gateway.login(this.options.loginTimeoutMs);
     // Gateway.login resolves on the welcome response. The subsequent state
     // packet is what marks Gateway.ready and can arrive after scene setup.

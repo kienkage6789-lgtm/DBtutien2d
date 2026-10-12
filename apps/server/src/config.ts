@@ -65,6 +65,8 @@ const RECONNECT_GIVE_UP_MS = boundedEnvInt(process.env.RECONNECT_GIVE_UP_MS, 1_8
 // Chu kỳ vòng lặp mô phỏng của mỗi bot (ms). 16 = ~60 Hz (mặc định, hành vi gốc). Tăng (vd 33 = ~30 Hz) giảm CPU nhưng
 // làm thô nhịp di chuyển/đánh: chỉ đổi sau khi thử live từng bước nhỏ. Kẹp trong 8..50 (dt tối đa 0,05 s của client).
 const VENDOR_LOOP_INTERVAL_MS = Math.min(50, Math.max(8, parseNonNegativeInt(process.env.VENDOR_LOOP_INTERVAL_MS, 16)));
+// Giữ chế độ CHẠY (Input.run) cho mọi bot: nhanh hơn ~11% so với đi bộ (hệ số 1,65 so với 1,485). Đặt VENDOR_ALWAYS_RUN=0 để tắt.
+const VENDOR_ALWAYS_RUN = !(process.env.VENDOR_ALWAYS_RUN === '0' || process.env.VENDOR_ALWAYS_RUN === 'false');
 const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
 const REQUIRE_PROXY = process.env.REQUIRE_PROXY === '1' || process.env.REQUIRE_PROXY === 'true';
 const AUTO_ASSIGN_PROXY = process.env.AUTO_ASSIGN_PROXY === undefined
@@ -132,6 +134,7 @@ export const CONFIG = {
   RECONNECT_MAX_DELAY_MS,
   RECONNECT_GIVE_UP_MS,
   VENDOR_LOOP_INTERVAL_MS,
+  VENDOR_ALWAYS_RUN,
   ENTITLEMENT_SWEEP_MS,
   REQUIRE_PROXY,
   AUTO_ASSIGN_PROXY,

@@ -1,3 +1,7 @@
+# 2026-10-12 — Bot luôn ở chế độ chạy (Input.run)
+
+Kiểm tra: mã headless không đặt `Input.run` (mặc định `false` trong `core/input.js`), nên bot đi bộ: 68 × 1,485 ≈ 101 px/s thay vì chạy 68 × 1,65 ≈ 112 px/s (+11%). Thêm `lockAlwaysRun(P.Input)` trong `vendor-runner.ts` (khoá thuộc tính `run` luôn true, phím Shift/`toggleRun`/blur không đổi được; gọi sau `Game.init`, idempotent khi nối lại), tuỳ chọn `alwaysRun` (mặc định bật) và biến môi trường `VENDOR_ALWAYS_RUN=0` để tắt; ghi log `always_run_unavailable` nếu không khoá được. Test: 2 test mới trong `vendor-character.test.ts`, kiểm trên chính `core/input.js` của client (toggle không đổi được). Chưa xác minh live: server có chấp nhận ~112 px/s không (người chơi thật chạy được nên khả năng cao), chạy có tốn Thần thức hay hiệu ứng phụ không, ước lượng thời gian `walk-navigator` vẫn dùng 101 px/s (an toàn, hơi dư).
+
 # 2026-10-12 — Nút Chơi và Linh Thạch (offline)
 
 Mốc trước nhiệm vụ: server 197/197, web 66/66. AccountPanel có **Chơi** mở tab mới tới trang chính thức; `canPlay` khóa running/connecting/reconnecting, link khi khóa không có `href` và chặn click/Enter. **Sao chép đạo hiệu** chỉ dùng `accountName`, dùng Clipboard API hoặc fallback DOM và báo trạng thái. Không thêm API.

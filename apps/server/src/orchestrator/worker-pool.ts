@@ -347,6 +347,7 @@ export class WorkerPool {
       allowedGameServerUrl: CONFIG.GAME_SERVER_URL,
       vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
       loopIntervalMs: CONFIG.VENDOR_LOOP_INTERVAL_MS,
+      alwaysRun: CONFIG.VENDOR_ALWAYS_RUN,
       reconnectMaxDelayMs: CONFIG.RECONNECT_MAX_DELAY_MS,
       reconnectGiveUpMs: CONFIG.RECONNECT_GIVE_UP_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
