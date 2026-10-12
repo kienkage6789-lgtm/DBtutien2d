@@ -186,6 +186,16 @@ export function shouldHandleSocketClose(stopRequested: boolean, lifecycle: strin
   return lifecycle !== 'halted' || haltMode === 'stay';
 }
 
+/** Mô tả ngắn lý do đóng socket cho nhật ký chẩn đoán (mã đóng + lý do đã làm sạch; không chứa token/URL). */
+export function describeClose(info?: { code?: number; reason?: string }, error?: unknown): string {
+  const parts: string[] = [];
+  if (typeof info?.code === 'number' && Number.isFinite(info.code)) parts.push(`closeCode=${info.code}`);
+  const reason = typeof info?.reason === 'string' ? info.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 60) : '';
+  if (reason) parts.push(`closeReason=${reason}`);
+  if (error instanceof Error) parts.push(`error=${error.name}`);
+  return parts.length ? `; ${parts.join('; ')}` : '';
+}
+
 /** Khoá Input.run = true: phím Shift/nút Chạy/blur của client không đổi được. Trả true nếu đã khoá. */
 export function lockAlwaysRun(input: unknown): boolean {
   if (!input || typeof input !== 'object') return false;
@@ -332,7 +342,7 @@ class CountingWebSocket implements VendorSocketLike {
     private readonly onIncoming: (packet: Record<string, unknown>) => void,
     private readonly onOutgoing: (packet: Record<string, unknown>) => void,
     private readonly onHandlerError: () => void,
-    private readonly onClose: () => void,
+    private readonly onClose: (code?: number, reason?: string) => void,
   ) {
     this.raw = new implementation(url);
     this.readyState = this.raw.readyState;
@@ -378,8 +388,9 @@ class CountingWebSocket implements VendorSocketLike {
 
   private handleClose(code?: number, reason?: Buffer | string): void {
     this.readyState = CountingWebSocket.CLOSED;
-    this.onclose?.({ code, reason: typeof reason === 'string' ? reason : reason?.toString('utf8') });
-    this.onClose();
+    const reasonText = typeof reason === 'string' ? reason : reason?.toString('utf8');
+    this.onclose?.({ code, reason: reasonText });
+    this.onClose(code, reasonText);
   }
 }
 
@@ -808,7 +819,7 @@ export class VendorRunner {
           (packet) => runner.recordIncoming(packet),
           (packet) => runner.recordOutgoing(packet),
           () => { runner.packetErrors += 1; },
-          () => runner.handleSocketClosed(),
+          (code, reason) => runner.handleSocketClosed(undefined, { code, reason }),
         );
       }
     }
@@ -1564,7 +1575,8 @@ export class VendorRunner {
       this.watchdogLoggedAt.set(reasonCode, nowMs);
       this.recordLog('watchdog_warning', {
         reasonCode,
-        detail: reasonCode === 'rss_growth' ? `growthMB=${Math.round(value / 1048576)}` : `delayMs=${Math.round(value)}`,
+        detail: reasonCode === 'rss_growth' ? `growthMB=${Math.round(value / 1048576)}`
+          : `delayMs=${Math.round(value)}; auto=${this.autoRequested ? 1 : 0}; phase=${this.supervisor?.getPhase() ?? 'idle'}; conn=${this.connectionState()}`,
       });
     }
     if (!this.options.watchdogRestart || this.watchdogRestarting || this.lifecycle === 'stopped' || this.lifecycle === 'error') return;
@@ -1588,7 +1600,7 @@ export class VendorRunner {
     })();
   }
 
-  private handleSocketClosed(error?: unknown): void {
+  private handleSocketClosed(error?: unknown, closeInfo?: { code?: number; reason?: string }): void {
     const haltMode = parseHaltMode(this.input.supervisor?.haltMode ?? DEFAULT_AUTO_SUPERVISOR_CONFIG.haltMode);
     if (!shouldHandleSocketClose(this.stopRequested, this.lifecycle, haltMode)) return;
     if (error instanceof AuthError && (error.code === 'REFRESH_INVALID' || error.code === 'INVALID_CREDENTIALS')) {
@@ -1638,7 +1650,7 @@ export class VendorRunner {
       void this.connectAndBuild(true).catch((error) => this.handleSocketClosed(error));
     }, delay);
     this.reconnectTimer.unref?.();
-    this.recordLog('reconnect_scheduled', { detail: `attempt=${this.reconnectAttempts}; delayMs=${delay}; elapsedMs=${elapsed}` });
+    this.recordLog('reconnect_scheduled', { detail: `attempt=${this.reconnectAttempts}; delayMs=${delay}; elapsedMs=${elapsed}${describeClose(closeInfo, error)}` });
   }
 
   private failKhuWaiters(error: KhuError): void {

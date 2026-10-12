@@ -1193,7 +1193,7 @@ test('VendorRunner rate-limits watchdog warnings instead of logging one per fram
     const warnings = snapshot.logs.filter((log) => log.code === 'watchdog_warning' && log.reasonCode === 'frame_delay');
     assert.ok(warnings.length >= 1, 'the first warning is still recorded');
     assert.ok(warnings.length <= 1, 'but not one per frame');
-    assert.match(String(warnings[0]?.detail), /^delayMs=\d+$/);
+    assert.match(String(warnings[0]?.detail), /^delayMs=\d+; auto=[01]; phase=[a-z_]+; conn=[A-Z_]+$/);
   } finally {
     await runner.stop();
   }

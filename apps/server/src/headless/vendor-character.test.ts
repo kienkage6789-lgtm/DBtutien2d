@@ -65,3 +65,13 @@ test('shouldHandleSocketClose reconnects after halt only in stay mode and never 
   assert.equal(shouldHandleSocketClose(false, 'halted', 'disconnect'), false, 'we closed it ourselves');
   assert.equal(shouldHandleSocketClose(false, 'halted', 'stay'), true, 'real network drop while halted');
 });
+
+test('describeClose reports sanitized close code, reason and error name without leaking long text', async () => {
+  const { describeClose } = await import('./vendor-runner.js');
+  assert.equal(describeClose(), '');
+  assert.equal(describeClose({ code: 1006 }), '; closeCode=1006');
+  assert.equal(describeClose({ code: 4001, reason: 'Unauthorized\u0000\nnow' }), '; closeCode=4001; closeReason=Unauthorized  now');
+  assert.equal(describeClose({ reason: 'x'.repeat(200) }), `; closeReason=${'x'.repeat(60)}`);
+  assert.equal(describeClose(undefined, new TypeError('secret-token-abc')), '; error=TypeError', 'error message is never included');
+  assert.equal(describeClose({ code: Number.NaN }), '');
+});

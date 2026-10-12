@@ -2,6 +2,8 @@
 
 Monorepo pnpm cho control-plane và dashboard nhiều tài khoản TuTien2D. Server chạy client chính thức ở chế độ headless qua `apps/server/src/headless/`; dashboard không chứa bot engine tự viết và không render client game.
 
+**Cài đặt và vận hành:** xem [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) (cài đặt, `.env`, pm2, truy cập từ xa, xử lý sự cố). Triển khai production đầy đủ: [`docs/DEPLOY_VPS.md`](docs/DEPLOY_VPS.md).
+
 ## Thành phần
 
 - `apps/server`: REST API, WebSocket hub, worker pool, Supabase auth/token manager và `VendorRunner`/Auto supervisor.
