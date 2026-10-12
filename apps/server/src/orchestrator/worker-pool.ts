@@ -348,6 +348,7 @@ export class WorkerPool {
       vendorClientDir: CONFIG.VENDOR_CLIENT_DIR,
       loopIntervalMs: CONFIG.VENDOR_LOOP_INTERVAL_MS,
       alwaysRun: CONFIG.VENDOR_ALWAYS_RUN,
+      supervisor: { haltMode: CONFIG.VENDOR_HALT_MODE },
       reconnectMaxDelayMs: CONFIG.RECONNECT_MAX_DELAY_MS,
       reconnectGiveUpMs: CONFIG.RECONNECT_GIVE_UP_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,

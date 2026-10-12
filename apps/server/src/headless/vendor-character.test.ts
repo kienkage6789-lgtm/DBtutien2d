@@ -45,3 +45,23 @@ test('lockAlwaysRun reports failure instead of throwing for missing or frozen in
   assert.equal(lockAlwaysRun(null), false);
   assert.equal(lockAlwaysRun(Object.freeze({ run: false })), false);
 });
+
+test('parseHaltMode only enables stay for the exact value and defaults to disconnect', async () => {
+  const { parseHaltMode } = await import('./auto-supervisor.js');
+  assert.equal(parseHaltMode('stay'), 'stay');
+  assert.equal(parseHaltMode(' STAY '), 'stay');
+  assert.equal(parseHaltMode(undefined), 'disconnect');
+  assert.equal(parseHaltMode(''), 'disconnect');
+  assert.equal(parseHaltMode('disconnect'), 'disconnect');
+  assert.equal(parseHaltMode('stayy'), 'disconnect');
+  assert.equal(parseHaltMode(1), 'disconnect');
+});
+
+test('shouldHandleSocketClose reconnects after halt only in stay mode and never after a stop request', async () => {
+  const { shouldHandleSocketClose } = await import('./vendor-runner.js');
+  assert.equal(shouldHandleSocketClose(true, 'in_game', 'disconnect'), false);
+  assert.equal(shouldHandleSocketClose(true, 'halted', 'stay'), false);
+  assert.equal(shouldHandleSocketClose(false, 'in_game', 'disconnect'), true);
+  assert.equal(shouldHandleSocketClose(false, 'halted', 'disconnect'), false, 'we closed it ourselves');
+  assert.equal(shouldHandleSocketClose(false, 'halted', 'stay'), true, 'real network drop while halted');
+});

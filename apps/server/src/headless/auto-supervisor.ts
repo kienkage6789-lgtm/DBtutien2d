@@ -35,6 +35,11 @@ export interface AutoSupervisorConfig {
   haltMode: AutoHaltMode;
 }
 
+/** Đọc chế độ dừng an toàn từ cấu hình: chỉ đúng 'stay' mới giữ kết nối; mọi giá trị khác dùng 'disconnect' (mặc định an toàn). */
+export function parseHaltMode(value: unknown): AutoHaltMode {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'stay' ? 'stay' : 'disconnect';
+}
+
 export const DEFAULT_AUTO_SUPERVISOR_CONFIG: AutoSupervisorConfig = {
   reviveMode: 'home',
   recoverRatio: 0.9,

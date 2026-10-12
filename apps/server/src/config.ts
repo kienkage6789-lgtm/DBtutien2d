@@ -4,6 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'node:url';
 import { boundedEnvInt } from './orchestrator/shard-config.js';
+import { parseHaltMode } from './headless/auto-supervisor.js';
 
 dotenv.config();
 
@@ -67,6 +68,9 @@ const RECONNECT_GIVE_UP_MS = boundedEnvInt(process.env.RECONNECT_GIVE_UP_MS, 1_8
 const VENDOR_LOOP_INTERVAL_MS = Math.min(50, Math.max(8, parseNonNegativeInt(process.env.VENDOR_LOOP_INTERVAL_MS, 16)));
 // Giữ chế độ CHẠY (Input.run) cho mọi bot: nhanh hơn ~11% so với đi bộ (hệ số 1,65 so với 1,485). Đặt VENDOR_ALWAYS_RUN=0 để tắt.
 const VENDOR_ALWAYS_RUN = !(process.env.VENDOR_ALWAYS_RUN === '0' || process.env.VENDOR_ALWAYS_RUN === 'false');
+// Khi bộ giám sát Auto dừng an toàn (halt): 'disconnect' (mặc định) ngắt kết nối game; 'stay' giữ kết nối để vẫn thấy HP/bản đồ,
+// đổi lại nhân vật có thể bị quái đánh nếu đứng giữa bãi quái. Theo dõi hurtCount và dừng bot bằng tay khi cần.
+const VENDOR_HALT_MODE = parseHaltMode(process.env.VENDOR_HALT_MODE);
 const ENTITLEMENT_SWEEP_MS = Math.max(100, parseNonNegativeInt(process.env.ENTITLEMENT_SWEEP_MS, 30_000));
 const REQUIRE_PROXY = process.env.REQUIRE_PROXY === '1' || process.env.REQUIRE_PROXY === 'true';
 const AUTO_ASSIGN_PROXY = process.env.AUTO_ASSIGN_PROXY === undefined
@@ -135,6 +139,7 @@ export const CONFIG = {
   RECONNECT_GIVE_UP_MS,
   VENDOR_LOOP_INTERVAL_MS,
   VENDOR_ALWAYS_RUN,
+  VENDOR_HALT_MODE,
   ENTITLEMENT_SWEEP_MS,
   REQUIRE_PROXY,
   AUTO_ASSIGN_PROXY,

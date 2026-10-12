@@ -3,6 +3,7 @@ import { createVendorEnv, type VendorEnv, type VendorSocketEvent, type VendorSoc
 import {
   AutoSupervisor,
   DEFAULT_AUTO_SUPERVISOR_CONFIG,
+  parseHaltMode,
   type AutoAnchor,
   type AutoClientPort,
   type AutoSupervisorConfig,
@@ -174,6 +175,15 @@ export interface VendorCharacterSnapshot {
   stonesSessionNet: number | null;
   fresh: boolean;
   observedAt: number | null;
+}
+
+/**
+ * Có xử lý (nối lại) khi socket đóng không. Đã yêu cầu dừng: không. Đã `halted` ở chế độ 'disconnect': không (chính ta đã ngắt).
+ * Đã `halted` ở chế độ 'stay': có, vì ta không chủ động ngắt nên socket đóng là mất mạng thật; nối lại nhưng Auto vẫn tắt.
+ */
+export function shouldHandleSocketClose(stopRequested: boolean, lifecycle: string, haltMode: 'disconnect' | 'stay'): boolean {
+  if (stopRequested) return false;
+  return lifecycle !== 'halted' || haltMode === 'stay';
 }
 
 /** Khoá Input.run = true: phím Shift/nút Chạy/blur của client không đổi được. Trả true nếu đã khoá. */
@@ -1579,7 +1589,8 @@ export class VendorRunner {
   }
 
   private handleSocketClosed(error?: unknown): void {
-    if (this.stopRequested || this.lifecycle === 'halted') return;
+    const haltMode = parseHaltMode(this.input.supervisor?.haltMode ?? DEFAULT_AUTO_SUPERVISOR_CONFIG.haltMode);
+    if (!shouldHandleSocketClose(this.stopRequested, this.lifecycle, haltMode)) return;
     if (error instanceof AuthError && (error.code === 'REFRESH_INVALID' || error.code === 'INVALID_CREDENTIALS')) {
       this.lifecycle = 'error';
       this.clearReconnectTimer();
