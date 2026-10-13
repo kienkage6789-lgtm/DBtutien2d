@@ -1235,6 +1235,18 @@ apiRouter.get('/accounts/:id/inventory', async (req: Request, res: Response) => 
   }
 });
 
+apiRouter.get('/accounts/:id/quest', async (req: Request, res: Response) => {
+  const accountId = String(req.params.id);
+  try {
+    const data = await workerPool.getQuest(accountId);
+    res.json({ success: true, data });
+  } catch (error) {
+    const code = error instanceof Error ? error.message.split(':', 1)[0] : 'QUEST_FAILED';
+    const status = code === 'VENDOR_NOT_RUNNING' ? 409 : code === 'VENDOR_DATA_STALE' ? 503 : 500;
+    res.status(status).json({ success: false, error: code, errorCode: code, retryable: code === 'VENDOR_DATA_STALE' });
+  }
+});
+
 apiRouter.post('/accounts/:id/daily/checkin', requireEntitlement, async (req: Request, res: Response) => {
   const accountId = String(req.params.id);
   if (!db.getAccountById(accountId)) {

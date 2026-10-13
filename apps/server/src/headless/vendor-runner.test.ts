@@ -328,6 +328,67 @@ test('VendorRunner reads loaded inventory and cave-chest state from the client',
   } finally { await runner.stop(); }
 });
 
+test('VendorRunner reads quest objectives and computes the next gate from current-realm BREAKTHROUGH rules', async () => {
+  const runner = createKhuRunner();
+  const client: Record<string, any> = {
+    Gateway: { ready: true, connected: true, hasChar: false },
+    Quest: { stage: 13, flags: {}, objectives: () => [{ text: `Mục tiêu\u0000`, cur: 2, max: 2 }, { text: 'Chờ', done: false }], stageComplete: () => false, turnInNpc: () => 'Đại Phu' },
+    Progress: { realmId: 'luyen_khi_2', exp: 195 },
+    REALMS: [
+      { id: 'pham_nhan', name: 'Phàm Nhân', expMax: 0 },
+      ...[150, 195, 255, 630, 810, 1050, 1350, 1710, 2190, 2820, 3600, 4620, 6000].map((expMax, i) => ({ id: `luyen_khi_${i + 1}`, name: `Luyện Khí Tầng ${i + 1}`, expMax })),
+      { id: 'truc_co_1', name: 'Trúc Cơ Sơ Kỳ', expMax: 140850 },
+    ],
+    BREAKTHROUGH: { luyen_khi_2: { questStage: 12, item: 'tu_khi_dan', qty: 1 }, luyen_khi_3: { item: 'tu_khi_dan', qty: 1 },
+      luyen_khi_4: { item: 'luyen_khi_dan', qty: 1 }, luyen_khi_5: { questStage: 14, item: 'luyen_khi_dan', qty: 1 },
+      luyen_khi_6: { item: 'luyen_khi_dan', qty: 1 } },
+    ITEMS: { tu_khi_dan: { name: `Tụ Khí\u0000 Đan` } },
+    Inventory: { bag: {}, count: (id: string) => client.Inventory.bag[id] ?? 0 },
+  };
+  (runner as unknown as { P: unknown }).P = client;
+  const beforeState = runner.getQuest();
+  assert.equal(beforeState.known, false, 'Gateway hasChar prevents default stage and flags from looking loaded');
+  client.Gateway.hasChar = true;
+  let quest = runner.getQuest();
+  assert.equal(quest.known, true);
+  assert.equal(quest.stage, 13);
+  assert.equal(quest.stageName, 'Đột phá Luyện Khí 3');
+  assert.equal(quest.turnInNpc, 'Đại Phu');
+  assert.deepEqual(quest.objectives, [{ text: 'Mục tiêu', done: true }, { text: 'Chờ', done: false }]);
+  assert.deepEqual(quest.nextGate, { fromRealmId: 'luyen_khi_2', toRealmId: 'luyen_khi_3', item: { id: 'tu_khi_dan', name: 'Tụ Khí Đan', qty: 1, have: 0 },
+    questStageRequired: 12, stageOk: true, expFull: true, exp: 195, expMax: 195, ready: false });
+  client.Inventory.bag.tu_khi_dan = 1;
+  quest = runner.getQuest(); assert.equal(quest.nextGate?.ready, true);
+  client.Quest.stage = 11; quest = runner.getQuest(); assert.equal(quest.nextGate?.stageOk, false); assert.equal(quest.nextGate?.ready, false);
+  client.Quest.stage = 13; client.Progress.exp = 1; quest = runner.getQuest(); assert.equal(quest.nextGate?.expFull, false); assert.equal(quest.nextGate?.ready, false);
+  client.Progress.exp = 195; delete client.Inventory.bag.tu_khi_dan; quest = runner.getQuest(); assert.equal(quest.nextGate?.item?.have, 0); assert.equal(quest.nextGate?.ready, false);
+  const expectedGates: Array<[string, string | null, number | null, number | null, boolean | null]> = [
+    ['luyen_khi_1', null, null, null, null], ['luyen_khi_2', 'tu_khi_dan', 1, 12, true], ['luyen_khi_3', 'tu_khi_dan', 1, null, true],
+    ['luyen_khi_4', 'luyen_khi_dan', 1, null, true], ['luyen_khi_5', 'luyen_khi_dan', 1, 14, true], ['luyen_khi_6', 'luyen_khi_dan', 1, null, true],
+  ];
+  for (const [from, itemId, qty, requiredStage, ready] of expectedGates) {
+    client.Progress.realmId = from; client.Quest.stage = 18; client.Progress.exp = client.REALMS.find((realm: any) => realm.id === from).expMax;
+    client.Inventory.bag.tu_khi_dan = 1; client.Inventory.bag.luyen_khi_dan = 1;
+    const gate = runner.getQuest().nextGate;
+    assert.equal(gate?.fromRealmId, from); assert.equal(gate?.item?.id ?? null, itemId); assert.equal(gate?.item?.qty ?? null, qty);
+    assert.equal(gate?.questStageRequired, requiredStage); assert.equal(gate?.ready, ready);
+  }
+  client.Progress.realmId = 'luyen_khi_2'; client.Progress.exp = null; client.Inventory.count = () => null;
+  quest = runner.getQuest(); assert.equal(quest.nextGate?.exp, null); assert.equal(quest.nextGate?.item?.have, null); assert.equal(quest.nextGate?.ready, null);
+  // Túi không đọc được (hàm ném lỗi hoặc không tồn tại) phải là "chưa biết", không phải 0.
+  client.Inventory.count = () => { throw new Error('bag unavailable'); };
+  quest = runner.getQuest(); assert.equal(quest.nextGate?.item?.have, null); assert.equal(quest.nextGate?.ready, null);
+  client.Inventory.count = undefined;
+  quest = runner.getQuest(); assert.equal(quest.nextGate?.item?.have, null); assert.equal(quest.nextGate?.ready, null);
+  client.Inventory.count = (id: string) => client.Inventory.bag[id] ?? 0; client.Progress.exp = 195;
+  client.Progress.realmId = 'luyen_khi_7'; quest = runner.getQuest(); assert.equal(quest.target.reachedTarget, true);
+  client.Progress.realmId = 'luyen_khi_6'; client.Quest.stage = 35; quest = runner.getQuest();
+  assert.equal(quest.stage, null); assert.equal(quest.stageName, null); assert.equal(quest.hint, null); assert.equal(quest.objectives, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(quest)), quest);
+  quest.objectives = [{ text: 'mutated', done: true }]; assert.equal(runner.getQuest().objectives, null);
+  await runner.stop();
+});
+
 function createKhuHandle(tokenManager = new FakeTokenManager()): InProcessRunnerHandle {
   resetKhuFixture();
   return new InProcessRunnerHandle({
@@ -343,9 +404,14 @@ registerRunnerHandleContract('InProcessRunnerHandle', () => {
   const tokenManager = new FakeTokenManager();
   const handle = createKhuHandle(tokenManager);
   const pinnedInventory = { known: false, items: [] as Array<{ id: string; name: string; count: number; openable: boolean; type: string | null; grade: string | number | null; slot: string | null; icon: string | null; desc: string | null; group: 'vat-pham' | 'trang-bi' | 'dao-thuat' | null }>, bag: null, equipment: null, totalKinds: null, totalCount: null, caveChest: null, at: 0 };
+  const pinnedQuest = { known: false, stage: null, stageCount: 34, stageName: null, hint: null, objectives: null, turnInNpc: null, stageComplete: null,
+    realm: { id: null, name: null, level: null }, target: { realmId: 'luyen_khi_7' as const, reachedTarget: null, stageGoal: 18 }, nextGate: null, at: 0 };
   const originalGetInventory = handle.runner.getInventory.bind(handle.runner);
+  const originalGetQuest = handle.runner.getQuest.bind(handle.runner);
   let pinInventory = false;
+  let pinQuest = false;
   handle.runner.getInventory = () => pinInventory ? pinnedInventory : originalGetInventory();
+  handle.runner.getQuest = () => pinQuest ? pinnedQuest : originalGetQuest();
   FakeSocket.soKhu = 20;
   return {
     handle,
@@ -361,6 +427,7 @@ registerRunnerHandleContract('InProcessRunnerHandle', () => {
       (handle.runner as any).getSnapshot = () => snapshot;
     },
     pinInventoryReference: () => { pinInventory = true; },
+    pinQuestReference: () => { pinQuest = true; },
     forceStop: () => handle.runner.stop(),
   };
 });

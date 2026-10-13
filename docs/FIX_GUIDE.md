@@ -1671,7 +1671,6 @@ ull`/rỗng.
 - [x] Build thay thế TypeScript core/server/web + Vite pass; server 210/210 trên 33 file; web 70/70 trên 13 file. `pnpm build` không chạy vì shim gọi executable `pnpm` không có PATH.
 - [ ] Live chưa xác minh: Gateway client tiếp tục `seq` khi reconnect hay khởi động lại; 10 probe có đủ để chạm `you` không. Trước live cần một bot duy nhất và theo dõi `hurtCount`/`lastHurtAt`.
 
-
 ## Checklist Vườn thuốc — 2026-10-13
 
 - [x] Nguồn client đối chiếu và ghi trong `RESEARCH_FARMING.md`: farm/duocCong từ save, `Farm.load`, wrapper cục bộ, bán kính client; không tuyên bố xác minh live.
@@ -1683,3 +1682,13 @@ ull`/rỗng.
 - [x] Fallback TypeScript core/server/web và Vite production build pass; `pnpm build` shim không chạy do executable `pnpm` con thiếu PATH. Tsx cần preload tạm chỉ vá `os.userInfo` vì sandbox báo `uv_os_get_passwd ... ENOMEM`.
 - [ ] Chưa xác minh live: khoảng cách máy chủ và ACK/state đồng bộ; không kết nối game thật.
 - [ ] Chưa xác minh browser 334 px hoặc game thật. ACK/state sync thật, bán kính server, luống chung/riêng, rate limit game chưa xác minh. Không mở game/network.
+
+## Checklist theo dõi nhiệm vụ chính tuyến tới Luyện Khí 7 — 2026-10-13
+
+- [x] Runner `getQuest()` chỉ đọc, trả JSON thuần và bản sao; chưa vào game hoặc dữ liệu chưa biết được giữ `null`/`known:false`; stage fallback chỉ 0..18, không tự đoán stage ngoài bảng 0..34.
+- [x] RunnerHandle/RPC shard dùng lệnh async riêng ngoài snapshot 500 ms; API route kiểm tra ownership, trạng thái runner và shard stale; không log nội dung quest.
+- [x] Dashboard tab Nhiệm vụ có sanitizer, poll khoảng 10 giây, nút làm mới chỉ đọc, tiến độ LK7 và điều kiện gate; không có nút hành động game.
+- [x] Fault injection trực tiếp nguồn: `known:true` trước khi hasChar; null→0 cho have/exp; ready dù thiếu đan; lookup `BREAKTHROUGH` theo realm kế tiếp; trả tham chiếu sống; bỏ middleware `loadOwnedAccount`. Cả sáu làm test tương ứng thất bại; đã khôi phục nguồn.
+- [x] Toàn server 230/230 (`npx tsx --test` trên mọi `apps/server/src/**/*.test.ts` qua binary tsx cục bộ); web 76/76. TypeScript server/core-client/web và Vite production build pass.
+- [ ] `pnpm build` chưa chạy: `%TEMP%\pnpmshim\pnpm.cmd` không tìm được executable `pnpm` trong PATH; đã chạy build thay thế bằng binary cục bộ.
+- [ ] Chưa xác minh trực quan ở 334 px vì CUA không có browser/app; chưa xác minh độ tin cậy live của `Quest.stage` ngay sau đăng nhập. Không truy cập game thật trong nhiệm vụ này.

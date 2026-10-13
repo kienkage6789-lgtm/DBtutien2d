@@ -16,6 +16,7 @@ export interface RunnerHandleContractFixture {
   /** Pins the underlying snapshot source so the copy contract tests cached() itself. */
   pinSnapshotReference?(): void;
   pinInventoryReference?(): void;
+  pinQuestReference?(): void;
   /** Test-only emergency cleanup for mutants that break the public stop boundary. */
   forceStop?(): Promise<void>;
 }
@@ -88,13 +89,14 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
       handle.getSnapshot(); handle.getFrameMetrics(); handle.getReachableMaps(); handle.getKhuProbe(); handle.getDailySnapshot();
     });
     assert.equal((await handle.getInventory()).known, false);
+    assert.equal((await handle.getQuest()).known, false);
   });
 
   test(`${name}: returned data survives a plain JSON round trip`, timeout, async (t) => {
     const fixture = await create(); const { handle, waitReady } = fixture;
     t.after(async () => { try { await handle.stop(); } finally { await fixture.forceStop?.(); } });
     const values: unknown[] = [handle.getSnapshot().value, handle.getFrameMetrics().value, handle.getReachableMaps().value,
-      handle.getKhuProbe().value, handle.getDailySnapshot().value, await handle.getInventory()];
+      handle.getKhuProbe().value, handle.getDailySnapshot().value, await handle.getInventory(), await handle.getQuest()];
     await handle.start(); await waitReady();
     const walk = await handle.walkTo(walkRequest);
     values.push(await handle.startAuto(), await handle.stopAuto(), await handle.getKhuInfo(), await handle.requestKhuList(),
@@ -168,6 +170,20 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     (first.items as Array<{ id: string; name: string; count: number; openable: boolean }>).push({ id: 'mutated', name: 'mutated', count: 1, openable: false });
     const second = await handle.getInventory();
     assert.equal(second.items.some((item) => item.id === 'mutated'), false);
+  });
+
+  test(`${name}: quest results are JSON copies and keep unknown values null`, timeout, async (t) => {
+    const fixture = await create(); const { handle } = fixture;
+    t.after(async () => { try { await handle.stop(); } finally { await fixture.forceStop?.(); } });
+    fixture.pinQuestReference?.();
+    const first = await handle.getQuest();
+    assert.equal(first.known, false);
+    assert.equal(first.stage, null);
+    assert.equal(first.nextGate, null);
+    assert.deepEqual(JSON.parse(JSON.stringify(first)), first);
+    first.target.stageGoal = 999;
+    const second = await handle.getQuest();
+    assert.equal(second.target.stageGoal, 18);
   });
 
   test(`${name}: garden reads are async JSON copies and keep unknown values null`, timeout, async (t) => {

@@ -200,6 +200,31 @@ export interface InventorySnapshot {
   at: number | null;
 }
 
+export interface QuestSnapshot {
+  known: boolean;
+  stage: number | null;
+  stageCount: number;
+  stageName: string | null;
+  hint: string | null;
+  objectives: Array<{ text: string; done: boolean }> | null;
+  turnInNpc: string | null;
+  stageComplete: boolean | null;
+  realm: { id: string | null; name: string | null; level: number | null };
+  target: { realmId: 'luyen_khi_7'; reachedTarget: boolean | null; stageGoal: number };
+  nextGate: {
+    fromRealmId: string;
+    toRealmId: string;
+    item: { id: string; name: string; qty: number; have: number | null } | null;
+    questStageRequired: number | null;
+    stageOk: boolean | null;
+    expFull: boolean | null;
+    exp: number | null;
+    expMax: number | null;
+    ready: boolean | null;
+  } | null;
+  at: number | null;
+}
+
 export interface FrameMetricsSnapshot {
   frames: number;
   avgMs: number | null;

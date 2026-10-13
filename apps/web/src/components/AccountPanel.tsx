@@ -10,6 +10,7 @@ import { MapTravelControl } from './MapTravelControl';
 import { KhuControl } from './KhuControl';
 import { DailyControl } from './DailyControl';
 import { GardenControl } from './GardenControl';
+import { QuestControl } from './QuestControl';
 import { InventoryModal } from './InventoryModal';
 import { LogTerminal } from './LogTerminal';
 import { VitalBar } from './VitalBar';
@@ -71,6 +72,7 @@ export const AccountPanel: React.FC<Props> = (props) => {
       {isAccountTabActive(tab, 'daily') && <DailyControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} />}
       {isAccountTabActive(tab, 'garden') && <GardenControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} />}
       {isAccountTabActive(tab, 'inventory') && (running ? <InventoryModal accountId={account.id} accountLabel={label} embedded /> : <p className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center text-sm text-slate-400">Túi đồ chỉ khả dụng khi tài khoản đang chạy.</p>)}
+      {isAccountTabActive(tab, 'quest') && <QuestControl account={account} />}
       {isAccountTabActive(tab, 'auto') && <AutoPanel account={account} disabled={props.controlsDisabled} lockReason={props.controlLockReason} onStart={props.onStartVendorAuto} onStop={props.onStopVendorAuto} />}
       {isAccountTabActive(tab, 'logs') && <LogTerminal logs={props.logs} accounts={[account]} onClearLogs={props.onClearLogs} initialAccountId={account.id} />}
       {isAccountTabActive(tab, 'account') && <div className="grid gap-3 sm:grid-cols-2"><InfoBox label="Tài khoản" value={account.accountName} /><InfoBox label="Proxy" value={account.hasProxy ? `${account.proxy?.label ?? 'Đã gán'} · ${account.proxy?.status ?? 'chưa biết'}` : 'Chưa gán'} />{props.ownerLabel && <InfoBox label="Chủ sở hữu" value={props.ownerLabel} />}<div className="flex flex-wrap gap-2 sm:col-span-2"><button type="button" onClick={() => props.onUpdatePassword(account)} className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"><KeyRound className="h-4 w-4" />Đổi mật khẩu</button><button type="button" onClick={() => props.onDelete(account.id)} className="flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"><Trash2 className="h-4 w-4" />Xóa tài khoản</button></div></div>}

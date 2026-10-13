@@ -196,7 +196,7 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     const aliceOwnRuntime = (await j('/api/accounts', 'GET', null, tokAl)).b.data[0];
     check(aliceRuntime?.ownerUsername === 'alice' && aliceOwnRuntime?.ownerUsername === 'alice', 'runtime owner username scope');
     check(aliceRuntime?.metrics === null && aliceOwnRuntime?.metrics === null, 'stopped account frame metrics are null for admin and owner');
-    const routes: Array<[string, string, unknown?]> = [['GET', ''], ['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['POST', '/auto/start', {}], ['POST', '/auto/stop'], ['GET', '/khu'], ['POST', '/khu', { khu: 1 }], ['POST', '/move-to', { x: 1, y: 1 }], ['POST', '/move-to/cancel', { operationId: 'x' }], ['GET', '/reachable-maps'], ['GET', '/daily'], ['GET', '/inventory'], ['GET', '/garden'], ['GET', '/garden/operation'], ['POST', '/garden/buy-pack', { packId: 'pham' }], ['POST', '/garden/sow', { seedId: 'hat_linh_diep' }], ['POST', '/garden/harvest', {}], ['POST', '/garden/cancel', { operationId: 'x' }], ['POST', '/daily/checkin', {}], ['POST', '/daily/seed', { taskId: 'duoc_moc' }], ['POST', '/daily/cancel', { operationId: 'x' }], ['GET', '/logs'], ['PUT', '/password', { password: 'abcdef' }], ['DELETE', ''], ['POST', '/quest-probe', { act: 'status' }], ['GET', '/khu-probe'], ['POST', '/khu-probe', { action: 'xem' }]];
+    const routes: Array<[string, string, unknown?]> = [['GET', ''], ['POST', '/start'], ['POST', '/stop'], ['POST', '/restart'], ['POST', '/auto/start', {}], ['POST', '/auto/stop'], ['GET', '/khu'], ['POST', '/khu', { khu: 1 }], ['POST', '/move-to', { x: 1, y: 1 }], ['POST', '/move-to/cancel', { operationId: 'x' }], ['GET', '/reachable-maps'], ['GET', '/daily'], ['GET', '/inventory'], ['GET', '/quest'], ['GET', '/garden'], ['GET', '/garden/operation'], ['POST', '/garden/buy-pack', { packId: 'pham' }], ['POST', '/garden/sow', { seedId: 'hat_linh_diep' }], ['POST', '/garden/harvest', {}], ['POST', '/garden/cancel', { operationId: 'x' }], ['POST', '/daily/checkin', {}], ['POST', '/daily/seed', { taskId: 'duoc_moc' }], ['POST', '/daily/cancel', { operationId: 'x' }], ['GET', '/logs'], ['PUT', '/password', { password: 'abcdef' }], ['DELETE', ''], ['POST', '/quest-probe', { act: 'status' }], ['GET', '/khu-probe'], ['POST', '/khu-probe', { action: 'xem' }]];
     let leaks = 0;
     for (const [mth, suf, body] of routes) {
       const x = await j(`/api/accounts/${idB}${suf}`, mth, body, tokAl);
@@ -205,6 +205,8 @@ test('đa người dùng đầu-cuối: đăng nhập, phân quyền sở hữu,
     check(leaks === 0, 'cross-account leaks=' + leaks);
     const stoppedInventory = await j(`/api/accounts/${idA}/inventory`, 'GET', null, tokAl);
     check(stoppedInventory.s === 409 && stoppedInventory.b?.errorCode === 'VENDOR_NOT_RUNNING', `stopped inventory has stable error (${stoppedInventory.s}, ${stoppedInventory.b?.errorCode ?? 'no-json'})`);
+    const stoppedQuest = await j(`/api/accounts/${idA}/quest`, 'GET', null, tokAl);
+    check(stoppedQuest.s === 409 && stoppedQuest.b?.errorCode === 'VENDOR_NOT_RUNNING', `stopped quest has stable error (${stoppedQuest.s}, ${stoppedQuest.b?.errorCode ?? 'no-json'})`);
     check((await j(`/api/accounts/${idA}/quest-probe`, 'POST', { act: 'status' }, tokAl)).s === 403, 'probe admin only for own account');
     check((await j(`/api/accounts/${idA}`, 'GET', null, tokAl)).s === 200, 'own account readable');
     check((await j(`/api/accounts/${idB}`, 'GET', null, tokAl)).s === 404, 'other account metrics stay hidden');

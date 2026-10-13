@@ -6,7 +6,7 @@ import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
-import { VendorRunner, type VendorInventorySnapshot, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import { VendorRunner, type VendorInventorySnapshot, type VendorQuestSnapshot, type VendorRunnerOptions, type VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import { VendorGateway } from '../gateway/vendor-gateway.js';
 import type { GameGateway } from '../gateway/game-gateway.js';
 
@@ -25,6 +25,7 @@ export interface RunnerHandle {
   getKhuProbe(): CachedValue<ReturnType<VendorRunner['getKhuProbe']>>;
   getDailySnapshot(force?: boolean): CachedValue<{ status: DailyStatus | null; current: DailyOperation | null }>;
   getInventory(): Promise<VendorInventorySnapshot>;
+  getQuest(): Promise<VendorQuestSnapshot>;
   getGarden(): Promise<GardenSnapshot>;
   getGardenOperation(): Promise<GardenOperation | null>;
   startGardenBuyPack(packId: string, times?: number): Promise<GardenOperation>;
@@ -88,6 +89,7 @@ export class InProcessRunnerHandle implements RunnerHandle {
     }
   }
   public getInventory() { return Promise.resolve().then(() => this.runner.getInventory()).then(jsonClone); }
+  public getQuest() { return Promise.resolve().then(() => this.runner.getQuest()).then(jsonClone); }
   public getGarden() { return Promise.resolve().then(() => this.runner.getGarden()).then(jsonClone); }
   public getGardenOperation() { return Promise.resolve().then(() => this.runner.getGardenOperation()).then(jsonClone); }
   public startGardenBuyPack(packId: string, times = 1) { return Promise.resolve().then(() => this.runner.startGardenBuyPack(packId, times)).then(jsonClone); }

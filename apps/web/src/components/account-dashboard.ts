@@ -1,7 +1,7 @@
 import type { AccountRuntime } from '../types';
 
 export type AccountFilter = 'all' | 'running' | 'stopped' | 'error';
-export type AccountTab = 'overview' | 'map' | 'daily' | 'garden' | 'inventory' | 'auto' | 'logs' | 'account';
+export type AccountTab = 'overview' | 'map' | 'daily' | 'garden' | 'inventory' | 'quest' | 'auto' | 'logs' | 'account';
 export const OFFICIAL_GAME_URL = 'https://tutien2d.online/';
 export function canPlay(account: Pick<AccountRuntime, 'status' | 'connection'>): boolean {
   return account.status !== 'running' && account.connection !== 'RECONNECTING' && account.connection !== 'CONNECTING';
@@ -21,7 +21,7 @@ export async function copyAccountName(accountName: string): Promise<boolean> {
 }
 export const ACCOUNT_TABS: Array<{ id: AccountTab; label: string }> = [
   { id: 'overview', label: 'Tổng quan' }, { id: 'map', label: 'Bản đồ' }, { id: 'daily', label: 'Hằng ngày' }, { id: 'garden', label: 'Vườn thuốc' },
-  { id: 'inventory', label: 'Túi đồ' }, { id: 'auto', label: 'Auto' }, { id: 'logs', label: 'Nhật ký' }, { id: 'account', label: 'Tài khoản' },
+  { id: 'inventory', label: 'Túi đồ' }, { id: 'quest', label: 'Nhiệm vụ' }, { id: 'auto', label: 'Auto' }, { id: 'logs', label: 'Nhật ký' }, { id: 'account', label: 'Tài khoản' },
 ];
 
 export function vitalPercent(value: number | null | undefined, max: number | null | undefined, fresh = true): number | null {

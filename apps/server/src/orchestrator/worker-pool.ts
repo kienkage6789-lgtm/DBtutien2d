@@ -12,6 +12,7 @@ import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
+import type { VendorQuestSnapshot } from '../headless/vendor-runner.js';
 import type { VendorInventorySnapshot } from '../headless/vendor-runner.js';
 import { entitlement } from '../security/entitlement.js';
 import { hasRunnerMemoryCapacity } from './capacity.js';
@@ -612,6 +613,12 @@ export class WorkerPool {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
     return active.getInventory();
+  }
+
+  public async getQuest(accountId: string): Promise<VendorQuestSnapshot> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    return active.getQuest();
   }
 
   public async getGarden(accountId: string): Promise<GardenSnapshot> {

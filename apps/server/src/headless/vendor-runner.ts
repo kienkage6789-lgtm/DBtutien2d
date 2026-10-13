@@ -28,6 +28,7 @@ import {
 } from './daily-quests.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
 import { GardenError, GardenOperations, type GardenOperation, type GardenSnapshot, type GardenPlotState } from './garden.js';
+import { QUEST_STAGE_COUNT, QUEST_STAGE_DISPLAY, QUEST_STAGE_GOAL } from './quest-stages.js';
 import { FrameMetrics, type FrameMetricsSnapshot } from './frame-metrics.js';
 import {
   cooldownSecondsFromToast,
@@ -251,6 +252,31 @@ export interface VendorInventorySnapshot {
   totalKinds: number | null;
   totalCount: number | null;
   caveChest: { keyCount: number; claimed: boolean; active: boolean } | null;
+  at: number;
+}
+
+export interface VendorQuestSnapshot {
+  known: boolean;
+  stage: number | null;
+  stageCount: number;
+  stageName: string | null;
+  hint: string | null;
+  objectives: Array<{ text: string; done: boolean }> | null;
+  turnInNpc: string | null;
+  stageComplete: boolean | null;
+  realm: { id: string | null; name: string | null; level: number | null };
+  target: { realmId: 'luyen_khi_7'; reachedTarget: boolean | null; stageGoal: number };
+  nextGate: {
+    fromRealmId: string;
+    toRealmId: string;
+    item: { id: string; name: string; qty: number; have: number | null } | null;
+    questStageRequired: number | null;
+    stageOk: boolean | null;
+    expFull: boolean | null;
+    exp: number | null;
+    expMax: number | null;
+    ready: boolean | null;
+  } | null;
   at: number;
 }
 
@@ -1632,6 +1658,86 @@ export class VendorRunner {
     }
     this.recordLog('auto_stopped_vitals_unconfirmed');
     this.stopAuto();
+  }
+
+  /** Reads the client's current quest and next breakthrough gate. Never calls a game command. */
+  public getQuest(): VendorQuestSnapshot {
+    const at = Date.now();
+    const unknown = (): VendorQuestSnapshot => ({ known: false, stage: null, stageCount: QUEST_STAGE_COUNT, stageName: null, hint: null,
+      objectives: null, turnInNpc: null, stageComplete: null, realm: { id: null, name: null, level: null },
+      target: { realmId: 'luyen_khi_7', reachedTarget: null, stageGoal: QUEST_STAGE_GOAL }, nextGate: null, at });
+    const P = this.P;
+    const quest = P?.Quest;
+    // Gateway.ready is set when the state packet has been loaded; the default Quest.stage=0 is not evidence of a save.
+    if (this.connectionState() !== 'IN_GAME' || P?.Gateway?.hasChar !== true || !quest || typeof quest !== 'object') return unknown();
+    const cleanText = (value: unknown): string | null => typeof value === 'string'
+      ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || null : null;
+    const safeNumber = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const rawStage = quest.stage;
+    const stage = typeof rawStage === 'number' && Number.isFinite(rawStage) && rawStage >= 0 && rawStage <= QUEST_STAGE_COUNT ? rawStage : null;
+    const validStage = stage !== null;
+    let objectives: Array<{ text: string; done: boolean }> | null = null;
+    if (validStage && typeof quest.objectives === 'function') {
+      try {
+        const raw = quest.objectives();
+        if (Array.isArray(raw)) objectives = raw.flatMap((entry: unknown) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+          const row = entry as Record<string, unknown>;
+          const text = cleanText(row.text);
+          if (!text) return [];
+          const current = safeNumber(row.cur); const max = safeNumber(row.max);
+          const done = typeof row.done === 'boolean' ? row.done : current !== null && max !== null ? current >= max : false;
+          return [{ text, done }];
+        });
+      } catch { objectives = null; }
+    }
+    let stageComplete: boolean | null = null;
+    if (validStage && typeof quest.stageComplete === 'function') {
+      try { const result = quest.stageComplete(); if (typeof result === 'boolean') stageComplete = result; } catch { /* unknown */ }
+    }
+    let turnInNpc: string | null = null;
+    if (validStage && typeof quest.turnInNpc === 'function') {
+      try { turnInNpc = cleanText(quest.turnInNpc()); } catch { /* unknown */ }
+    }
+    const display = stage !== null && Number.isInteger(stage) ? QUEST_STAGE_DISPLAY[stage] : undefined;
+    const progress = P?.Progress;
+    const realmId = typeof progress?.realmId === 'string' && progress.realmId.trim() ? progress.realmId.slice(0, 100) : null;
+    const realms = Array.isArray(P?.REALMS) ? P.REALMS as Array<Record<string, unknown>> : [];
+    const realmIndex = realmId === null ? -1 : realms.findIndex((realm) => realm?.id === realmId);
+    const realm = realmIndex >= 0 ? realms[realmIndex] : null;
+    const realmName = cleanText(realm?.name);
+    const match = realmId?.match(/^luyen_khi_(\d{1,2})$/);
+    const level = match && Number(match[1]) >= 1 && Number(match[1]) <= 13 ? Number(match[1]) : null;
+    const targetIndex = realms.findIndex((entry) => entry?.id === 'luyen_khi_7');
+    const reachedTarget = realmIndex >= 0 && targetIndex >= 0 ? realmIndex >= targetIndex : null;
+    const exp = safeNumber(progress?.exp);
+    const expMax = safeNumber(realm?.expMax);
+    const expFull = exp !== null && expMax !== null && expMax > 0 ? exp >= expMax : null;
+    let nextGate: VendorQuestSnapshot['nextGate'] = null;
+    if (realmIndex >= 0 && realms[realmIndex + 1]) {
+      const next = realms[realmIndex + 1];
+      const rules = P?.BREAKTHROUGH && typeof P.BREAKTHROUGH === 'object' ? P.BREAKTHROUGH as Record<string, unknown> : {};
+      const rulePresent = Object.prototype.hasOwnProperty.call(rules, realmId);
+      const rule = rules[realmId!] && typeof rules[realmId!] === 'object' ? rules[realmId!] as Record<string, unknown> : {};
+      const itemId = typeof rule.item === 'string' && rule.item ? rule.item : null;
+      const qty = itemId ? (safeNumber(rule.qty) ?? 1) : null;
+      const itemDef = itemId && P?.ITEMS?.[itemId] && typeof P.ITEMS[itemId] === 'object' ? P.ITEMS[itemId] as Record<string, unknown> : null;
+      let have: number | null = null;
+      if (itemId && typeof P?.Inventory?.count === 'function') {
+        try { have = safeNumber(P.Inventory.count(itemId)); } catch { have = null; }
+      }
+      const item = itemId && qty !== null ? { id: itemId.slice(0, 100), name: cleanText(itemDef?.name) ?? itemId.slice(0, 100), qty, have } : null;
+      const questStageRequired = safeNumber(rule.questStage);
+      const stageOk = questStageRequired === null ? null : validStage ? stage! >= questStageRequired : null;
+      const blocked = typeof rule.blocked === 'string' && !!rule.blocked;
+      const requirementsKnown = rulePresent && expFull !== null && (questStageRequired === null || stageOk !== null) && (!item || item.have !== null);
+      const ready = blocked ? false : requirementsKnown ? expFull === true && (stageOk !== false) && (!item || item.have! >= item.qty) : null;
+      nextGate = { fromRealmId: realmId!, toRealmId: typeof next.id === 'string' ? next.id : '', item, questStageRequired,
+        stageOk, expFull, exp, expMax, ready };
+    }
+    return { known: true, stage, stageCount: QUEST_STAGE_COUNT,
+      stageName: display?.name ?? null, hint: display?.hint ?? null, objectives, turnInNpc, stageComplete,
+      realm: { id: realmId, name: realmName, level }, target: { realmId: 'luyen_khi_7', reachedTarget, stageGoal: QUEST_STAGE_GOAL }, nextGate, at };
   }
 
   private createGardenClient() {

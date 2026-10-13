@@ -17,6 +17,7 @@ Sidebar hiển thị ví Linh Thạch và số hôm nay/trần. Tab Tổng quan 
 | Vị trí và MiniMap | Giữ, chỉ đọc | Hiển thị map, tọa độ, portal và entity khi vendor cung cấp; không có click để di chuyển. |
 | Auto chính thức | Giữ | Start/stop, phase, anchor, số lần chết/chuyến đi và hurt; vendor client tự điều khiển attack/skill/loot. |
 | Túi đồ | Giữ, chỉ đọc | Modal dạng lưới; đọc metadata/inventory qua API sở hữu tài khoản. Không gửi lệnh game. |
+| Nhiệm vụ | Giữ, chỉ đọc | Hiện stage, mục tiêu, NPC giao, tiến độ tới Luyện Khí 7 và điều kiện theo `BREAKTHROUGH`; đọc qua API sở hữu tài khoản, không gửi lệnh game. |
 | Bảo mật/control-plane | Giữ | Origin allowlist, bearer subprotocol, API token và bind loopback. |
 
 ## Chức năng dashboard đã gỡ cùng engine core
@@ -26,9 +27,15 @@ Sidebar hiển thị ví Linh Thạch và số hôm nay/trần. Tab Tổng quan 
 - `ConfigModal`, route `GET/PUT /api/accounts/:id/config` và cấu hình chọn engine. Mọi account chạy vendor; DB vẫn đọc/chuẩn hóa bản ghi cấu hình cũ để không lỗi khi mở dữ liệu cũ.
 - Các action/training, route điều khiển combat hoặc training, và toàn bộ trạng thái navigation/move-to.
 
+## Nhiệm vụ chính tuyến — 2026-10-13
+
+Tab **Nhiệm vụ** làm mới khi mở tab và mỗi 10 giây, có nút Làm mới. Tên/gợi ý stage 0–18 dùng bảng dự phòng lấy từ nghiên cứu; stage ngoài bảng chỉ hiện mục tiêu trực tiếp nếu client trả về, không tự đặt tên. Điều kiện đột phá là bản đọc từ rule của realm hiện tại, Đạo Hạnh và số đan trong túi. Giá trị null hiển thị `—`/“chưa biết”. Web sanitizer làm sạch văn bản, giới hạn độ dài và React render nội dung như text; không có nút hành động.
+
+Nguồn client: `Quest.objectives()`, `Quest.turnInNpc()`, `Quest.stageComplete()`, `Quest.STAGE_COUNT`, `REALMS`, `BREAKTHROUGH`. `Quest.title` là tên chuỗi chung; không có public API trả `F[stage].hint` hay tên stage riêng. Stage/flags được nạp qua save trong gói state; độ tin cậy live ngay sau đăng nhập chưa xác minh. `BREAKTHROUGH.check` không phụ thuộc DOM nhưng gọi `Player.isFull` và các module client khác; server tự tính phần cần hiển thị. Riêng Luyện Khí 1 không có key trong bảng `BREAKTHROUGH`; trường `ready` giữ null thay vì kết luận sẵn sàng. Xem chi tiết sai khác trong `RESEARCH_QUEST_CHAIN.md`.
+
 ## Phạm vi không phải UI dashboard
 
-Client vendor vẫn có các màn hình game chính thức trong mã tham chiếu, nhưng headless runner không render chúng và dashboard không tự tái tạo combat, quest hay movement. Dữ liệu sinh bởi `scripts/gen-*.mjs` chỉ được giữ khi còn là nguồn cho geometry, entity hoặc derived vitals.
+Client vendor vẫn có các màn hình game chính thức trong mã tham chiếu, nhưng headless runner không render chúng và dashboard không tự thực hiện combat, quest hay movement. Tab Nhiệm vụ chỉ đọc dữ liệu hiện tại. Dữ liệu sinh bởi `scripts/gen-*.mjs` chỉ được giữ khi còn là nguồn cho geometry, entity hoặc derived vitals.
 
 ## Túi đồ dạng lưới — 2026-10-11
 
@@ -53,7 +60,7 @@ Nguồn được xác định trong mã client: HUD dùng `player.sp/spMax`, `pl
 
 ## Sidebar tài khoản và bảng chi tiết — giai đoạn 1 (2026-10-12)
 
-Dashboard web có sidebar lọc theo trạng thái/tìm tên và bảng chi tiết bảy tab. Chưa chọn account thì giữ StatsBar tổng cùng nhật ký chung; chọn account thì chuyển sang Tổng quan, Bản đồ, Hằng ngày, Túi đồ, Auto, Nhật ký hoặc Tài khoản. Sidebar hỗ trợ listbox, focus bàn phím và cuộn riêng; dưới 1024 px danh sách nằm phía trên, khi mở chi tiết có nút quay lại. Account đang chọn, bộ lọc và tab được lưu trong localStorage với fallback nếu storage ném lỗi.
+Dashboard web có sidebar lọc theo trạng thái/tìm tên và bảng chi tiết chín tab. Chưa chọn account thì giữ StatsBar tổng cùng nhật ký chung; chọn account thì chuyển sang Tổng quan, Bản đồ, Hằng ngày, Vườn thuốc, Túi đồ, Nhiệm vụ, Auto, Nhật ký hoặc Tài khoản. Sidebar hỗ trợ listbox, focus bàn phím và cuộn riêng; dưới 1024 px danh sách nằm phía trên, khi mở chi tiết có nút quay lại. Account đang chọn, bộ lọc và tab được lưu trong localStorage với fallback nếu storage ném lỗi.
 
 HP/MP hiển thị khi vitals fresh và chưa quá hạn; thanh rỗng/“—” biểu thị chưa biết. Cảnh giới, Thần thức, Giáp và Đạo Hạnh vẫn “—” trong giai đoạn 1 vì server chưa có `character`. Chế độ Túi đồ nhúng sử dụng lại InventoryModal; các tab còn lại dùng component hiện có. AccountCard đã xóa sau khi bảng chi tiết nhận lại đầy đủ các thao tác.
 

@@ -6,7 +6,7 @@ import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
-import type { VendorInventorySnapshot, VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
+import type { VendorInventorySnapshot, VendorQuestSnapshot, VendorRunnerOptions, VendorRunnerSnapshot } from '../headless/vendor-runner.js';
 import type { CachedValue, RunnerHandle, RunnerHandleLog } from '../orchestrator/runner-handle.js';
 import { SNAPSHOT_INTERVAL_MS } from './protocol.js';
 
@@ -98,6 +98,10 @@ export class RemoteRunnerHandle implements RunnerHandle {
   public getInventory(): Promise<VendorInventorySnapshot> {
     if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE'));
     return this.call<VendorInventorySnapshot>('getInventory').then(clone);
+  }
+  public getQuest(): Promise<VendorQuestSnapshot> {
+    if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE'));
+    return this.call<VendorQuestSnapshot>('getQuest').then(clone);
   }
   public getGarden(): Promise<GardenSnapshot> { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenSnapshot>('getGarden').then(clone); }
   public getGardenOperation() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenOperation | null>('getGardenOperation').then(clone); }

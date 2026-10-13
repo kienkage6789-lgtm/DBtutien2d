@@ -1,3 +1,14 @@
+# 2026-10-13 — Dashboard theo dõi nhiệm vụ chính tuyến tới Luyện Khí 7
+
+Mốc theo yêu cầu: server 226/226, web 72/72. Kết quả: server 230/230 trên mọi `*.test.ts` trong `apps/server/src`; web 76/76 trên 16 file. Không kết nối game/mạng ngoài, không tạo tài khoản; chỉ dùng socket giả/fixture. Không sửa vendor hoặc `auto-supervisor.ts`, không commit.
+
+- Đã kiểm chứng client: `Quest.STAGE_COUNT=34`; có `objectives()`, `turnInNpc()`, `stageComplete()`, nhưng không có API công khai trả tên/gợi ý từng stage; `F` là biến riêng. Tên/gợi ý dự phòng được tách ở `apps/server/src/headless/quest-stages.ts`, chỉ có stage 0..18 lấy từ nghiên cứu. `Quest.stage`/`flags` đọc từ save qua gói `state`; mặc định stage 0/flags rỗng không chứng minh đã tải. Độ tin cậy ngay sau đăng nhập thật chưa xác minh.
+- `Breakthrough.check` không phụ thuộc DOM nhưng dựa trên `Player.isFull` và module client; runner tự chiếu rule hiện tại từ `BREAKTHROUGH`, `Progress`, `REALMS` và `Inventory.count`. Quy tắc cũ lệch mã ở các gate LK1..LK6; bảng hiện tại và lý do `ready:null` khi thiếu rule LK1 được ghi trong `RESEARCH_QUEST_CHAIN.md`.
+- Thêm `getQuest()` đồng bộ/read-only, hợp đồng RunnerHandle + RPC shard, route sở hữu `GET /api/accounts/:id/quest`, sanitizer và tab Nhiệm vụ poll 10 giây. Endpoint không nằm trong snapshot 500 ms, không có thao tác game.
+- Sáu fault injection trực tiếp nguồn đều làm test tương ứng fail gọn và đã được khôi phục: `known:true` trước hasChar; null thành 0; `ready` dù thiếu đan; khóa breakthrough theo realm kế tiếp; bỏ JSON copy; bỏ ownership middleware.
+- Build thay thế pass: TypeScript server/core-client/web và Vite production (`--configLoader runner`). `pnpm build` không chạy được: shim `%TEMP%\pnpmshim\pnpm.cmd` gọi `pnpm` không có trong PATH. Test tsx dùng preload `os.userInfo` và `DATA_DIR` tạm do môi trường báo `uv_os_get_passwd ... ENOMEM`; dữ liệu thử nghiệm nằm trong TEMP.
+- Chưa xác minh trực quan: CUA không có browser/app (`apps:[]`, `browsers:[]`), nên layout 334 px chưa được xem. Chưa xác minh live độ tin cậy/cập nhật stage ngay sau đăng nhập. Không có truy cập game thật.
+
 # 2026-10-13 — Nghiên cứu chuỗi nhiệm vụ chính tuyến tới Luyện Khí 7 (chưa có code)
 
 Thêm `docs/RESEARCH_QUEST_CHAIN.md`: giai đoạn 0..18 (đích Luyện Khí 7 ở giai đoạn 18), điều kiện đột phá từng tầng, công thức Tụ Khí/Luyện Khí Đan, nhu cầu vật phẩm (2 Tụ Khí Đan, 3 Luyện Khí Đan, ~16 Linh Thúy, ≥15 Dược Công, 3.090 Đạo Hạnh), lệnh cần có và hiện trạng bot, rủi ro, lộ trình. Chỉ đọc client; mọi lệnh chưa xác minh live. Chưa xác minh: đáp án Bách Khoa, tỉ lệ rơi Linh Thúy, ACK các lệnh `talk`/`brew`/`breakthrough`/`gather`.

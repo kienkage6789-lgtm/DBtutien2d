@@ -28,6 +28,28 @@ Tổng Đạo Hạnh cần đổ đầy: 150+195+255+630+810+1.050 = **3.090**. 
 - Hạt: gói `pham` (2 Dược Công): Linh Diệp x4 + Huyết Thảo x4. Gói `linh` (5 Dược Công, cần LK4): Linh Ngọc x3 + Xích Dương x3. Chi tiết bảng hạt, thời gian chín, việc kiếm Dược Công: `docs/RESEARCH_FARMING.md`.
 - **Linh Thúy:** rơi từ Dược Linh Thú. Khi nhiệm vụ đang CẦN (giai đoạn 11) thì chắc chắn rơi; còn lại theo tỉ lệ bị ẩn (`MATERIAL_DROP_CHANCE`). [Chưa xác minh] số thật.
 
+## Kiểm chứng Bước 0 cho dashboard — 2026-10-13
+
+### API công khai và nguồn giai đoạn
+
+Đối chiếu trực tiếp `systems/quest.js`: client công khai `Quest.objectives()`, `Quest.turnInNpc()`, `Quest.stageComplete()` và `Quest.STAGE_COUNT`. `Quest.title`/`subtitle` là tên chung của chuỗi “Tẩy Tuỷ Phạt Mao”, không phải tên từng stage. Không có hàm công khai trả tên hoặc gợi ý stage; bảng `F`/hint là biến riêng. Vì vậy dashboard lấy objectives/trạng thái từ API công khai và dùng bảng hiển thị dự phòng riêng ở `apps/server/src/headless/quest-stages.ts`, chỉ cho 0–18, theo bảng giai đoạn ở tài liệu này. Stage 19–34 không nhận tên/gợi ý do server tự suy ra.
+
+`STAGE_COUNT` có giá trị 34, trong khi logic `isActive()` chấp nhận `stage <= 34` và `isDone()` xét `stage > 34`; do đó dữ liệu có thể mang chỉ số 0..34 (35 giá trị). Dashboard giữ cách ghi mẫu người dùng yêu cầu `stage/34`; không tự đổi stage ngoài miền 0..34 thành một stage hợp lệ. Client còn dùng stage phân số trong một số nhánh nội bộ; nếu giá trị nằm trong miền thì vẫn giữ số đó, nhưng không tra tên fallback theo stage phân số.
+
+### Nạp stage và flags
+
+`Quest.load()` đọc bản lưu từ `Utils.store.get(CONFIG.PROGRESS_KEY)`, gán `Quest.stage` và `Quest.flags`, rồi nạp `Progress.realmId`, `Progress.exp`, túi và dữ liệu liên quan. Trong `net/gateway.js`, handler gói `state` khi có `save` lưu bản save, gọi `Quest.load()`, sau đó đánh dấu `Gateway.ready` và `Gateway.hasChar`. `Quest.stage` mặc định 0 và `flags` mặc định `{}` trước lúc này nên không thể dùng riêng hai giá trị đó để kết luận đã tải game. Runner yêu cầu kết nối trong game và `Gateway.hasChar === true` trước khi trả `known:true`. Thời điểm/độ tin cậy sau đăng nhập trên server thật **chưa xác minh live**.
+
+`Quest.objectives()`, `turnInNpc()` và `stageComplete()` chỉ được gọi để đọc. Runner không gọi `Quest.advance`, `Quest.load`, `save`, `Breakthrough.pay` hay bất cứ Gateway command nào.
+
+### Đột phá và khác biệt với phân tích cũ
+
+`Breakthrough.check(player)` trong client không gọi DOM và các dòng được nó tạo là phép đọc; nhưng hàm dùng `Player.isFull`, `Quest`, `Inventory`, và một số module khác. Headless tự chiếu phần dashboard từ `BREAKTHROUGH[Progress.realmId]`, `Progress.exp`, `REALMS[].expMax` và `Inventory.count(itemId)` để giảm phụ thuộc UI/client. Khoá rule theo realm hiện tại đã được xác nhận trong `Breakthrough.ruleOf(player)`.
+
+Mã `core/config.js` có rule `pham_nhan` bị chặn; `luyen_khi_2` yêu cầu Tụ Khí Đan x1 và stage ≥12; `luyen_khi_3` Tụ Khí Đan x1; `luyen_khi_4` Luyện Khí Đan x1; `luyen_khi_5` Luyện Khí Đan x1 và stage ≥14; `luyen_khi_6` Luyện Khí Đan x1. Không có key `luyen_khi_1`. Vì thế bảng nghiên cứu cũ mô tả Linh Dược ở LK1→LK2 và stage 18 làm điều kiện cho mọi cửa LK4→LK7 rộng hơn những gì `BREAKTHROUGH` thực sự công khai. Dashboard tuân theo rule hiện có: khi thiếu rule ở LK1, giữ `ready:null`; không tự xác nhận đã sẵn sàng. Stage 18 vẫn là mục tiêu chuỗi nhiệm vụ theo phân tích objectives, không được gán nhầm thành `questStage` cho mọi cửa quan.
+
+Tên/qty item trong `BREAKTHROUGH` được đối chiếu trực tiếp với config; tên hiển thị đọc từ `ITEMS`. Khi không có count/exp hợp lệ thì để `null`. Toàn bộ kết luận về đồng bộ state, điều kiện phía máy chủ và live vẫn **chưa xác minh**.
+
 ## 4. Nhu cầu vật phẩm tới tầng 7 [Suy ra]
 | Vật phẩm | Số lượng | Ghi chú |
 |---|---|---|
@@ -77,7 +99,7 @@ Chưa có trong bảng vì không cần: giai đoạn ≥ 19 (Chiến Bảng, Ha
 - Game cập nhật làm đổi giai đoạn/lệnh: cần kiểm tra phiên bản client trước khi chạy dài (xem `docs/ARCHITECTURE_V2.md`).
 
 ## 8. Đề xuất lộ trình (chưa làm)
-1. **Theo dõi nhiệm vụ (chỉ đọc):** đọc `Quest.stage` và cờ từ gói `state`, hiện trên dashboard giai đoạn hiện tại và việc kế tiếp (lấy từ `F[stage].hint`).
+1. **Theo dõi nhiệm vụ (đã triển khai, chỉ đọc):** đọc `Quest.stage`/cờ sau khi save của gói `state` được nạp; dashboard dùng API công khai `Quest.objectives()` cho mục tiêu và trạng thái, `turnInNpc()`/`stageComplete()` cho bước hiện tại. Client không công khai tên/gợi ý từng stage (`F` riêng tư), nên tên/gợi ý 0..18 lấy từ bảng fallback có chú thích nguồn ở `apps/server/src/headless/quest-stages.ts`; không suy ra stage ngoài bảng. Tiến độ tới LK7 và gate kế tiếp được tính từ trạng thái hiện tại. Độ tin cậy ngay sau đăng nhập thật chưa xác minh.
 2. **Nền tảng lệnh chung:** `talk`, `quest.turnIn`/`advance`, `gather`, `brew`, `meditate`, `breakthrough`, `farm.water`, `lake.scoop` — mỗi lệnh một thao tác tuần tự có ACK như `garden.ts`, thử live với một tài khoản, ghi gói tin che dữ liệu.
 3. **Đoạn dễ trước:** GĐ 5–7, 11, 15 (đánh quái, đi bản đồ); rồi GĐ 8–10, 12–13 (vườn, đan, đột phá); sau cùng GĐ 14, 16–18 (bí tịch, câu cá, Bách Khoa, cửa quan).
 4. **Bộ điều phối:** máy trạng thái theo `Quest.stage`: mỗi giai đoạn gọi các đoạn trên, có dừng an toàn (`hurtCount`, gục, mất kết nối) và chờ theo ngày (Dược Công, trần lượt).

@@ -1,4 +1,4 @@
-import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, GardenOperation, GardenSnapshot, InventoryEquipmentItem, InventorySnapshot, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, ReachableMap } from '../types';
+import type { AccountRuntime, AdminProxy, AdminUser, AuditLogEntry, AuthUser, DailyOperation, DailySeedTask, DailyStatus, GardenOperation, GardenSnapshot, InventoryEquipmentItem, InventorySnapshot, KhuInfo, LogEntry, MoveToOperation, MoveToStatus, QuestSnapshot, ReachableMap } from '../types';
 import type { WorldBounds } from './minimap';
 import { sanitizeKhuList } from './khu';
 import { getToken, notifyAuthRequired, setToken } from './auth';
@@ -794,6 +794,56 @@ export async function fetchInventory(accountId: string): Promise<InventorySnapsh
   const data = sanitizeInventory(json?.data);
   if (!response.ok || json?.success !== true || !data) {
     const code = typeof json?.errorCode === 'string' ? json.errorCode : 'INVENTORY_FAILED';
+    throw new ApiRequestError(code, response.status, code);
+  }
+  return data;
+}
+
+export function sanitizeQuest(value: unknown): QuestSnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.known !== 'boolean') return undefined;
+  const num = (v: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && Number.isSafeInteger(v) && v >= min && v <= max ? v : null;
+  const text = (v: unknown, max = 300): string | null => typeof v === 'string'
+    ? v.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) || null : null;
+  if (!raw.known) return { known: false, stage: null, stageCount: 34, stageName: null, hint: null, objectives: null, turnInNpc: null,
+    stageComplete: null, realm: { id: null, name: null, level: null }, target: { realmId: 'luyen_khi_7', reachedTarget: null, stageGoal: 18 }, nextGate: null,
+    at: num(raw.at) };
+  const realmRaw = raw.realm && typeof raw.realm === 'object' && !Array.isArray(raw.realm) ? raw.realm as Record<string, unknown> : {};
+  const targetRaw = raw.target && typeof raw.target === 'object' && !Array.isArray(raw.target) ? raw.target as Record<string, unknown> : {};
+  const stage = typeof raw.stage === 'number' && Number.isFinite(raw.stage) && raw.stage >= 0 && raw.stage <= 34 ? raw.stage : null;
+  const objectives = Array.isArray(raw.objectives) ? raw.objectives.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const row = entry as Record<string, unknown>; const label = text(row.text);
+    return label && typeof row.done === 'boolean' ? [{ text: label, done: row.done }] : [];
+  }) : null;
+  let nextGate: QuestSnapshot['nextGate'] = null;
+  if (raw.nextGate && typeof raw.nextGate === 'object' && !Array.isArray(raw.nextGate)) {
+    const gate = raw.nextGate as Record<string, unknown>;
+    const itemRaw = gate.item && typeof gate.item === 'object' && !Array.isArray(gate.item) ? gate.item as Record<string, unknown> : null;
+    const item = itemRaw && typeof itemRaw.id === 'string' && itemRaw.id.length <= 100 && typeof itemRaw.name === 'string'
+      ? { id: itemRaw.id, name: text(itemRaw.name) ?? itemRaw.id, qty: num(itemRaw.qty, 1) ?? 1, have: num(itemRaw.have) } : null;
+    if (typeof gate.fromRealmId === 'string' && gate.fromRealmId.length <= 100 && typeof gate.toRealmId === 'string' && gate.toRealmId.length <= 100) {
+      nextGate = { fromRealmId: gate.fromRealmId, toRealmId: gate.toRealmId, item,
+        questStageRequired: num(gate.questStageRequired, 0, 34), stageOk: typeof gate.stageOk === 'boolean' ? gate.stageOk : null,
+        expFull: typeof gate.expFull === 'boolean' ? gate.expFull : null, exp: num(gate.exp), expMax: num(gate.expMax),
+        ready: typeof gate.ready === 'boolean' ? gate.ready : null };
+    }
+  }
+  return { known: true, stage, stageCount: 34, stageName: text(raw.stageName), hint: text(raw.hint), objectives,
+    turnInNpc: text(raw.turnInNpc), stageComplete: typeof raw.stageComplete === 'boolean' ? raw.stageComplete : null,
+    realm: { id: text(realmRaw.id, 100), name: text(realmRaw.name), level: num(realmRaw.level, 1, 13) },
+    target: { realmId: 'luyen_khi_7', reachedTarget: typeof targetRaw.reachedTarget === 'boolean' ? targetRaw.reachedTarget : null,
+      stageGoal: num(targetRaw.stageGoal, 0, 34) ?? 18 }, nextGate, at: num(raw.at) };
+}
+
+export async function fetchQuest(accountId: string): Promise<QuestSnapshot> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}/quest`);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const data = sanitizeQuest(json?.data);
+  if (!response.ok || json?.success !== true || !data) {
+    const code = typeof json?.errorCode === 'string' ? json.errorCode : 'QUEST_FAILED';
     throw new ApiRequestError(code, response.status, code);
   }
   return data;
