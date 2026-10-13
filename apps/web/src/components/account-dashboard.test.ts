@@ -56,6 +56,7 @@ describe('dashboard sidebar helpers', () => {
   });
 
   it('renders one active tab at a time and keeps missing character data unknown', () => {
+    expect(ACCOUNT_TABS.map((tab) => tab.id)).toContain('cultivation');
     for (const tab of ACCOUNT_TABS) expect(ACCOUNT_TABS.filter((candidate) => isAccountTabActive(tab.id, candidate.id))).toEqual([tab]);
     expect(sanitizeCharacter(undefined)).toBeUndefined();
     expect(sanitizeCharacter({ realmName: 7, sp: 'bad', spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4 })).toEqual({ realmId: null, realmName: null, sp: null, spMax: null, bp: 1, bpMax: 2, exp: 3, expMax: 4, stones: null, stonesToday: null, stonesCap: null, stonesSessionNet: null, fresh: false, observedAt: null });

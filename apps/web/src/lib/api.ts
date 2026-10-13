@@ -873,7 +873,7 @@ export function sanitizeGarden(value: unknown): GardenSnapshot | null {
     give: Array.isArray((entry as Record<string, unknown>).give) ? ((entry as Record<string, unknown>).give as unknown[]).flatMap((g) => g && typeof g === 'object' && !Array.isArray(g) && typeof (g as Record<string, unknown>).itemId === 'string' ? [{ itemId: String((g as Record<string, unknown>).itemId).slice(0, 80), name: str((g as Record<string, unknown>).name) ?? 'Vật phẩm', qty: num((g as Record<string, unknown>).qty) }] : []) : [],
   }] : []) : [];
   return { known: raw.known === true, mapId: str(raw.mapId), inGarden: raw.inGarden === true, unlocked: typeof raw.unlocked === 'boolean' ? raw.unlocked : null,
-    duocCong: num(raw.duocCong), at: num(raw.at), plots, seeds, packs, operation: sanitizeGardenOperation(raw.operation) };
+    duocCong: num(raw.duocCong), permanentWater: typeof raw.permanentWater === 'boolean' ? raw.permanentWater : null, at: num(raw.at), plots, seeds, packs, operation: sanitizeGardenOperation(raw.operation) };
 }
 
 async function gardenRequest(accountId: string, path: string, body?: Record<string, unknown>): Promise<unknown> {
@@ -886,7 +886,7 @@ export async function fetchGarden(accountId: string): Promise<GardenSnapshot> { 
 export async function fetchGardenOperation(accountId: string): Promise<GardenOperation | null> { const raw = await gardenRequest(accountId, '/operation'); return sanitizeGardenOperation(raw); }
 function sanitizeGardenOperation(value: unknown): GardenOperation | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null; const raw = value as Record<string, unknown>;
-  if (typeof raw.id !== 'string' || !['buy-pack', 'sow', 'harvest'].includes(String(raw.kind)) || !['running', 'done', 'failed', 'cancelled'].includes(String(raw.status))) return null;
+  if (typeof raw.id !== 'string' || !['buy-pack', 'sow', 'harvest', 'water', 'scoop'].includes(String(raw.kind)) || !['running', 'done', 'failed', 'cancelled'].includes(String(raw.status))) return null;
   const p = raw.progress && typeof raw.progress === 'object' ? raw.progress as Record<string, unknown> : {};
   if (!Number.isSafeInteger(p.current) || Number(p.current) < 0 || !Number.isSafeInteger(p.total) || Number(p.total) < 0 || !isFiniteNumber(raw.startedAt) || !isFiniteNumber(raw.updatedAt)) return null;
   const results = Array.isArray(raw.results) ? raw.results.flatMap((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && typeof (entry as Record<string, unknown>).target === 'string' && typeof (entry as Record<string, unknown>).ok === 'boolean' ? [{ target: String((entry as Record<string, unknown>).target).slice(0, 80), ok: (entry as Record<string, unknown>).ok as boolean, ...(typeof (entry as Record<string, unknown>).code === 'string' ? { code: String((entry as Record<string, unknown>).code).slice(0, 80) } : {}) }] : []) : [];
@@ -896,6 +896,36 @@ export async function startGardenBuyPack(accountId: string, packId: string, time
 export async function startGardenSow(accountId: string, seedId: string, plotIds: string[] | 'all-empty'): Promise<GardenOperation> { const op = sanitizeGardenOperation(await gardenRequest(accountId, '/sow', { seedId, plotIds })); if (!op) throw new ApiRequestError('GARDEN_INVALID', 502, 'GARDEN_INVALID'); return op; }
 export async function startGardenHarvest(accountId: string, plotIds: string[] | 'all-ready'): Promise<GardenOperation> { const op = sanitizeGardenOperation(await gardenRequest(accountId, '/harvest', { plotIds })); if (!op) throw new ApiRequestError('GARDEN_INVALID', 502, 'GARDEN_INVALID'); return op; }
 export async function cancelGarden(accountId: string, operationId: string): Promise<GardenOperation> { const op = sanitizeGardenOperation(await gardenRequest(accountId, '/cancel', { operationId })); if (!op) throw new ApiRequestError('GARDEN_INVALID', 502, 'GARDEN_INVALID'); return op; }
+export async function startGardenWater(accountId: string): Promise<GardenOperation> { const op = sanitizeGardenOperation(await gardenRequest(accountId, '/water', { plotIds: 'all-watering-needed' })); if (!op) throw new ApiRequestError('GARDEN_INVALID', 502, 'GARDEN_INVALID'); return op; }
+export async function startGardenScoop(accountId: string): Promise<GardenOperation> { const op = sanitizeGardenOperation(await gardenRequest(accountId, '/scoop', {})); if (!op) throw new ApiRequestError('GARDEN_INVALID', 502, 'GARDEN_INVALID'); return op; }
+
+export function sanitizeCultivationOperation(value: unknown): import('../types').CultivationOperation | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null; const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== 'string' || !['brew', 'meditate', 'breakthrough'].includes(String(raw.kind)) || !['running', 'done', 'failed', 'cancelled'].includes(String(raw.status))) return null;
+  const p = raw.progress && typeof raw.progress === 'object' ? raw.progress as Record<string, unknown> : {};
+  if (!Number.isSafeInteger(p.current) || Number(p.current) < 0 || !Number.isSafeInteger(p.total) || Number(p.total) < 0 || !isFiniteNumber(raw.startedAt) || !isFiniteNumber(raw.updatedAt)) return null;
+  const results = Array.isArray(raw.results) ? raw.results.flatMap((row) => row && typeof row === 'object' && !Array.isArray(row) && typeof (row as Record<string, unknown>).target === 'string' && typeof (row as Record<string, unknown>).ok === 'boolean' ? [{ target: String((row as Record<string, unknown>).target).slice(0, 80), ok: (row as Record<string, unknown>).ok as boolean, ...(typeof (row as Record<string, unknown>).result === 'string' ? { result: String((row as Record<string, unknown>).result).slice(0, 80) } : {}) }] : []) : [];
+  return { id: raw.id.slice(0, 128), kind: raw.kind as import('../types').CultivationOperation['kind'], status: raw.status as import('../types').CultivationOperation['status'], progress: { current: Number(p.current), total: Number(p.total) }, results, ...(typeof raw.error === 'string' ? { error: raw.error.slice(0, 100) } : {}), ...(typeof raw.errorReason === 'string' ? { errorReason: raw.errorReason.slice(0, 160) } : {}), startedAt: raw.startedAt, updatedAt: raw.updatedAt };
+}
+async function cultivationRequest(accountId: string, path: string, body?: Record<string, unknown>): Promise<unknown> {
+  const response = await apiFetch(`${API_BASE}/accounts/${encodeURIComponent(accountId)}${path}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  const json = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || json?.success !== true) { const code = typeof json?.errorCode === 'string' ? json.errorCode : 'CULTIVATION_FAILED'; throw new ApiRequestError(code, response.status, code); }
+  return json.data;
+}
+export function sanitizeCultivationState(raw: unknown): import('../types').CultivationState | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>; const recipes = Array.isArray(value.recipes) ? value.recipes.flatMap((r) => r && typeof r === 'object' && !Array.isArray(r) && typeof (r as Record<string, unknown>).id === 'string' ? [{ id: String((r as Record<string, unknown>).id).slice(0, 48), name: typeof (r as Record<string, unknown>).name === 'string' ? String((r as Record<string, unknown>).name).slice(0, 80) : 'Chưa rõ', open: (r as Record<string, unknown>).open === true, recipe: Array.isArray((r as Record<string, unknown>).recipe) ? ((r as Record<string, unknown>).recipe as unknown[]).flatMap((part) => part && typeof part === 'object' && !Array.isArray(part) && typeof (part as Record<string, unknown>).id === 'string' && Number.isSafeInteger((part as Record<string, unknown>).qty) && Number((part as Record<string, unknown>).qty) > 0 ? [{ id: String((part as Record<string, unknown>).id).slice(0, 80), qty: Number((part as Record<string, unknown>).qty) }] : []) : [] }] : []) : [];
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+  const str = (v: unknown) => typeof v === 'string' ? v.slice(0, 100) : null;
+  return { inGame: value.inGame === true, connected: value.connected === true, down: value.down === true, auto: value.auto === true, mapId: str(value.mapId), realmId: str(value.realmId), exp: num(value.exp), expMax: num(value.expMax), questStage: num(value.questStage), nextGateReady: typeof value.nextGateReady === 'boolean' ? value.nextGateReady : null, gateFrom: str(value.gateFrom), gateTo: str(value.gateTo), gateItemId: str(value.gateItemId), gateItemQty: num(value.gateItemQty), recipes };
+}
+export async function fetchCultivationState(accountId: string): Promise<import('../types').CultivationState> { const data = sanitizeCultivationState(await cultivationRequest(accountId, '/cultivation')); if (!data) throw new ApiRequestError('CULTIVATION_INVALID', 502, 'CULTIVATION_INVALID'); return data; }
+export async function fetchCultivationOperation(accountId: string) { return sanitizeCultivationOperation(await cultivationRequest(accountId, '/cultivation/operation')); }
+export async function cancelCultivation(accountId: string, operationId: string) { const op = sanitizeCultivationOperation(await cultivationRequest(accountId, '/cultivation/cancel', { operationId })); if (!op) throw new ApiRequestError('CULTIVATION_INVALID', 502, 'CULTIVATION_INVALID'); return op; }
+export async function startBrew(accountId: string, recipeId: string, times: number) { const op = sanitizeCultivationOperation(await cultivationRequest(accountId, '/alchemy/brew', { recipeId, times })); if (!op) throw new ApiRequestError('CULTIVATION_INVALID', 502, 'CULTIVATION_INVALID'); return op; }
+export async function startMeditate(accountId: string, on: boolean, untilFull = false) { const op = sanitizeCultivationOperation(await cultivationRequest(accountId, '/cultivation/meditate', { on, ...(untilFull ? { untilFull: true } : {}) })); if (!op) throw new ApiRequestError('CULTIVATION_INVALID', 502, 'CULTIVATION_INVALID'); return op; }
+export async function startBreakthrough(accountId: string, useBaoMenh = false) { const op = sanitizeCultivationOperation(await cultivationRequest(accountId, '/cultivation/breakthrough', { useBaoMenh })); if (!op) throw new ApiRequestError('CULTIVATION_INVALID', 502, 'CULTIVATION_INVALID'); return op; }
 
 async function postDaily(path: string, body: Record<string, unknown>): Promise<DailyOperation> {
   const response = await apiFetch(`${API_BASE}${path}`, {

@@ -2,11 +2,11 @@ export type GardenPlotState = 'empty' | 'growing' | 'ready' | 'unknown';
 export interface GardenPlot { id: string; index: number; state: GardenPlotState; seedId: string | null; seedName: string | null; cropId: string | null; cropName: string | null; watered: boolean | null; remainSec: number | null; readyAt: number | null; position?: { x: number; y: number } | null }
 export interface GardenSeed { seedId: string; name: string; count: number | null; growSec: number | null; wetSec: number | null; tier: string | null }
 export interface GardenPack { id: string; name: string; cost: number | null; realm: string | null; unlocked: boolean | null; affordable: boolean | null; give: Array<{ itemId: string; name: string; qty: number | null }> }
-export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; operation: GardenOperation | null; at: number }
-export type GardenOperationKind = 'buy-pack' | 'sow' | 'harvest';
+export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; permanentWater?: boolean | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; operation: GardenOperation | null; at: number }
+export type GardenOperationKind = 'buy-pack' | 'sow' | 'harvest' | 'water' | 'scoop';
 export type GardenOperationStatus = 'running' | 'done' | 'failed' | 'cancelled';
 export interface GardenOperation { id: string; kind: GardenOperationKind; status: GardenOperationStatus; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
-export interface GardenClientState { inGame: boolean; mapId: string | null; inGarden: boolean; playerPosition?: { x: number; y: number } | null; daiPhuPosition?: { x: number; y: number } | null; down: boolean; auto: boolean; stage: number | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; activeOtherOperation: boolean; hurtCount: number }
+export interface GardenClientState { inGame: boolean; mapId: string | null; inGarden: boolean; personalGarden?: boolean; playerPosition?: { x: number; y: number } | null; daiPhuPosition?: { x: number; y: number } | null; scoopPosition?: { x: number; y: number } | null; permanentWater?: boolean | null; down: boolean; auto: boolean; stage: number | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; activeOtherOperation: boolean; hurtCount: number }
 export interface GardenClient {
   now(): number; read(): GardenClientState; issue(command: string, args: Record<string, unknown>): Promise<{ ok: boolean; why?: string }>;
   walk(point: { x: number; y: number }, radius: number, mapId?: string): Promise<void>; count(itemId: string): number | null; wait(ms: number): Promise<void>; record(code: string, detail?: string): void;
@@ -33,11 +33,11 @@ export class GardenOperations {
   public hurtBaseline(): number { return this.baselineHurt; }
   public getGarden(): GardenSnapshot {
     const state = this.client.read();
-    if (!state.inGame) return { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null,
+    if (!state.inGame) return { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null, permanentWater: null,
       plots: Array.from({ length: 10 }, (_, i) => ({ id: `plot_${i + 1}`, index: i + 1, state: 'unknown', seedId: null, seedName: null, cropId: null, cropName: null, watered: null, remainSec: null, readyAt: null })),
       seeds: state.seeds.map((seed) => ({ ...seed, count: null })), packs: state.packs.map((pack) => ({ ...pack, unlocked: null, affordable: null, give: pack.give.map((item) => ({ ...item })) })), operation: this.getOperation(), at: this.client.now() };
     return { known: true, mapId: state.mapId, inGarden: state.inGarden, unlocked: state.stage === null ? null : state.stage >= 8,
-      duocCong: state.duocCong, plots: state.plots.map((plot) => ({ ...plot })), seeds: state.seeds.map((seed) => ({ ...seed })),
+      duocCong: state.duocCong, permanentWater: state.permanentWater ?? null, plots: state.plots.map((plot) => ({ ...plot })), seeds: state.seeds.map((seed) => ({ ...seed })),
       packs: state.packs.map((pack) => ({ ...pack, give: pack.give.map((item) => ({ ...item })) })), operation: this.getOperation(), at: this.client.now() };
   }
   private validate(inGarden: boolean): GardenClientState {
@@ -173,4 +173,47 @@ export class GardenOperations {
     }, targets);
     return this.getOperation()!;
   }
+  public water(plotIds?: string[] | 'all-watering-needed'): GardenOperation {
+    const state = this.validate(true);
+    if (state.permanentWater === null || state.permanentWater === undefined) throw new GardenError('GARDEN_DATA_UNKNOWN');
+    const chosen = plotIds === undefined || plotIds === 'all-watering-needed'
+      ? state.plots.filter((p) => p.state === 'growing' && p.watered === false)
+      : plotIds.map((id) => state.plots.find((p) => p.id === id)).filter((p): p is GardenPlot => !!p);
+    if (!chosen.length) throw new GardenError('NO_WATERING_NEEDED');
+    if (chosen.some((p) => p.state !== 'growing' || p.watered !== false)) throw new GardenError('PLOT_NOT_WATERABLE');
+    const source = state.permanentWater === true ? null : this.client.count('linh_tuyen_thuy');
+    if (source === null && state.permanentWater !== true) throw new GardenError('GARDEN_DATA_UNKNOWN');
+    const targets = chosen.slice(0, state.permanentWater === true ? chosen.length : source!).map((p) => p.id);
+    if (!targets.length) throw new GardenError('INSUFFICIENT_WATER');
+    this.begin('water', targets.length);
+    void this.perform(async () => {
+      const id = targets[this.operation!.progress.current]!; const plot = this.client.read().plots.find((p) => p.id === id);
+      if (plot?.remainSec === null || plot?.remainSec === undefined) throw new GardenError('GARDEN_DATA_UNKNOWN');
+      const beforeWater = this.client.count('linh_tuyen_thuy'); const beforeRemain = plot?.remainSec;
+      await this.approach(plot?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
+      await this.send('farm.water', { plot: id });
+      await this.waitFor(() => { const after = this.client.read().plots.find((p) => p.id === id); const count = this.client.count('linh_tuyen_thuy');
+        return after?.watered === true && (state.permanentWater === true || (beforeWater !== null && count !== null && beforeWater - count === 1))
+          && beforeRemain !== null && beforeRemain !== undefined && after.remainSec !== null && after.remainSec < beforeRemain; });
+    }, targets);
+    return this.getOperation()!;
+  }
+  public scoop(): GardenOperation {
+    const state = this.validate(false);
+    if (state.stage === null || state.stage < 8) throw new GardenError('GARDEN_LOCKED');
+    if (state.permanentWater === null) throw new GardenError('GARDEN_DATA_UNKNOWN');
+    if (state.permanentWater) throw new GardenError('WATER_ALREADY_SCOOPED');
+    this.begin('scoop', 1);
+    void this.perform(async () => {
+      const current = this.client.read();
+      if (!current.personalGarden) throw new GardenError('NOT_IN_PERSONAL_GARDEN');
+      await this.approach(current.scoopPosition, GARDEN_SCOOP_INTERACTION_RADIUS, 'vuon_ca_nhan');
+      await this.send('lake.scoop', {});
+      await this.waitFor(() => this.client.read().permanentWater === true);
+    }, ['ho_bich_thuy']);
+    return this.getOperation()!;
+  }
 }
+
+// Official mapdata.js ho_bich_thuy uses r=48 px; keep a 10 px safety margin.
+export const GARDEN_SCOOP_INTERACTION_RADIUS = 38;

@@ -2,6 +2,7 @@ import type { AuthSession } from '@tutien2d/core-client';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
+import type { CultivationOperation, CultivationState } from '../headless/cultivation.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -31,7 +32,15 @@ export interface RunnerHandle {
   startGardenBuyPack(packId: string, times?: number): Promise<GardenOperation>;
   startGardenSow(seedId: string, plotIds?: string[] | 'all-empty'): Promise<GardenOperation>;
   startGardenHarvest(plotIds?: string[] | 'all-ready'): Promise<GardenOperation>;
+  startGardenWater(plotIds?: string[] | 'all-watering-needed'): Promise<GardenOperation>;
+  startGardenScoop(): Promise<GardenOperation>;
   cancelGarden(operationId?: string): Promise<GardenOperation>;
+  getCultivationOperation(): Promise<CultivationOperation | null>;
+  getCultivationState(): Promise<CultivationState>;
+  startBrew(recipeId: string, times?: number): Promise<CultivationOperation>;
+  startMeditate(on: boolean, untilFull?: boolean): Promise<CultivationOperation>;
+  startBreakthrough(useBaoMenh?: boolean): Promise<CultivationOperation>;
+  cancelCultivation(operationId?: string): Promise<CultivationOperation>;
   startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot>;
   stopAuto(): Promise<AutoSupervisorSnapshot>;
   walkTo(request: WalkRequest): Promise<WalkOperation>;
@@ -95,7 +104,15 @@ export class InProcessRunnerHandle implements RunnerHandle {
   public startGardenBuyPack(packId: string, times = 1) { return Promise.resolve().then(() => this.runner.startGardenBuyPack(packId, times)).then(jsonClone); }
   public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty') { return Promise.resolve().then(() => this.runner.startGardenSow(seedId, plotIds)).then(jsonClone); }
   public startGardenHarvest(plotIds?: string[] | 'all-ready') { return Promise.resolve().then(() => this.runner.startGardenHarvest(plotIds)).then(jsonClone); }
+  public startGardenWater(plotIds?: string[] | 'all-watering-needed') { return Promise.resolve().then(() => this.runner.startGardenWater(plotIds)).then(jsonClone); }
+  public startGardenScoop() { return Promise.resolve().then(() => this.runner.startGardenScoop()).then(jsonClone); }
   public cancelGarden(operationId?: string) { return Promise.resolve().then(() => this.runner.cancelGarden(operationId)).then(jsonClone); }
+  public getCultivationOperation() { return Promise.resolve().then(() => this.runner.getCultivationOperation()).then(jsonClone); }
+  public getCultivationState() { return Promise.resolve().then(() => this.runner.getCultivationState()).then(jsonClone); }
+  public startBrew(recipeId: string, times = 1) { return Promise.resolve().then(() => this.runner.startBrew(recipeId, times)).then(jsonClone); }
+  public startMeditate(on: boolean, untilFull = false) { return Promise.resolve().then(() => this.runner.startMeditate(on, untilFull)).then(jsonClone); }
+  public startBreakthrough(useBaoMenh = false) { return Promise.resolve().then(() => this.runner.startBreakthrough(useBaoMenh)).then(jsonClone); }
+  public cancelCultivation(operationId?: string) { return Promise.resolve().then(() => this.runner.cancelCultivation(operationId)).then(jsonClone); }
   public startAuto(anchor?: AutoAnchor) { return this.gateway.startAuto(anchor).then(jsonClone); }
   public stopAuto() { return Promise.resolve().then(() => this.gateway.stopAuto()).then(jsonClone); }
   public walkTo(request: WalkRequest) { return Promise.resolve().then(() => this.gateway.walkTo(request)).then(jsonClone); }

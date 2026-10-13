@@ -1,3 +1,12 @@
+# 2026-10-13 — Lệnh nền tu luyện và tưới/múc nước trên dashboard
+
+Mốc yêu cầu trước thay đổi: server 230/230, web 76/76. Kết quả lần cuối: server 243/243 trên mọi `*.test.ts` trong `apps/server/src`; web 78/78 trên 17 file. Không kết nối game hoặc mạng ngoài, không đọc `data/`/`.env*`, không tạo tài khoản; test chỉ dùng fixture/socket giả. Không sửa vendor hoặc `auto-supervisor.ts`, không commit.
+
+- Bước 0 chỉ đọc client và ghi kết quả cùng các điểm chưa xác minh live ở `RESEARCH_QUEST_CHAIN.md` và `RESEARCH_FARMING.md`.
+- Đã thêm thao tác tuần tự brew/meditate/breakthrough, water/scoop; đi tới gần qua navigator, không retry lệnh ghi, dừng theo ACK/down/Auto/reconnect/hurt/cancel/stop và hậu kiểm dữ liệu client. RunnerHandle/RPC shard/API ownership, entitlement, audit tóm tắt, trạng thái/huỷ và dashboard Tu luyện/Vườn thuốc đã được nối.
+- Kiểm tra: server 242/242; web 78/78; `pnpm --filter @tutien2d/server build` pass; web `tsc --noEmit` và `vite build --configLoader runner` pass. `pnpm build` chạy core/server nhưng web Vite mặc định lỗi sandbox/esbuild (`Access is denied` khi đọc đường dẫn workspace có dấu cách). Web test Vitest cũng cần `--configLoader runner`; với cờ này 78/78 pass. Toàn bộ test server cần preload tạm cho `os.userInfo` do Windows sandbox trả `uv_os_get_passwd ... ENOMEM`; preload đã được xóa sau khi chạy.
+- Fault injection sửa trực tiếp nguồn: 11/11 mutant bị test tương ứng bắt và đã hoàn nguyên (sẵn sàng gate, gửi lặp, hurt, Auto, công thức khóa, hậu kiểm đếm, tưới plot sai, thiền khi đầy, have/exp chưa biết, ownership). CUA không có browser/app mở, chưa xác minh trực quan 334 px. Không xác minh ACK/state/cự ly trên game thật.
+
 # 2026-10-13 — Dashboard theo dõi nhiệm vụ chính tuyến tới Luyện Khí 7
 
 Mốc theo yêu cầu: server 226/226, web 72/72. Kết quả: server 230/230 trên mọi `*.test.ts` trong `apps/server/src`; web 76/76 trên 16 file. Không kết nối game/mạng ngoài, không tạo tài khoản; chỉ dùng socket giả/fixture. Không sửa vendor hoặc `auto-supervisor.ts`, không commit.

@@ -28,6 +28,7 @@ import {
 } from './daily-quests.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
 import { GardenError, GardenOperations, type GardenOperation, type GardenSnapshot, type GardenPlotState } from './garden.js';
+import { CultivationError, CultivationOperations, type CultivationClient, type CultivationOperation, type CultivationState } from './cultivation.js';
 import { QUEST_STAGE_COUNT, QUEST_STAGE_DISPLAY, QUEST_STAGE_GOAL } from './quest-stages.js';
 import { FrameMetrics, type FrameMetricsSnapshot } from './frame-metrics.js';
 import {
@@ -329,6 +330,7 @@ export interface VendorRunnerOptions {
   khuListTimeoutMs?: number;
   gardenAckTimeoutMs?: number;
   gardenCmdDelayMs?: number;
+  meditateMaxMs?: number;
   supervisor?: Partial<AutoSupervisorConfig>;
   onSessionUpdated?: (session: AuthSession) => void;
   onLog?: VendorRunnerLogger;
@@ -435,6 +437,7 @@ export class VendorRunner {
   private readonly walkNavigator: WalkNavigator;
   private readonly dailyQuests: DailyQuests;
   private readonly gardenOperations: GardenOperations;
+  private readonly cultivationOperations: CultivationOperations;
   public readonly dailyClient: DailyClient;
   private readonly disconnectListeners = new Set<() => void>();
   private supervisorUnsubscribe: (() => void) | null = null;
@@ -524,6 +527,7 @@ export class VendorRunner {
     this.dailyClient = this.createDailyClient();
     this.dailyQuests = new DailyQuests(this.dailyClient);
     this.gardenOperations = new GardenOperations(this.createGardenClient());
+    this.cultivationOperations = new CultivationOperations(this.createCultivationClient());
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
@@ -578,6 +582,7 @@ export class VendorRunner {
   public async stop(): Promise<void> {
     this.cancelDailyForReason('runner_stopped');
     this.cancelGardenForReason('runner_stopped');
+    this.cancelCultivationForReason('runner_stopped');
     this.cancelMoveTo('runner_stopped');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('runner_stop');
@@ -608,6 +613,7 @@ export class VendorRunner {
     if (this.lifecycle === 'stopped' || this.lifecycle === 'error' || !this.P || !this.env) throw new Error('VENDOR_NOT_RUNNING');
     this.cancelDailyForReason('auto_started');
     this.cancelGardenForReason('auto_started');
+    this.cancelCultivationForReason('auto_started');
     const wasResumePending = this.autoResumePending !== null;
     this.cancelAutoResume();
     this.autoRestoredAwaitingVitals = false;
@@ -740,7 +746,7 @@ export class VendorRunner {
   }
 
   public moveTo(request: WalkRequest): WalkOperation {
-    if (request.requester === 'user' && (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running')) throw new DailyError('OPERATION_IN_PROGRESS');
+    if (request.requester === 'user' && (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running' || this.cultivationOperations.getOperation()?.status === 'running')) throw new DailyError('OPERATION_IN_PROGRESS');
     return this.walkNavigator.walkTo(request);
   }
 
@@ -795,7 +801,7 @@ export class VendorRunner {
     const player = this.getPlayer();
     if (this.isDown(player)) throw new KhuError('CHARACTER_DOWN');
     if (this.autoRequested || (this.supervisor?.getPhase() ?? 'idle') !== 'idle') throw new KhuError('AUTO_ACTIVE');
-    if (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running') throw new KhuError('OPERATION_IN_PROGRESS');
+    if (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running' || this.cultivationOperations.getOperation()?.status === 'running') throw new KhuError('OPERATION_IN_PROGRESS');
     const currentMove = this.walkNavigator.getOperation();
     if (currentMove && (currentMove.status === 'accepted' || currentMove.status === 'running')) {
       throw new KhuError('OPERATION_IN_PROGRESS');
@@ -1376,6 +1382,7 @@ export class VendorRunner {
       ...(typeof packet.retryAfter === 'number' && Number.isFinite(packet.retryAfter) ? { retryAfter: packet.retryAfter } : {}),
       ...(typeof packet.regrowAfter === 'number' && Number.isFinite(packet.regrowAfter) ? { regrowAfter: packet.regrowAfter } : {}),
       ...(typeof packet.itemId === 'string' ? { itemId: packet.itemId } : {}),
+      ...(typeof packet.success === 'boolean' ? { success: packet.success } : {}),
       ...(typeof packet.propId === 'string' ? { propId: packet.propId } : {}),
       ...(typeof packet.missed === 'boolean' ? { missed: packet.missed } : {}),
     });
@@ -1538,6 +1545,7 @@ export class VendorRunner {
       this.walkNavigator.tick();
       this.dailyQuests.tick();
       this.checkGardenSafety();
+      this.checkCultivationSafety();
       this.supervisor?.tick();
       this.probeVitals(now);
       this.checkVitalsConfirmation(now);
@@ -1751,6 +1759,7 @@ export class VendorRunner {
         const mapId = this.getMapId();
         const player = this.getPlayer();
         const mapData = P?.MapData?.get ? P.MapData.get('duoc_vien') : P?.MapData?.DUOC_VIEN;
+        const personalMap = P?.MapData?.get ? P.MapData.get('vuon_ca_nhan') : P?.MapData?.VUON_CA_NHAN;
         const mapProps = Array.isArray(mapData?.props) ? mapData.props : [];
         // Client mapdata.js fallback: plot_1..5 at (3..7,4), plot_6..10 at (3..7,6), dai_phu at (14,8).
         // Tile centers are tx*32+16, ty*32+16, matching the official 32 px map grid.
@@ -1797,13 +1806,16 @@ export class VendorRunner {
         }));
         return {
           inGame: this.connectionState() === 'IN_GAME', mapId, inGarden: mapId === 'duoc_vien',
+          personalGarden: mapId === 'vuon_ca_nhan',
           playerPosition: player && Number.isFinite(player.x) && Number.isFinite(player.y) ? { x: Number(player.x), y: Number(player.y) } : null,
           daiPhuPosition: propPosition('dai_phu', { x: 14 * 32 + 16, y: 8 * 32 + 16 }),
           down: this.isDown(this.getPlayer()), auto: this.autoRequested || !!P?.SceneWorld?.autoOn,
           stage: Number.isFinite(quest?.stage) ? quest.stage : null,
           duocCong: Number.isFinite(P?.Progress?.duocCong) ? P.Progress.duocCong : null,
+          permanentWater: typeof quest?.flags?.ho_bich_thuy_da_muc === 'boolean' ? quest.flags.ho_bich_thuy_da_muc : null,
+          scoopPosition: (() => { const prop = (Array.isArray(personalMap?.props) ? personalMap.props : []).find((item: any) => item?.id === 'ho_bich_thuy'); return prop ? { x: Number.isFinite(prop.x) ? prop.x : prop.tx * tile + tile / 2, y: Number.isFinite(prop.y) ? prop.y : prop.ty * tile + tile / 2 } : null; })(),
           plots, seeds, packs,
-          activeOtherOperation: this.walkNavigator.getOperation()?.status === 'accepted' || this.walkNavigator.getOperation()?.status === 'running' || this.dailyQuests.isActive(),
+          activeOtherOperation: this.walkNavigator.getOperation()?.status === 'accepted' || this.walkNavigator.getOperation()?.status === 'running' || this.dailyQuests.isActive() || this.cultivationOperations.getOperation()?.status === 'running',
           hurtCount: this.hurtCount,
         };
       },
@@ -1834,6 +1846,80 @@ export class VendorRunner {
 
   private safeCount(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
 
+  private createCultivationClient(): CultivationClient {
+    const read = (): CultivationState => {
+      const P = this.P as any; const player = this.getPlayer(); const quest = P?.Quest; const progress = P?.Progress;
+      const gate = this.getQuest().nextGate; const mapId = this.getMapId();
+      const mapData = mapId && P?.MapData?.get ? P.MapData.get(mapId) : null;
+      const props = Array.isArray(mapData?.props) ? mapData.props : [];
+      const recipesRaw = typeof quest?.brewList === 'function' ? quest.brewList() : [];
+      const recipes = Array.isArray(recipesRaw) ? recipesRaw.flatMap((r: any) => {
+        if (typeof r?.id !== 'string' || !Array.isArray(r.recipe)) return [];
+        return [{ id: r.id, name: typeof r.name === 'string' ? r.name : r.id, open: r.open === true,
+          recipe: r.recipe.flatMap((part: any) => typeof part?.id === 'string' && Number.isSafeInteger(part.qty) && part.qty > 0 ? [{ id: part.id, qty: part.qty }] : []),
+          canFail: r.id === 'ghep_yeu_dan' }];
+      }) : [];
+      const plots = Array.from({ length: Math.max(0, Math.min(10, Number(P?.Farm?.PLOT_COUNT) || 10)) }, (_x, i) => {
+        const id = `plot_${i + 1}`; const state = P?.Farm?.plot?.(id) ?? null; const remainSec = state && typeof P?.Farm?.remain === 'function' ? this.safeCount(P.Farm.remain(id)) : null;
+        const prop = props.find((p: any) => p?.id === id); const x = Number.isFinite(prop?.x) ? prop.x : Number.isFinite(prop?.tx) ? prop.tx * 32 + 16 : null;
+        const y = Number.isFinite(prop?.y) ? prop.y : Number.isFinite(prop?.ty) ? prop.ty * 32 + 16 : null;
+        return { id, state: !state ? 'empty' : remainSec === null ? 'unknown' : remainSec <= 0 ? 'ready' : 'growing', watered: typeof state?.wet === 'boolean' ? state.wet : null,
+          remainSec: state ? remainSec : null, position: x !== null && y !== null ? { x, y } : null };
+      });
+      const stoneIds: Record<string, string> = { tan_vien: 'dai_da', duoc_vien: 'dai_da_duoc' };
+      const stone = props.find((p: any) => p?.id === stoneIds[mapId ?? '']);
+      const furnaceIds: Record<string, string> = { tan_vien: 'dan_lo', vuon_ca_nhan: 'dan_lo_vuon' };
+      const furnace = props.find((p: any) => p?.id === furnaceIds[mapId ?? '']);
+      const position = player && Number.isFinite(player.x) && Number.isFinite(player.y) ? { x: Number(player.x), y: Number(player.y) } : null;
+      return {
+        inGame: this.connectionState() === 'IN_GAME' && P?.Gateway?.hasChar === true, connected: this.connectionState() === 'IN_GAME',
+        activeOtherOperation: this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running' || ['accepted', 'running'].includes(this.walkNavigator.getOperation()?.status ?? ''),
+        down: this.isDown(player), auto: this.autoRequested || !!P?.SceneWorld?.autoOn, mapId,
+        position, hurtCount: this.hurtCount, realmId: typeof progress?.realmId === 'string' ? progress.realmId : null,
+        exp: this.safeCount(progress?.exp), expMax: player ? this.safeCount(player.expMax) : null,
+        questStage: Number.isSafeInteger(quest?.stage) ? quest.stage : null,
+        nextGateReady: gate?.ready ?? null, gateFrom: gate?.fromRealmId ?? null, gateTo: gate?.toRealmId ?? null,
+        gateItemId: gate?.item?.id ?? null, gateItemQty: gate?.item?.qty ?? null,
+        recipes, permanentWater: typeof quest?.flags?.ho_bich_thuy_da_muc === 'boolean' ? quest.flags.ho_bich_thuy_da_muc : null, plots,
+        ...(stone ? { stonePosition: { x: Number.isFinite(stone.x) ? stone.x : stone.tx * 32 + 16, y: Number.isFinite(stone.y) ? stone.y : stone.ty * 32 + 16 } } : {}),
+        ...(furnace ? { furnacePosition: { x: Number.isFinite(furnace.x) ? furnace.x : furnace.tx * 32 + 16, y: Number.isFinite(furnace.y) ? furnace.y : furnace.ty * 32 + 16 }, furnaceMapId: mapId } : {}),
+      } as CultivationState;
+    };
+    return {
+      now: () => Date.now(), read,
+      count: (itemId) => { const value = (this.P as any)?.Inventory?.count?.(itemId); return this.safeCount(value); },
+      issue: async (command, args) => {
+        const timeout = Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000;
+        const ack = await this.issueDailyCommand(command, () => {
+          if (command === 'meditate') {
+            const player = this.getPlayer(); if (!player) return false;
+            return args.on === 1 ? this.P?.Player?.sit?.(player) : this.P?.Player?.stand?.(player);
+          }
+          return this.P?.Gateway?.cmd?.(command, args, () => undefined);
+        }, timeout);
+        const raw = ack as DailyAck & { success?: boolean; itemId?: string };
+        return { ok: raw.ok, ...(raw.why ? { why: raw.why } : {}), ...(typeof raw.success === 'boolean' ? { success: raw.success } : {}), ...(raw.itemId ? { itemId: raw.itemId } : {}) };
+      },
+      walk: async (point, radius, mapId) => {
+        const op = this.walkNavigator.walkTo({ target: point, targetMapId: mapId, arrivalRadius: radius, requester: 'cultivation', abortOnHurt: true });
+        const deadline = Date.now() + 120_000;
+        while (Date.now() < deadline) {
+          const current = this.walkNavigator.getOperation();
+          if (current?.operationId !== op.operationId) throw new CultivationError('WALK_FAILED', 'WALK_CANCELLED');
+          if (current.status === 'arrived') return;
+          if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new CultivationError('WALK_FAILED', current.reason);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        this.walkNavigator.cancel(op.operationId, 'cultivation_walk_timeout'); throw new CultivationError('WALK_FAILED', 'WALK_TIMEOUT');
+      },
+      wait: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      record: (code, detail) => this.recordLog(code, { detail: detail?.slice(0, 160) }),
+      ackTimeoutMs: Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000,
+      commandDelayMs: Number.isFinite(this.input.gardenCmdDelayMs) ? Math.max(100, Math.min(5_000, Math.trunc(this.input.gardenCmdDelayMs!))) : 400,
+      meditateMaxMs: Number.isFinite(this.input.meditateMaxMs) ? Math.max(60_000, Math.min(7_200_000, Math.trunc(this.input.meditateMaxMs!))) : 1_800_000,
+    };
+  }
+
   private checkGardenSafety(): void {
     const op = this.gardenOperations.getOperation();
     if (!op || op.status !== 'running') return;
@@ -1844,13 +1930,43 @@ export class VendorRunner {
     else if (this.hurtCount > this.gardenOperations.hurtBaseline()) this.cancelGardenForReason('hurt');
   }
 
+  private checkCultivationSafety(): void {
+    const op = this.cultivationOperations.getOperation(); if (!op || op.status !== 'running') return;
+    const state = this.P as any;
+    if (this.connectionState() !== 'IN_GAME') this.cancelCultivationForReason('reconnect');
+    else if (this.isDown(this.getPlayer())) this.cancelCultivationForReason('character_down');
+    else if (this.autoRequested || !!state?.SceneWorld?.autoOn) this.cancelCultivationForReason('auto_started');
+    else if (this.hurtCount > this.cultivationOperations.hurtBaseline()) this.cancelCultivationForReason('hurt');
+  }
+
+  private cancelCultivationForReason(reason: string): void {
+    const op = this.cultivationOperations.getOperation(); if (op?.status !== 'running') return;
+    try { this.cultivationOperations.cancel(op.id); } catch { /* operation completed concurrently */ }
+    const walk = this.walkNavigator.getOperation();
+    if (walk?.requester === 'cultivation' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, `cultivation_${reason}`);
+    const command = op.kind === 'brew' ? 'brew' : op.kind === 'meditate' ? 'meditate' : 'breakthrough';
+    this.cancelDailyAck(command);
+  }
+
+  public getCultivationOperation(): CultivationOperation | null { return this.cultivationOperations.getOperation(); }
+  public getCultivationState(): CultivationState { return this.createCultivationClient().read(); }
+  public startBrew(recipeId: string, times = 1): CultivationOperation { return this.cultivationOperations.brew(recipeId, times); }
+  public startMeditate(on: boolean, untilFull = false): CultivationOperation { return this.cultivationOperations.meditate(on, untilFull); }
+  public startBreakthrough(useBaoMenh = false): CultivationOperation { return this.cultivationOperations.breakthrough(useBaoMenh); }
+  public cancelCultivation(operationId?: string): CultivationOperation {
+    const op = this.cultivationOperations.cancel(operationId);
+    const walk = this.walkNavigator.getOperation(); if (walk?.requester === 'cultivation' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, 'cultivation_cancelled');
+    this.cancelDailyAck(op.kind === 'brew' ? 'brew' : op.kind === 'meditate' ? 'meditate' : 'breakthrough');
+    return op;
+  }
+
   private cancelGardenForReason(reason: string): void {
     const op = this.gardenOperations.getOperation();
     if (op?.status === 'running') { try { this.gardenOperations.cancel(op.id); } catch { /* operation finished concurrently */ } }
     if (op) {
       const walk = this.walkNavigator.getOperation();
       if (walk?.requester === 'garden' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, `garden_${reason}`);
-      this.cancelDailyAck(op.kind === 'buy-pack' ? 'seed.buyPack' : op.kind === 'sow' ? 'farm.sow' : 'farm.harvest');
+    this.cancelDailyAck(op.kind === 'buy-pack' ? 'seed.buyPack' : op.kind === 'sow' ? 'farm.sow' : op.kind === 'harvest' ? 'farm.harvest' : op.kind === 'water' ? 'farm.water' : op.kind === 'scoop' ? 'lake.scoop' : '');
     }
   }
 
@@ -1859,11 +1975,13 @@ export class VendorRunner {
   public startGardenBuyPack(packId: string, times = 1): GardenOperation { return this.gardenOperations.buyPack(packId, times); }
   public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty'): GardenOperation { return this.gardenOperations.sow(seedId, plotIds); }
   public startGardenHarvest(plotIds?: string[] | 'all-ready'): GardenOperation { return this.gardenOperations.harvest(plotIds); }
+  public startGardenWater(plotIds?: string[] | 'all-watering-needed'): GardenOperation { return this.gardenOperations.water(plotIds); }
+  public startGardenScoop(): GardenOperation { return this.gardenOperations.scoop(); }
   public cancelGarden(operationId?: string): GardenOperation {
     const operation = this.gardenOperations.cancel(operationId);
     const walk = this.walkNavigator.getOperation();
     if (walk?.requester === 'garden' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, 'garden_cancelled');
-    const command = operation.kind === 'buy-pack' ? 'seed.buyPack' : operation.kind === 'sow' ? 'farm.sow' : 'farm.harvest';
+    const command = operation.kind === 'buy-pack' ? 'seed.buyPack' : operation.kind === 'sow' ? 'farm.sow' : operation.kind === 'harvest' ? 'farm.harvest' : operation.kind === 'water' ? 'farm.water' : 'lake.scoop';
     this.cancelDailyAck(command);
     return operation;
   }
@@ -1988,6 +2106,7 @@ export class VendorRunner {
     }
     this.cancelDailyForReason('reconnecting');
     this.cancelGardenForReason('reconnecting');
+    this.cancelCultivationForReason('reconnecting');
     this.cancelMoveTo('reconnecting');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('connection_closed');
@@ -2256,7 +2375,7 @@ export class VendorRunner {
 
   public startDailyCheckin(): DailyOperation {
     this.assertDailyRuntimeReady();
-    if (this.gardenOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
+    if (this.gardenOperations.getOperation()?.status === 'running' || this.cultivationOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
     const operation = this.dailyQuests.startCheckin();
     this.dailyStatusCache = null;
     return operation;
@@ -2264,7 +2383,7 @@ export class VendorRunner {
 
   public startDailySeed(taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): DailyOperation {
     this.assertDailyRuntimeReady();
-    if (this.gardenOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
+    if (this.gardenOperations.getOperation()?.status === 'running' || this.cultivationOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
     const operation = this.dailyQuests.startSeedTask(taskId, runs, options);
     this.dailyStatusCache = null;
     return operation;

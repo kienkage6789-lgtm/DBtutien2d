@@ -1683,6 +1683,16 @@ ull`/rỗng.
 - [ ] Chưa xác minh live: khoảng cách máy chủ và ACK/state đồng bộ; không kết nối game thật.
 - [ ] Chưa xác minh browser 334 px hoặc game thật. ACK/state sync thật, bán kính server, luống chung/riêng, rate limit game chưa xác minh. Không mở game/network.
 
+## Checklist lệnh nền tu luyện và nước — 2026-10-13
+
+- [x] Bước 0 chỉ đọc client và đã ghi rõ công thức mở, vị trí/bán kính furnace/đài đá/ao, điều kiện tưới, ACK/state chưa xác minh live trong `RESEARCH_QUEST_CHAIN.md`.
+- [x] Thêm cultivation manager riêng cho brew/meditate/breakthrough; một thao tác mỗi tài khoản, ACK tuần tự không retry, check gate `ready`, hậu kiểm và dừng theo down/Auto/reconnect/hurt/cancel.
+- [x] Garden water/scoop là operation tuần tự; tưới chỉ chọn plot đang lớn/chưa tưới, kiểm tra Linh Tuyền Thủy nếu chưa có cờ vĩnh viễn, scoop chỉ dùng tại map vườn cá nhân.
+- [x] RunnerHandle, shard allowlist, worker/API ownership flow, audit tóm tắt, entitlement và dashboard Tu luyện/Vườn thuốc đã được nối.
+- [x] Server 242/242, web 78/78; server build, web TypeScript và Vite production build bằng `--configLoader runner` pass. `pnpm build` đã chạy nhưng Vite mặc định bị sandbox/esbuild chặn đường dẫn workspace có dấu cách; test Vitest mặc định vướng cùng lỗi và pass với `--configLoader runner`.
+- [x] Fault injection trực tiếp nguồn 11/11 mutant bị test đích bắt và đã hoàn nguyên: ready, gửi lặp, hurt, Auto, công thức khóa, hậu kiểm counts, plot tưới sai, thiền đầy, dữ liệu have/exp chưa biết và ownership.
+- [ ] Chưa xác minh trực quan 334 px vì CUA báo không có browser/app; ACK/state/cự ly trên game thật vẫn chưa xác minh, không kết nối game thật.
+
 ## Checklist theo dõi nhiệm vụ chính tuyến tới Luyện Khí 7 — 2026-10-13
 
 - [x] Runner `getQuest()` chỉ đọc, trả JSON thuần và bản sao; chưa vào game hoặc dữ liệu chưa biết được giữ `null`/`known:false`; stage fallback chỉ 0..18, không tự đoán stage ngoài bảng 0..34.

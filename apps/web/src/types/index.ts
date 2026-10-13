@@ -167,11 +167,15 @@ export interface KhuInfo {
   list: KhuList | null;
 }
 
-export interface GardenOperation { id: string; kind: 'buy-pack' | 'sow' | 'harvest'; status: 'running' | 'done' | 'failed' | 'cancelled'; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
-export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; at: number | null; operation: GardenOperation | null;
+export interface GardenOperation { id: string; kind: 'buy-pack' | 'sow' | 'harvest' | 'water' | 'scoop'; status: 'running' | 'done' | 'failed' | 'cancelled'; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
+export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; permanentWater: boolean | null; at: number | null; operation: GardenOperation | null;
   plots: Array<{ id: string; index: number; state: 'empty' | 'growing' | 'ready' | 'unknown'; seedId: string | null; seedName: string | null; cropId: string | null; cropName: string | null; watered: boolean | null; remainSec: number | null; readyAt: number | null }>;
   seeds: Array<{ seedId: string; name: string; count: number | null; growSec: number | null; wetSec: number | null; tier: string | null }>;
   packs: Array<{ id: string; name: string; cost: number | null; realm: string | null; unlocked: boolean | null; affordable: boolean | null; give: Array<{ itemId: string; name: string; qty: number | null }> }> }
+
+export interface CultivationOperation { id: string; kind: 'brew' | 'meditate' | 'breakthrough'; status: 'running' | 'done' | 'failed' | 'cancelled'; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; result?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
+export interface CultivationRecipe { id: string; name: string; open: boolean; recipe: Array<{ id: string; qty: number }> }
+export interface CultivationState { inGame: boolean; connected: boolean; down: boolean; auto: boolean; mapId: string | null; realmId: string | null; exp: number | null; expMax: number | null; questStage: number | null; nextGateReady: boolean | null; gateFrom: string | null; gateTo: string | null; gateItemId: string | null; gateItemQty: number | null; recipes: CultivationRecipe[] }
 
 export interface InventoryItem {
   id: string;

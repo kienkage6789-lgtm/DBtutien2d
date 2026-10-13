@@ -7,7 +7,8 @@ export const SNAPSHOT_INTERVAL_MS = 500;
 export const RUNNER_RPC_METHODS = [
   'startAuto', 'stopAuto', 'walkTo', 'cancelWalk', 'getKhuInfo', 'requestKhuList', 'changeKhu',
   'startDailyCheckin', 'startDailySeed', 'cancelDaily', 'questProbe', 'khuProbe', 'getInventory', 'getQuest',
-  'getGarden', 'getGardenOperation', 'startGardenBuyPack', 'startGardenSow', 'startGardenHarvest', 'cancelGarden',
+  'getGarden', 'getGardenOperation', 'startGardenBuyPack', 'startGardenSow', 'startGardenHarvest', 'startGardenWater', 'startGardenScoop', 'cancelGarden',
+  'getCultivationOperation', 'getCultivationState', 'startBrew', 'startMeditate', 'startBreakthrough', 'cancelCultivation',
 ] as const;
 export type RunnerRpcMethod = typeof RUNNER_RPC_METHODS[number];
 export type SerializableRunnerOptions = Omit<VendorRunnerOptions,

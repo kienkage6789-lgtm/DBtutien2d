@@ -4,6 +4,7 @@ import { registerRunnerHandleContract } from './runner-handle.contract.js';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
+import type { CultivationOperation } from '../headless/cultivation.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -12,7 +13,7 @@ import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 
 const cache = <T>(value: T): CachedValue<T> => ({ value, ageMs: 0, stale: false });
 const emptySnapshot = { lifecycle: 'stopped', connection: 'DISCONNECTED', hurtCount: 0, mapId: null, khu: null, x: null, y: null, hp: null, mp: null, downed: null, character: null, moveTo: null, daily: null, dailyStatus: null } as unknown as VendorRunnerSnapshot;
-const emptyGarden = { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null, plots: [], seeds: [], packs: [], operation: null, at: 0 } as GardenSnapshot;
+const emptyGarden = { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null, permanentWater: null, plots: [], seeds: [], packs: [], operation: null, at: 0 } as GardenSnapshot;
 const emptyQuest: VendorQuestSnapshot = { known: false, stage: null, stageCount: 34, stageName: null, hint: null, objectives: null, turnInNpc: null,
   stageComplete: null, realm: { id: null, name: null, level: null }, target: { realmId: 'luyen_khi_7', reachedTarget: null, stageGoal: 18 }, nextGate: null, at: 0 };
 const emptyDaily = { status: { today: null, stage: null, checkin: { done: false, total: null }, seedTasks: [], activeSeedTask: null, stones: null, duocCong: null, canhKho: null, namLinhChi: null, fishInBag: null }, current: null } as { status: DailyStatus; current: DailyOperation | null };
@@ -43,7 +44,15 @@ class FakeRunnerHandle implements RunnerHandle {
   public startGardenBuyPack(_packId: string, _times?: number) { return Promise.resolve({ id: 'garden', kind: 'buy-pack', status: 'running', progress: { current: 0, total: 1 }, results: [], startedAt: 1, updatedAt: 1 } as GardenOperation); }
   public startGardenSow(_seedId: string, _plotIds?: string[] | 'all-empty') { return this.startGardenBuyPack(''); }
   public startGardenHarvest(_plotIds?: string[] | 'all-ready') { return this.startGardenBuyPack(''); }
+  public startGardenWater(_plotIds?: string[] | 'all-watering-needed') { return this.startGardenBuyPack(''); }
+  public startGardenScoop() { return this.startGardenBuyPack(''); }
   public cancelGarden(_operationId?: string) { return Promise.resolve({ ...({ id: 'garden', kind: 'buy-pack', status: 'cancelled', progress: { current: 0, total: 1 }, results: [], startedAt: 1, updatedAt: 1 } as GardenOperation) }); }
+  public getCultivationOperation() { return Promise.resolve(null); }
+  public getCultivationState() { return Promise.resolve({} as import('../headless/cultivation.js').CultivationState); }
+  public startBrew(_recipeId: string, _times = 1): Promise<CultivationOperation> { return Promise.resolve({ id: 'cultivation', kind: 'brew', status: 'done', progress: { current: 1, total: 1 }, results: [], startedAt: 1, updatedAt: 1 }); }
+  public startMeditate(_on: boolean, _untilFull = false): Promise<CultivationOperation> { return this.startBrew('', 1); }
+  public startBreakthrough(_useBaoMenh = false): Promise<CultivationOperation> { return this.startBrew('', 1); }
+  public cancelCultivation(_operationId?: string): Promise<CultivationOperation> { return this.startBrew('', 1); }
   public startAuto(): Promise<AutoSupervisorSnapshot> { return this.down ? Promise.reject(new Error('VENDOR_CHARACTER_DOWN')) : Promise.resolve({ phase: 'farming' } as AutoSupervisorSnapshot); }
   public stopAuto(): Promise<AutoSupervisorSnapshot> { return Promise.resolve({ phase: 'idle' } as AutoSupervisorSnapshot); }
   public walkTo(request: WalkRequest): Promise<WalkOperation> {

@@ -2,6 +2,10 @@
 
 Ngày rà soát: 2026-10-11. Nguồn tham chiếu protocol vẫn là client chính thức tại `vendor/tutien2d-public-client/2026-10-06`; thư mục vendor không được sửa.
 
+## Tu luyện và tưới nước — 2026-10-13
+
+AccountPanel có tab **Tu luyện** với công thức đang mở, số nguyên liệu, luyện đan có xác nhận hai bước, thiền và tiến độ Đạo Hạnh, điều kiện next gate cùng đột phá có xác nhận không hoàn tác. Thao tác có progress, kết quả, hủy và thông báo lỗi tiếng Việt. Tab **Vườn thuốc** có nút tưới các luống đang lớn chưa tưới và múc nước một lần tại Vườn Cá Nhân. Controls bị khóa theo entitlement, trạng thái account, Auto, down và thao tác đang chạy. State client/API được sanitize và thiếu số liệu giữ là “chưa biết”. Chưa xác minh trực quan ở viewport 334 px.
+
 ## Linh Thạch và mở trang game — 2026-10-12
 
 AccountPanel có nút **Chơi** mở `https://tutien2d.online/` trong tab mới, chỉ thao tác được khi account đã dừng và không ở trạng thái đang kết nối/nối lại. Chú thích nhắc dừng bot vì mỗi tài khoản chỉ có một phiên đăng nhập. Nút **Sao chép đạo hiệu** chỉ sao chép `accountName`; mật khẩu/token không được đọc hay đưa vào URL. Chức năng không gọi API.

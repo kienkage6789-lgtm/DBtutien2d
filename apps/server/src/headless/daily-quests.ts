@@ -81,6 +81,7 @@ export interface DailyAck {
   retryAfter?: number;
   regrowAfter?: number;
   itemId?: string;
+  success?: boolean;
   propId?: string;
   missed?: boolean;
 }

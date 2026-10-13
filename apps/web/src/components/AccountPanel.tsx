@@ -10,6 +10,7 @@ import { MapTravelControl } from './MapTravelControl';
 import { KhuControl } from './KhuControl';
 import { DailyControl } from './DailyControl';
 import { GardenControl } from './GardenControl';
+import { CultivationControl } from './CultivationControl';
 import { QuestControl } from './QuestControl';
 import { InventoryModal } from './InventoryModal';
 import { LogTerminal } from './LogTerminal';
@@ -71,6 +72,7 @@ export const AccountPanel: React.FC<Props> = (props) => {
       {isAccountTabActive(tab, 'map') && <div className="space-y-4"><MiniMap account={account} controlsDisabled={props.controlsDisabled} geometry={props.mapGeometry} onMoveTo={(target) => props.onMoveTo(account.id, target)} onCancelMoveTo={(operationId) => props.onCancelMoveTo(account.id, operationId)} /><MapTravelControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} mapCatalog={props.mapCatalog} onMoveTo={(target, options) => props.onMoveTo(account.id, target, options)} onCancelMoveTo={(operationId) => props.onCancelMoveTo(account.id, operationId)} /><KhuControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} /></div>}
       {isAccountTabActive(tab, 'daily') && <DailyControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} />}
       {isAccountTabActive(tab, 'garden') && <GardenControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} />}
+      {isAccountTabActive(tab, 'cultivation') && <CultivationControl account={account} controlsDisabled={props.controlsDisabled} controlLockReason={props.controlLockReason} />}
       {isAccountTabActive(tab, 'inventory') && (running ? <InventoryModal accountId={account.id} accountLabel={label} embedded /> : <p className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center text-sm text-slate-400">Túi đồ chỉ khả dụng khi tài khoản đang chạy.</p>)}
       {isAccountTabActive(tab, 'quest') && <QuestControl account={account} />}
       {isAccountTabActive(tab, 'auto') && <AutoPanel account={account} disabled={props.controlsDisabled} lockReason={props.controlLockReason} onStart={props.onStartVendorAuto} onStop={props.onStopVendorAuto} />}

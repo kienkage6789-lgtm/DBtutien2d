@@ -2,6 +2,7 @@ import type { AuthSession } from '@tutien2d/core-client';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
+import type { CultivationOperation, CultivationState } from '../headless/cultivation.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -108,7 +109,15 @@ export class RemoteRunnerHandle implements RunnerHandle {
   public startGardenBuyPack(packId: string, times = 1) { return this.call<GardenOperation>('startGardenBuyPack', packId, times); }
   public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty') { return this.call<GardenOperation>('startGardenSow', seedId, plotIds); }
   public startGardenHarvest(plotIds?: string[] | 'all-ready') { return this.call<GardenOperation>('startGardenHarvest', plotIds); }
+  public startGardenWater(plotIds?: string[] | 'all-watering-needed') { return this.call<GardenOperation>('startGardenWater', plotIds); }
+  public startGardenScoop() { return this.call<GardenOperation>('startGardenScoop'); }
   public cancelGarden(operationId?: string) { return this.call<GardenOperation>('cancelGarden', operationId); }
+  public getCultivationOperation() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<CultivationOperation | null>('getCultivationOperation').then(clone); }
+  public getCultivationState() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<CultivationState>('getCultivationState').then(clone); }
+  public startBrew(recipeId: string, times = 1) { return this.call<CultivationOperation>('startBrew', recipeId, times); }
+  public startMeditate(on: boolean, untilFull = false) { return this.call<CultivationOperation>('startMeditate', on, untilFull); }
+  public startBreakthrough(useBaoMenh = false) { return this.call<CultivationOperation>('startBreakthrough', useBaoMenh); }
+  public cancelCultivation(operationId?: string) { return this.call<CultivationOperation>('cancelCultivation', operationId); }
   private call<T>(method: string, ...args: unknown[]): Promise<T> { return this.transport.call<T>(this.accountId, method, args); }
   public startAuto(anchor?: AutoAnchor) { return this.call<AutoSupervisorSnapshot>('startAuto', anchor); }
   public stopAuto() { return this.call<AutoSupervisorSnapshot>('stopAuto'); }

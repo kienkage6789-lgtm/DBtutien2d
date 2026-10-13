@@ -78,4 +78,11 @@ Hình dạng ACK của `seed.*`/`farm.*`; luống riêng hay chung; khoảng cá
 
 ## 11. Tình trạng tính năng
 
-Phần đổi gói, gieo, đếm ngược và thu hoạch được triển khai qua dashboard ở nhánh công việc 2026-10-13; tưới nước vẫn để dành bước sau. Trạng thái hoạt động, build/test và các điểm chưa xác minh được ghi trong đầu `docs/SESSION_LOG.md` sau khi hoàn tất kiểm tra.
+Đổi gói, gieo, đếm ngược, thu hoạch, tưới các luống đang lớn và múc nguồn nước vĩnh viễn đã được nối vào thao tác vườn tuần tự. Tưới chỉ chọn luống `growing` chưa tưới; khi chưa có cờ `ho_bich_thuy_da_muc`, hậu kiểm cần trừ đúng một `linh_tuyen_thuy`. Múc nước dùng `lake.scoop` một lần tại `vuon_ca_nhan`, hậu kiểm cờ nguồn. Các điều kiện này đọc từ client code; ACK/state authoritative, khoảng cách server và hành vi thật vẫn **chưa xác minh live**. Kết quả build/test thật được ghi ở đầu `docs/SESSION_LOG.md`.
+
+## 12. Thao tác tưới và múc nước trên dashboard — 2026-10-13
+
+- Luống ở `duoc_vien`; `Farm.canWater` yêu cầu luống có cây, chưa tưới và chưa chín. Nguồn tưới là cờ vĩnh viễn `ho_bich_thuy_da_muc` hoặc một `linh_tuyen_thuy` cho mỗi lần tưới.
+- Ao `ho_bich_thuy` nằm ở `vuon_ca_nhan` ô (12,4), bán kính client 48 px. Server operation đi tới bán kính an toàn trong cùng map; không tự chuyển bản đồ.
+- Các lệnh được thực hiện tuần tự qua ACK, không retry, hủy khi down/reconnect/Auto/hurt/stop và hậu kiểm `watered`/`remainSec`, số Linh Tuyền Thủy hoặc cờ nguồn.
+- ACK, khoảng cách máy chủ, nguồn nước và state sau lệnh trên server thật **chưa xác minh live**.

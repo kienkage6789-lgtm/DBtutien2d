@@ -50,6 +50,15 @@ Mã `core/config.js` có rule `pham_nhan` bị chặn; `luyen_khi_2` yêu cầu 
 
 Tên/qty item trong `BREAKTHROUGH` được đối chiếu trực tiếp với config; tên hiển thị đọc từ `ITEMS`. Khi không có count/exp hợp lệ thì để `null`. Toàn bộ kết luận về đồng bộ state, điều kiện phía máy chủ và live vẫn **chưa xác minh**.
 
+## Kiểm chứng Bước 0: lệnh nền tu luyện và tưới — 2026-10-13
+
+Kết luận dưới đây chỉ đọc mã client `vendor/tutien2d-public-client/2026-10-06`; mọi phản hồi/khoảng cách thực tế từ game server đều **chưa xác minh live**.
+
+- **[Client] Đan lô:** `tan_vien` có `dan_lo` (ô 16,11, `r:46`); `vuon_ca_nhan` có `dan_lo_vuon` (10,9, `r:46`). `Quest.brewList()` mở Tẩy Tuỷ Thang ở stage 3 hoặc stage 4 sau cờ thất bại; Linh Dược ở stage 9/10 trừ cờ dừng/đã có thuốc; Tụ Khí Đan ở stage ≥11 hoặc cờ phương thuốc; Luyện Khí Đan từ LK4; Phá Cảnh Đan từ LK7; Đan Ngũ Hành từ Trúc Cơ 1; Tẩy Tâm Đan theo Sát Nghiệp dương/đã có đan/stage. Trúc Cơ Đan, Bảo Mệnh Phù và một số công thức động phụ thuộc module Huyết Sắc. Gateway hook `brew` gửi `{recipeId}` sau thời gian nấu cục bộ. Nhánh ghép Yêu Đan có `tiLe`; công thức khác có thất bại ngẫu nhiên hay không, ACK `ok/why`, item đầu ra authoritative và máy chủ có kiểm khoảng cách hay không **chưa xác minh live**.
+- **[Client] Thiền:** đài đá là `tan_vien.dai_da` (22,18, `r:34`) và `duoc_vien.dai_da_duoc` (8,7, `r:34`). `Player.sit()` gửi `meditate {on:1}` khi sit thành công; `Player.stand()` gửi `on:0`. `sit()` chặn PvP lock, đang bay chưa hạ cánh và đang ngồi; model có `canMeditate`. Tích luỹ exp bị giới hạn 60/phút; `addExp` không tăng khi đầy. Runner luôn gửi đứng dậy khi kết thúc phiên thiền. Server ACK/trạng thái thiền và yêu cầu ngồi đài đá trên server **chưa xác minh live**.
+- **[Client] Đột phá:** `Breakthrough.check()` kiểm realm tiếp theo, rule, Đạo Hạnh đầy, stage/flag/vật phẩm và điều kiện Sát Nghiệp nếu có. Luồng UI đột phá mở từ đài đá. `pay()` xóa vật phẩm theo rule; `Player.ascend()` đổi realm cục bộ và đặt exp về 0; hook Gateway gửi `breakthrough`. ACK `{ok, success, why}`, thứ tự tiêu hao so với ACK và headless nhận realm mới qua state hay mutation cục bộ **chưa xác minh live**. Dashboard yêu cầu `nextGate.ready === true`, gửi một lệnh duy nhất và hậu kiểm realm.
+- **[Client] Tưới/múc nước:** `Farm.canWater(plot)` là có cây, chưa tưới và chưa chín. Có thể tưới khi có cờ `ho_bich_thuy_da_muc` hoặc `linh_tuyen_thuy`; nếu chưa có cờ thì trừ một Linh Tuyền Thủy mỗi lần. `lake.scoop` mở nguồn vĩnh viễn từ `vuon_ca_nhan.ho_bich_thuy` (12,4, `r:48`), stage ≥8 và chưa mở. Luống `plot_*` nằm trong `duoc_vien`, không nằm trong Vườn Cá Nhân. Client cập nhật state cục bộ trong wrapper; ACK/hậu kiểm authoritative **chưa xác minh live**.
+
 ## 4. Nhu cầu vật phẩm tới tầng 7 [Suy ra]
 | Vật phẩm | Số lượng | Ghi chú |
 |---|---|---|

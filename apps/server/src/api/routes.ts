@@ -1366,10 +1366,62 @@ apiRouter.post('/accounts/:id/garden/harvest', requireEntitlement, async (req: R
     res.status(202).json({ success: true, data });
   } catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
 });
+apiRouter.post('/accounts/:id/garden/water', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-watering-needed' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
+  if (!body || Object.keys(body).some((key) => key !== 'plotIds') || !validPlots) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id);
+  try { const data = await workerPool.startGardenWater(id, body.plotIds as string[] | 'all-watering-needed' | undefined); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_water', targetType: 'account', targetId: id, detail: `count=${data.progress.total} status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/garden/scoop', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).length !== 0) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id);
+  try { const data = await workerPool.startGardenScoop(id); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_scoop', targetType: 'account', targetId: id, detail: `status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
 apiRouter.post('/accounts/:id/garden/cancel', requireEntitlement, async (req: Request, res: Response) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
   if (!body || Object.keys(body).length !== 1 || typeof body.operationId !== 'string' || body.operationId.length < 1 || body.operationId.length > 128) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
   try { res.json({ success: true, data: await workerPool.cancelGarden(String(req.params.id), body.operationId) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+
+apiRouter.get('/accounts/:id/cultivation/operation', async (req: Request, res: Response) => {
+  try { res.json({ success: true, data: await workerPool.getCultivationOperation(String(req.params.id)) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.get('/accounts/:id/cultivation', async (req: Request, res: Response) => {
+  try { res.json({ success: true, data: await workerPool.getCultivationState(String(req.params.id)) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/cultivation/cancel', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).length !== 1 || typeof body.operationId !== 'string' || body.operationId.length < 1 || body.operationId.length > 128) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  try { res.json({ success: true, data: await workerPool.cancelCultivation(String(req.params.id), body.operationId) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/alchemy/brew', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some((key) => !['recipeId', 'times'].includes(key)) || typeof body.recipeId !== 'string' || !/^[a-z0-9_-]{1,48}$/.test(body.recipeId)
+    || (body.times !== undefined && (!Number.isInteger(body.times) || Number(body.times) < 1 || Number(body.times) > 10))) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id); const times = body.times === undefined ? 1 : Number(body.times);
+  try { const data = await workerPool.startBrew(id, body.recipeId, times); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'alchemy_brew', targetType: 'account', targetId: id, detail: `recipeId=${body.recipeId} times=${data.progress.total} status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/cultivation/meditate', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some((key) => !['on', 'untilFull'].includes(key)) || typeof body.on !== 'boolean' || (body.untilFull !== undefined && typeof body.untilFull !== 'boolean') || (body.untilFull === true && body.on !== true)) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id);
+  try { const data = await workerPool.startMeditate(id, body.on, body.untilFull === true); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'cultivation_meditate', targetType: 'account', targetId: id, detail: `on=${body.on} untilFull=${body.untilFull === true} status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/cultivation/breakthrough', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some((key) => key !== 'useBaoMenh') || (body.useBaoMenh !== undefined && typeof body.useBaoMenh !== 'boolean')) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id); const useBaoMenh = body.useBaoMenh === true;
+  try { const data = await workerPool.startBreakthrough(id, useBaoMenh); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'cultivation_breakthrough', targetType: 'account', targetId: id, detail: `useBaoMenh=${useBaoMenh} status=${data.status}` }); res.status(202).json({ success: true, data }); }
   catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
 });
 

@@ -12,6 +12,7 @@ import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
 import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
+import type { CultivationOperation, CultivationState } from '../headless/cultivation.js';
 import type { VendorQuestSnapshot } from '../headless/vendor-runner.js';
 import type { VendorInventorySnapshot } from '../headless/vendor-runner.js';
 import { entitlement } from '../security/entitlement.js';
@@ -356,6 +357,7 @@ export class WorkerPool {
       autoResumeWaitMs: CONFIG.VENDOR_AUTO_RESUME_WAIT_MS,
       gardenAckTimeoutMs: CONFIG.GARDEN_ACK_TIMEOUT_MS,
       gardenCmdDelayMs: CONFIG.GARDEN_CMD_DELAY_MS,
+      meditateMaxMs: CONFIG.MEDITATE_MAX_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
@@ -643,9 +645,39 @@ export class WorkerPool {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
     const result = await active.startGardenHarvest(plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
+  public async startGardenWater(accountId: string, plotIds?: string[] | 'all-watering-needed'): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startGardenWater(plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async startGardenScoop(accountId: string): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startGardenScoop(); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
   public async cancelGarden(accountId: string, operationId: string): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
     const result = await active.cancelGarden(operationId); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async getCultivationOperation(accountId: string): Promise<CultivationOperation | null> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('VENDOR_NOT_RUNNING'); return active.getCultivationOperation();
+  }
+  public async getCultivationState(accountId: string): Promise<CultivationState> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('VENDOR_NOT_RUNNING'); return active.getCultivationState();
+  }
+  public async startBrew(accountId: string, recipeId: string, times: number): Promise<CultivationOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startBrew(recipeId, times); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async startMeditate(accountId: string, on: boolean, untilFull: boolean): Promise<CultivationOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startMeditate(on, untilFull); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async startBreakthrough(accountId: string, useBaoMenh: boolean): Promise<CultivationOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startBreakthrough(useBaoMenh); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async cancelCultivation(accountId: string, operationId: string): Promise<CultivationOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.cancelCultivation(operationId); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
 
   public async startDailyCheckin(accountId: string): Promise<DailyOperation> {
