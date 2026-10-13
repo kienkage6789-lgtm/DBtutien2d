@@ -196,3 +196,10 @@ Account runtime responses (REST and WebSocket) include `character`, either `null
 ### Auto tạm chờ vitals sau reconnect
 
 Account runtime có `vendor.autoResume`: `null` khi không chờ, hoặc `{ pending: true, since: number|null, expiresAt: number|null }` với epoch milliseconds khi Auto đang tạm dừng chờ HP/MP chính thức. Trường này được truyền qua REST/WebSocket và shard snapshot.
+
+
+### Vườn thuốc
+
+Các route `garden` yêu cầu session và quyền sở hữu như route account khác; tài khoản khác chỉ trả 404. GET vườn chỉ đọc dữ liệu runner hiện thời; shard cũ trả `VENDOR_DATA_STALE` (503). Trước khi vào game, `known:false`, số chưa biết là `null`. Các POST bị entitlement lock chặn như những thao tác ghi khác. `times` từ 1 đến 20, được cắt theo Dược Công; sow nhận `seedId` và danh sách tối đa 10 luống hoặc `all-empty`; harvest nhận danh sách luống hoặc `all-ready`.
+
+Garden operation có `id`, `kind`, `status`, `progress`, `results`, `error`, `startedAt`, `updatedAt`. Mỗi account chỉ chạy một thao tác vườn; command được gửi tuần tự, không retry ACK timeout. `GARDEN_COUNT_MISMATCH` dừng nếu Dược Công/hạt/cây trong túi không khớp sau ACK. Các mã lỗi gồm `NOT_IN_GARDEN`, `GARDEN_LOCKED`, `INSUFFICIENT_DUOC_CONG`, `PACK_LOCKED`, `NO_SEEDS`, `PLOT_NOT_EMPTY`, `PLOT_NOT_READY`, `OPERATION_IN_PROGRESS`, `CHARACTER_DOWN`, `AUTO_ACTIVE`, `HURT`, `ACK_TIMEOUT`. Rate limit theo middleware API chung. Chưa xác minh live hành động ACK/state authoritative, khoảng cách phía server, luống riêng hay chung và giới hạn tần suất phía game.

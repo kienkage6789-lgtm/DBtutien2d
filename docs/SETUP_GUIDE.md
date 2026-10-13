@@ -85,10 +85,10 @@ curl -s http://127.0.0.1:4000/health   # kiểm tra server sống
 1. **Đăng nhập** bằng tài khoản quản trị, đổi mật khẩu ở nút Quản lý tài khoản.
 2. **Proxy** (nếu `REQUIRE_PROXY=1`): vào tab Quản trị → Proxy, thêm proxy (chọn giao thức socks5/http, nhập `host:port` và tài khoản/mật khẩu). Nút kiểm tra proxy gọi ra ngoài qua chính proxy đó.
 3. **Thêm tài khoản game:** nút "Thêm Tài Khoản" (đạo hiệu + mật khẩu). **Bước này đăng nhập thật vào game để xác minh**: dùng đúng thông tin thật, tránh nhập thử mật khẩu giả.
-4. **Thanh trái** liệt kê tài khoản (tên, cảnh giới, HP, Linh lực, Thần thức, Giáp, Đạo Hạnh, Linh Thạch); ô tìm kiếm và bộ lọc trạng thái. Bấm một tài khoản để mở bảng chi tiết với các tab: Tổng quan, Bản đồ, Hằng ngày, Túi đồ, Auto, Nhật ký, Tài khoản.
+4. **Thanh trái** liệt kê tài khoản (tên, cảnh giới, HP, Linh lực, Thần thức, Giáp, Đạo Hạnh, Linh Thạch); ô tìm kiếm và bộ lọc trạng thái. Bấm một tài khoản để mở bảng chi tiết với các tab: Tổng quan, Bản đồ, Hằng ngày, Vườn thuốc, Túi đồ, Auto, Nhật ký, Tài khoản.
 5. **Chạy / Dừng** ở tiêu đề bảng. Bật **Auto** ở tab Auto (neo tại vị trí hiện tại). Luôn theo dõi `hurtCount`; tăng bất thường thì bấm Dừng.
 6. **Chơi:** nút "Chơi" mở trang game chính thức `https://tutien2d.online/` ở tab mới, chỉ bật khi bot của tài khoản đã dừng. "Sao chép đạo hiệu" chỉ sao chép tên đăng nhập, bạn tự đăng nhập trang game.
-7. **Túi đồ** hiện lưới vật phẩm (chỉ xem). **Linh Thạch** hiển thị ví, số nhận được hôm nay từ quái so với trần theo cảnh giới, và biến động từ lúc bật bot.
+7. **Vườn thuốc** cho phép đổi gói hạt, gieo và thu hoạch; tab hiển thị thời gian còn lại tới lúc thu hoạch. Tưới nước chưa được hỗ trợ. Nếu chưa ở Thảo Dược Cốc, dùng tab Bản đồ để di chuyển trước. **Túi đồ** hiện lưới vật phẩm (chỉ xem). **Linh Thạch** hiển thị ví, số nhận được hôm nay từ quái so với trần theo cảnh giới, và biến động từ lúc bật bot.
 
 ## 8. Cập nhật phiên bản
 ```bash

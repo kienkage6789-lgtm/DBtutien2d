@@ -27,6 +27,7 @@ import {
   type DailyStatus,
 } from './daily-quests.js';
 import { reachableMaps, type ReachableMap } from './map-route.js';
+import { GardenError, GardenOperations, type GardenOperation, type GardenSnapshot, type GardenPlotState } from './garden.js';
 import { FrameMetrics, type FrameMetricsSnapshot } from './frame-metrics.js';
 import {
   cooldownSecondsFromToast,
@@ -300,6 +301,8 @@ export interface VendorRunnerOptions {
   autoResumeWaitMs?: number;
   khuChangeTimeoutMs?: number;
   khuListTimeoutMs?: number;
+  gardenAckTimeoutMs?: number;
+  gardenCmdDelayMs?: number;
   supervisor?: Partial<AutoSupervisorConfig>;
   onSessionUpdated?: (session: AuthSession) => void;
   onLog?: VendorRunnerLogger;
@@ -405,6 +408,7 @@ export class VendorRunner {
   private supervisor: AutoSupervisor | null = null;
   private readonly walkNavigator: WalkNavigator;
   private readonly dailyQuests: DailyQuests;
+  private readonly gardenOperations: GardenOperations;
   public readonly dailyClient: DailyClient;
   private readonly disconnectListeners = new Set<() => void>();
   private supervisorUnsubscribe: (() => void) | null = null;
@@ -493,6 +497,7 @@ export class VendorRunner {
     this.walkNavigator = new WalkNavigator(this.createWalkClient());
     this.dailyClient = this.createDailyClient();
     this.dailyQuests = new DailyQuests(this.dailyClient);
+    this.gardenOperations = new GardenOperations(this.createGardenClient());
   }
 
   public getLifecycle(): VendorRunnerLifecycle { return this.lifecycle; }
@@ -546,6 +551,7 @@ export class VendorRunner {
 
   public async stop(): Promise<void> {
     this.cancelDailyForReason('runner_stopped');
+    this.cancelGardenForReason('runner_stopped');
     this.cancelMoveTo('runner_stopped');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('runner_stop');
@@ -575,6 +581,7 @@ export class VendorRunner {
   public async startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot> {
     if (this.lifecycle === 'stopped' || this.lifecycle === 'error' || !this.P || !this.env) throw new Error('VENDOR_NOT_RUNNING');
     this.cancelDailyForReason('auto_started');
+    this.cancelGardenForReason('auto_started');
     const wasResumePending = this.autoResumePending !== null;
     this.cancelAutoResume();
     this.autoRestoredAwaitingVitals = false;
@@ -707,7 +714,7 @@ export class VendorRunner {
   }
 
   public moveTo(request: WalkRequest): WalkOperation {
-    if (request.requester === 'user' && this.dailyQuests.isActive()) throw new DailyError('OPERATION_IN_PROGRESS');
+    if (request.requester === 'user' && (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running')) throw new DailyError('OPERATION_IN_PROGRESS');
     return this.walkNavigator.walkTo(request);
   }
 
@@ -762,7 +769,7 @@ export class VendorRunner {
     const player = this.getPlayer();
     if (this.isDown(player)) throw new KhuError('CHARACTER_DOWN');
     if (this.autoRequested || (this.supervisor?.getPhase() ?? 'idle') !== 'idle') throw new KhuError('AUTO_ACTIVE');
-    if (this.dailyQuests.isActive()) throw new KhuError('OPERATION_IN_PROGRESS');
+    if (this.dailyQuests.isActive() || this.gardenOperations.getOperation()?.status === 'running') throw new KhuError('OPERATION_IN_PROGRESS');
     const currentMove = this.walkNavigator.getOperation();
     if (currentMove && (currentMove.status === 'accepted' || currentMove.status === 'running')) {
       throw new KhuError('OPERATION_IN_PROGRESS');
@@ -1293,14 +1300,14 @@ export class VendorRunner {
     return { started: true, durationMs: typeof duration === 'number' && Number.isFinite(duration) ? Math.max(0, duration) * 1_000 : undefined, waterNear: bob !== null };
   }
 
-  private issueDailyCommand(command: string, action: () => unknown): Promise<DailyAck> {
+  private issueDailyCommand(command: string, action: () => unknown, timeoutMs = 5_000): Promise<DailyAck> {
     if (this.dailyAckWaiter) return Promise.resolve({ cmd: command, ok: false, why: 'OPERATION_IN_PROGRESS' });
     return new Promise<DailyAck>((resolve) => {
       const timer = setTimeout(() => {
         if (this.dailyAckWaiter?.command !== command) return;
         this.dailyAckWaiter = null;
         resolve({ cmd: command, ok: false, why: 'ACK_TIMEOUT' });
-      }, 5_000);
+      }, timeoutMs);
       this.dailyAckWaiter = { command, resolve, timer };
       try {
         const result = action();
@@ -1504,6 +1511,7 @@ export class VendorRunner {
       if (this.P.Game.scene?.update) this.P.Game.scene.update(dt);
       this.walkNavigator.tick();
       this.dailyQuests.tick();
+      this.checkGardenSafety();
       this.supervisor?.tick();
       this.probeVitals(now);
       this.checkVitalsConfirmation(now);
@@ -1626,6 +1634,147 @@ export class VendorRunner {
     this.stopAuto();
   }
 
+  private createGardenClient() {
+    return {
+      now: () => Date.now(),
+      read: () => {
+        const P = this.P as any;
+        const quest = P?.Quest;
+        const farm = P?.Farm;
+        const inventory = P?.Inventory;
+        const mapId = this.getMapId();
+        const seedsDef = Array.isArray(farm?.SEEDS) ? farm.SEEDS : [];
+        const seeds = seedsDef.map((def: any) => ({
+          seedId: typeof def?.seed === 'string' ? def.seed : '',
+          name: typeof P?.ITEMS?.[def?.seed]?.name === 'string' ? P.ITEMS[def.seed].name : (typeof def?.seed === 'string' ? def.seed : ''),
+          count: typeof inventory?.count === 'function' && typeof def?.seed === 'string' ? this.safeCount(inventory.count(def.seed)) : null,
+          growSec: Number.isFinite(def?.grow) ? def.grow : null, wetSec: Number.isFinite(def?.wet) ? def.wet : null,
+          tier: typeof def?.tier === 'string' ? def.tier : null,
+        }));
+        const plots = Array.from({ length: Number.isInteger(farm?.PLOT_COUNT) ? farm.PLOT_COUNT : 10 }, (_unused, i) => {
+          const id = `plot_${i + 1}`; const state = farm?.plot?.(id) ?? null; const def = state ? farm?.seedDef?.(state.seed) : null;
+          const remainSec = state && typeof farm?.remain === 'function' ? this.safeCount(farm.remain(id)) : null;
+          const plotState: GardenPlotState = !state ? 'empty' : remainSec === null ? 'unknown' : remainSec <= 0 ? 'ready' : 'growing';
+          return { id, index: i + 1, state: plotState, seedId: typeof state?.seed === 'string' ? state.seed : null,
+            seedName: typeof P?.ITEMS?.[state?.seed]?.name === 'string' ? P.ITEMS[state.seed].name : (state?.seed ?? null),
+            cropId: typeof def?.crop === 'string' ? def.crop : null,
+            cropName: typeof P?.ITEMS?.[def?.crop]?.name === 'string' ? P.ITEMS[def.crop].name : (def?.crop ?? null),
+            watered: typeof state?.wet === 'boolean' ? state.wet : null,
+            remainSec: state ? remainSec : null,
+            readyAt: state && Number.isFinite(state.at) && Number.isFinite(state.dur) ? state.at + state.dur : null };
+        });
+        const packs = (Array.isArray(quest?.SEED_PACKS) ? quest.SEED_PACKS : []).map((pack: any) => ({
+          id: typeof pack?.id === 'string' ? pack.id : '', name: typeof pack?.name === 'string' ? pack.name : '',
+          cost: Number.isFinite(pack?.cost) ? pack.cost : null, realm: typeof pack?.realm === 'string' ? pack.realm : null,
+          unlocked: typeof quest?.packUnlocked === 'function' ? !!quest.packUnlocked(pack) : null,
+          affordable: typeof P?.Progress?.duocCong === 'number' && Number.isFinite(pack?.cost) ? P.Progress.duocCong >= pack.cost : null,
+          give: (Array.isArray(pack?.give) ? pack.give : []).map((item: any[]) => ({ itemId: String(item?.[0] ?? ''), name: P?.ITEMS?.[item?.[0]]?.name ?? String(item?.[0] ?? ''), qty: Number.isFinite(item?.[1]) ? item[1] : null })),
+        }));
+        return {
+          inGame: this.connectionState() === 'IN_GAME', mapId, inGarden: mapId === 'duoc_vien',
+          down: this.isDown(this.getPlayer()), auto: this.autoRequested || !!P?.SceneWorld?.autoOn,
+          stage: Number.isFinite(quest?.stage) ? quest.stage : null,
+          duocCong: Number.isFinite(P?.Progress?.duocCong) ? P.Progress.duocCong : null,
+          plots, seeds, packs,
+          activeOtherOperation: this.walkNavigator.getOperation()?.status === 'accepted' || this.walkNavigator.getOperation()?.status === 'running' || this.dailyQuests.isActive(),
+          hurtCount: this.hurtCount,
+        };
+      },
+      issue: async (command: string, args: Record<string, unknown>) => {
+        const mapId = command === 'seed.buyPack' ? 'duoc_vien' : this.getMapId();
+        const objectId = command === 'seed.buyPack' ? 'dai_phu' : String(args.plot ?? '');
+        const prop = this.gardenProp(mapId, objectId);
+        if (!prop || !mapId) return { ok: false, why: 'GARDEN_TARGET_NOT_FOUND' };
+        const player = this.getPlayer();
+        if (!player || this.getMapId() !== mapId || Math.hypot(Number(player.x) - prop.x, Number(player.y) - prop.y) > (command === 'seed.buyPack' ? 46 : 34)) {
+          await this.walkGarden(prop, command === 'seed.buyPack' ? 40 : 30, mapId);
+        }
+        const ackTimeout = Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000;
+        const ack = await this.issueDailyCommand(command, () => this.P?.Gateway?.cmd?.(command, args, () => undefined), ackTimeout);
+        return { ok: ack.ok, ...(ack.why ? { why: ack.why } : {}) };
+      },
+      walk: async (point: { x: number; y: number }, radius: number, targetMapId?: string) => {
+        const op = this.walkNavigator.walkTo({ target: point, ...(targetMapId ? { targetMapId } : {}), arrivalRadius: radius, requester: 'garden', abortOnHurt: true });
+        const deadline = Date.now() + 120_000;
+        while (Date.now() < deadline) {
+          const current = this.walkNavigator.getOperation();
+          if (current?.operationId !== op.operationId) throw new GardenError('WALK_CANCELLED');
+          if (current.status === 'arrived') return;
+          if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new GardenError(current.reason ?? 'WALK_FAILED');
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        this.walkNavigator.cancel(op.operationId, 'garden_walk_timeout'); throw new GardenError('WALK_TIMEOUT');
+      },
+      wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      count: (itemId: string) => { const value = (this.P as any)?.Inventory?.count?.(itemId); return this.safeCount(value); },
+      record: (code: string, detail?: string) => this.recordLog(code, { detail: detail?.slice(0, 160) }),
+      ackTimeoutMs: Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000,
+      commandDelayMs: Number.isFinite(this.input.gardenCmdDelayMs) ? Math.max(100, Math.min(5_000, Math.trunc(this.input.gardenCmdDelayMs!))) : 400,
+    };
+  }
+
+  private gardenProp(mapId: string | null, propId: string): { x: number; y: number } | null {
+    const P = this.P as any;
+    const props = P?.SceneWorld?.map?.props;
+    let prop = Array.isArray(props) ? props.find((item: any) => item?.id === propId) : null;
+    if (!prop && mapId && Array.isArray(P?.MapData?.[mapId.toUpperCase()]?.props)) prop = P.MapData[mapId.toUpperCase()].props.find((item: any) => item?.id === propId);
+    if (!prop) return null;
+    const tile = Number(P?.CONFIG?.TILE_SIZE) || 32;
+    const x = Number.isFinite(prop.x) ? prop.x : Number.isFinite(prop.tx) ? prop.tx * tile + tile / 2 : NaN;
+    const y = Number.isFinite(prop.y) ? prop.y : Number.isFinite(prop.ty) ? prop.ty * tile + tile / 2 : NaN;
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  }
+
+  private async walkGarden(point: { x: number; y: number }, radius: number, targetMapId: string): Promise<void> {
+    const op = this.walkNavigator.walkTo({ target: point, targetMapId, arrivalRadius: radius, requester: 'garden', abortOnHurt: true });
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const current = this.walkNavigator.getOperation();
+      if (current?.operationId !== op.operationId) throw new GardenError('WALK_CANCELLED');
+      if (current.status === 'arrived') return;
+      if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new GardenError(current.reason ?? 'WALK_FAILED');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    this.walkNavigator.cancel(op.operationId, 'garden_walk_timeout');
+    throw new GardenError('WALK_TIMEOUT');
+  }
+
+  private safeCount(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
+
+  private checkGardenSafety(): void {
+    const op = this.gardenOperations.getOperation();
+    if (!op || op.status !== 'running') return;
+    const state = (this.P as any);
+    if (this.connectionState() !== 'IN_GAME') this.cancelGardenForReason('reconnect');
+    else if (this.isDown(this.getPlayer())) this.cancelGardenForReason('character_down');
+    else if (this.autoRequested || !!state?.SceneWorld?.autoOn) this.cancelGardenForReason('auto_started');
+    else if (this.hurtCount > this.gardenOperations.hurtBaseline()) this.cancelGardenForReason('hurt');
+  }
+
+  private cancelGardenForReason(reason: string): void {
+    const op = this.gardenOperations.getOperation();
+    if (op?.status === 'running') { try { this.gardenOperations.cancel(op.id); } catch { /* operation finished concurrently */ } }
+    if (op) {
+      const walk = this.walkNavigator.getOperation();
+      if (walk?.requester === 'garden' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, `garden_${reason}`);
+      this.cancelDailyAck(op.kind === 'buy-pack' ? 'seed.buyPack' : op.kind === 'sow' ? 'farm.sow' : 'farm.harvest');
+    }
+  }
+
+  public getGarden(): GardenSnapshot { return this.gardenOperations.getGarden(); }
+  public getGardenOperation(): GardenOperation | null { return this.gardenOperations.getOperation(); }
+  public startGardenBuyPack(packId: string, times = 1): GardenOperation { return this.gardenOperations.buyPack(packId, times); }
+  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty'): GardenOperation { return this.gardenOperations.sow(seedId, plotIds); }
+  public startGardenHarvest(plotIds?: string[] | 'all-ready'): GardenOperation { return this.gardenOperations.harvest(plotIds); }
+  public cancelGarden(operationId?: string): GardenOperation {
+    const operation = this.gardenOperations.cancel(operationId);
+    const walk = this.walkNavigator.getOperation();
+    if (walk?.requester === 'garden' && ['accepted', 'running'].includes(walk.status)) this.walkNavigator.cancel(walk.operationId, 'garden_cancelled');
+    const command = operation.kind === 'buy-pack' ? 'seed.buyPack' : operation.kind === 'sow' ? 'farm.sow' : 'farm.harvest';
+    this.cancelDailyAck(command);
+    return operation;
+  }
+
   private scheduleNextResumeProbe(now: number): void {
     if (!this.autoResumePending) return;
     const delay = Math.min(30_000, 5_000 * (2 ** this.autoResumePending.probeBackoffIndex));
@@ -1745,6 +1894,7 @@ export class VendorRunner {
       try { listener(); } catch { /* observer failures must not change reconnect behavior */ }
     }
     this.cancelDailyForReason('reconnecting');
+    this.cancelGardenForReason('reconnecting');
     this.cancelMoveTo('reconnecting');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('connection_closed');
@@ -2013,6 +2163,7 @@ export class VendorRunner {
 
   public startDailyCheckin(): DailyOperation {
     this.assertDailyRuntimeReady();
+    if (this.gardenOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
     const operation = this.dailyQuests.startCheckin();
     this.dailyStatusCache = null;
     return operation;
@@ -2020,6 +2171,7 @@ export class VendorRunner {
 
   public startDailySeed(taskId: string, runs = 1, options: { abortOnHurt?: boolean; maxHurt?: number } = {}): DailyOperation {
     this.assertDailyRuntimeReady();
+    if (this.gardenOperations.getOperation()?.status === 'running') throw new DailyError('OPERATION_IN_PROGRESS');
     const operation = this.dailyQuests.startSeedTask(taskId, runs, options);
     this.dailyStatusCache = null;
     return operation;

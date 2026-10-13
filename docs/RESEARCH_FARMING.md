@@ -68,3 +68,14 @@ Mỗi bước cần thử live với một tài khoản, có người giám sát
 
 ## 9. Cần xác minh live
 Hình dạng ACK của `seed.*`/`farm.*`; luống riêng hay chung; khoảng cách tối thiểu tới luống/Đại Phu/Hồ Nước; giới hạn tần suất lệnh; giờ đổi ngày của trần lượt Dược Công (client dùng giờ Việt Nam); `Quest.stage ≥ 8` của tài khoản thật.
+
+## 10. Đối chiếu trước triển khai dashboard — 2026-10-13
+
+- **[Client] Nguồn đọc:** `Farm.state` được khởi tạo trong `systems/farm.js`; `Farm.load(t.farm)` được gọi trong `Quest.load()` khi nạp save. Gateway xử lý gói `state` có `save` bằng `Utils.store.set(PROGRESS_KEY, t.save)` rồi gọi `Quest.load()`. `Progress.duocCong` được nạp từ `state.save.duocCong`; `Quest.save()` serialize `duocCong`, túi và các tiến độ. Client source cho thấy cập nhật qua gói `state` là đường đồng bộ; chưa xác minh live server luôn gửi `state` sau từng lệnh vườn/đổi gói hay cấu trúc ACK cụ thể.
+- **[Client] Gửi lệnh:** `farm.sow`, `farm.harvest`, `farm.water`, `Quest.buySeedPack` được Gateway bọc bằng `we(...)`. Hàm gốc thay đổi state/túi/điểm đồng bộ trước, wrapper mới gửi `Gateway.cmd(...)`. Headless nên gửi `Gateway.cmd` trực tiếp qua hàm runner ACK (ghép `rid` + `cmd`) để không áp dụng cục bộ thêm lần nữa và có thể chờ đúng ACK. Sau ACK phải đọc lại state/túi/điểm đồng bộ; nếu số lượng hoặc Dược Công không đổi đúng như mong đợi thì dừng `GARDEN_COUNT_MISMATCH`. Không tự hoàn tác dữ liệu cục bộ: save có thể đã được server xác nhận/ghi lại và một rollback dự đoán có nguy cơ lệch thêm; cần chờ state authoritative hoặc dừng để người dùng làm mới.
+- **[Client] Khoảng cách:** nhánh `herb_plot` dùng kiểm tra tương tác trong bán kính `r:34`; Đại Phu là NPC ở `duoc_vien`, prop tại ô (5,5), prop/NPC có `r:46`. Gieo/thu hoạch client cần nhân vật trong vùng tương tác của luống; menu đổi hạt cần tương tác Đại Phu. Chưa có bằng chứng phía mã client này cho biết máy chủ có kiểm tra các khoảng cách đó hay ngưỡng phía server là bao nhiêu.
+- **[Chưa xác minh live]:** ACK thật của `farm.*`/`seed.buyPack`, lý do từ chối; có phát `state` cập nhật sau mỗi lệnh hay không; luống cá nhân hay dùng chung; khoảng cách server; giới hạn tần suất; stage của tài khoản thật. Không gửi lệnh thử trên game thật trong giai đoạn này.
+
+## 11. Tình trạng tính năng
+
+Phần đổi gói, gieo, đếm ngược và thu hoạch được triển khai qua dashboard ở nhánh công việc 2026-10-13; tưới nước vẫn để dành bước sau. Trạng thái hoạt động, build/test và các điểm chưa xác minh được ghi trong đầu `docs/SESSION_LOG.md` sau khi hoàn tất kiểm tra.

@@ -3,6 +3,7 @@ import type { RunnerHandle, CachedValue, RunnerHandleLog } from './runner-handle
 import { registerRunnerHandleContract } from './runner-handle.contract.js';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -11,6 +12,7 @@ import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 
 const cache = <T>(value: T): CachedValue<T> => ({ value, ageMs: 0, stale: false });
 const emptySnapshot = { lifecycle: 'stopped', connection: 'DISCONNECTED', hurtCount: 0, mapId: null, khu: null, x: null, y: null, hp: null, mp: null, downed: null, character: null, moveTo: null, daily: null, dailyStatus: null } as unknown as VendorRunnerSnapshot;
+const emptyGarden = { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null, plots: [], seeds: [], packs: [], operation: null, at: 0 } as GardenSnapshot;
 const emptyDaily = { status: { today: null, stage: null, checkin: { done: false, total: null }, seedTasks: [], activeSeedTask: null, stones: null, duocCong: null, canhKho: null, namLinhChi: null, fishInBag: null }, current: null } as { status: DailyStatus; current: DailyOperation | null };
 
 /** Small contract double: it models only the public handle boundary, without any game transport. */
@@ -33,6 +35,12 @@ class FakeRunnerHandle implements RunnerHandle {
   public getKhuProbe() { return cache({ events: [], mapId: null, khu: null, soKhu: null }); }
   public getDailySnapshot() { return cache(emptyDaily); }
   public getInventory() { return Promise.resolve(JSON.parse(JSON.stringify(this.inventory)) as typeof this.inventory); }
+  public getGarden() { return Promise.resolve(JSON.parse(JSON.stringify(emptyGarden)) as GardenSnapshot); }
+  public getGardenOperation() { return Promise.resolve(null); }
+  public startGardenBuyPack(_packId: string, _times?: number) { return Promise.resolve({ id: 'garden', kind: 'buy-pack', status: 'running', progress: { current: 0, total: 1 }, results: [], startedAt: 1, updatedAt: 1 } as GardenOperation); }
+  public startGardenSow(_seedId: string, _plotIds?: string[] | 'all-empty') { return this.startGardenBuyPack(''); }
+  public startGardenHarvest(_plotIds?: string[] | 'all-ready') { return this.startGardenBuyPack(''); }
+  public cancelGarden(_operationId?: string) { return Promise.resolve({ ...({ id: 'garden', kind: 'buy-pack', status: 'cancelled', progress: { current: 0, total: 1 }, results: [], startedAt: 1, updatedAt: 1 } as GardenOperation) }); }
   public startAuto(): Promise<AutoSupervisorSnapshot> { return this.down ? Promise.reject(new Error('VENDOR_CHARACTER_DOWN')) : Promise.resolve({ phase: 'farming' } as AutoSupervisorSnapshot); }
   public stopAuto(): Promise<AutoSupervisorSnapshot> { return Promise.resolve({ phase: 'idle' } as AutoSupervisorSnapshot); }
   public walkTo(request: WalkRequest): Promise<WalkOperation> {

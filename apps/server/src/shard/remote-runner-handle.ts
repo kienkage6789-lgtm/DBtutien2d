@@ -1,6 +1,7 @@
 import type { AuthSession } from '@tutien2d/core-client';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -98,6 +99,12 @@ export class RemoteRunnerHandle implements RunnerHandle {
     if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE'));
     return this.call<VendorInventorySnapshot>('getInventory').then(clone);
   }
+  public getGarden(): Promise<GardenSnapshot> { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenSnapshot>('getGarden').then(clone); }
+  public getGardenOperation() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenOperation | null>('getGardenOperation').then(clone); }
+  public startGardenBuyPack(packId: string, times = 1) { return this.call<GardenOperation>('startGardenBuyPack', packId, times); }
+  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty') { return this.call<GardenOperation>('startGardenSow', seedId, plotIds); }
+  public startGardenHarvest(plotIds?: string[] | 'all-ready') { return this.call<GardenOperation>('startGardenHarvest', plotIds); }
+  public cancelGarden(operationId?: string) { return this.call<GardenOperation>('cancelGarden', operationId); }
   private call<T>(method: string, ...args: unknown[]): Promise<T> { return this.transport.call<T>(this.accountId, method, args); }
   public startAuto(anchor?: AutoAnchor) { return this.call<AutoSupervisorSnapshot>('startAuto', anchor); }
   public stopAuto() { return this.call<AutoSupervisorSnapshot>('stopAuto'); }

@@ -1670,3 +1670,14 @@ ull`/rỗng.
 - [x] Fault injection trực tiếp nguồn (stop ngay khi timeout, bỏ chặn hurt, không hủy khi stopAuto, bỏ deadline, bỏ chặn down) đều làm test thất bại; đã khôi phục nguồn.
 - [x] Build thay thế TypeScript core/server/web + Vite pass; server 210/210 trên 33 file; web 70/70 trên 13 file. `pnpm build` không chạy vì shim gọi executable `pnpm` không có PATH.
 - [ ] Live chưa xác minh: Gateway client tiếp tục `seq` khi reconnect hay khởi động lại; 10 probe có đủ để chạm `you` không. Trước live cần một bot duy nhất và theo dõi `hurtCount`/`lastHurtAt`.
+
+
+## Checklist Vườn thuốc — 2026-10-13
+
+- [x] Nguồn client đối chiếu và ghi trong `RESEARCH_FARMING.md`: farm/duocCong từ save, `Farm.load`, wrapper cục bộ, bán kính client; không tuyên bố xác minh live.
+- [x] Garden types/manager, getter async và RPC shard allowlist; dữ liệu vườn không phát ở snapshot định kỳ; GET account route thừa hưởng ownership; POST có entitlement, log/audit tóm tắt.
+- [x] Mỗi đổi/gieo/thu có ACK tuần tự, không retry, hậu kiểm counts, hủy khi stop/reconnect/down/Auto/hurt, delay/timeout cấu hình; dùng WalkNavigator và abortOnHurt.
+- [x] Tab Vườn thuốc: đọc/đếm ngược, gói, chọn hạt/luống, xác nhận hai bước, thu hoạch từng/all, tiến độ/hủy và khóa thao tác.
+- [x] Server 221/221; web 72/72. Direct tsc core/server/web và Vite build pass; `pnpm build` không chạy vì executable pnpm không có PATH và shim không có pnpm con.
+- [ ] Fault injection trực tiếp đầy đủ theo danh sách yêu cầu chưa chạy; garden unit tests cover ACK timeout/no retry, tuần tự ACK, down/hurt, luống chín, hậu kiểm số lượng và quyền sở hữu route.
+- [ ] Chưa xác minh browser 334 px hoặc game thật. ACK/state sync thật, bán kính server, luống chung/riêng, rate limit game chưa xác minh. Không mở game/network.

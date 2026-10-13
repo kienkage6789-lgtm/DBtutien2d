@@ -11,6 +11,7 @@ import type { WalkOperation, WalkRequest } from '../headless/walk-navigator.js';
 import type { ReachableMap } from '../headless/map-route.js';
 import type { RuntimeEngine } from '../headless/engine-selection.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
 import type { VendorInventorySnapshot } from '../headless/vendor-runner.js';
 import { entitlement } from '../security/entitlement.js';
 import { hasRunnerMemoryCapacity } from './capacity.js';
@@ -352,6 +353,8 @@ export class WorkerPool {
       reconnectMaxDelayMs: CONFIG.RECONNECT_MAX_DELAY_MS,
       reconnectGiveUpMs: CONFIG.RECONNECT_GIVE_UP_MS,
       autoResumeWaitMs: CONFIG.VENDOR_AUTO_RESUME_WAIT_MS,
+      gardenAckTimeoutMs: CONFIG.GARDEN_ACK_TIMEOUT_MS,
+      gardenCmdDelayMs: CONFIG.GARDEN_CMD_DELAY_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),
@@ -369,6 +372,13 @@ export class WorkerPool {
         const message = `Vendor ${event.code}${event.reasonCode ? ` (${event.reasonCode})` : ''}${event.detail ? ` ${event.detail}` : ''}`;
         const saved = db.addLog(accountId, level, 'VendorRunner', message);
         wsHub.broadcastLog(saved);
+        if (/^garden_(buy_pack|sow|harvest)_failed$/.test(event.code)) {
+          const account = db.getAccountById(accountId);
+          if (account?.ownerId) wsHub.broadcastSystemAlertToOwner(account.ownerId, { reason: 'garden_operation_failed', message: 'Thao tác vườn thuốc đã dừng giữa chừng. Hãy làm mới trạng thái trước khi thao tác tiếp.' });
+          db.addAuditLog({ actorId: null, action: event.code, targetType: 'account', targetId: accountId, detail: (event.detail ?? 'failed').slice(0, 160) });
+        } else if (/^garden_(buy_pack|sow|harvest)_done$/.test(event.code)) {
+          db.addAuditLog({ actorId: null, action: event.code, targetType: 'account', targetId: accountId, detail: (event.detail ?? 'done').slice(0, 160) });
+        }
         if (event.code === 'auth_failed') {
           const authError = event.reasonCode ?? 'AUTH_FAILED';
           db.updateAccount(accountId, { status: 'error', authError });
@@ -602,6 +612,33 @@ export class WorkerPool {
     const active = this.activeVendors.get(accountId);
     if (!active) throw new Error('VENDOR_NOT_RUNNING');
     return active.getInventory();
+  }
+
+  public async getGarden(accountId: string): Promise<GardenSnapshot> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    return active.getGarden();
+  }
+  public async getGardenOperation(accountId: string): Promise<GardenOperation | null> {
+    const active = this.activeVendors.get(accountId);
+    if (!active) throw new Error('VENDOR_NOT_RUNNING');
+    return active.getGardenOperation();
+  }
+  public async startGardenBuyPack(accountId: string, packId: string, times: number): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startGardenBuyPack(packId, times); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async startGardenSow(accountId: string, seedId: string, plotIds?: string[] | 'all-empty'): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startGardenSow(seedId, plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async startGardenHarvest(accountId: string, plotIds?: string[] | 'all-ready'): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.startGardenHarvest(plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+  }
+  public async cancelGarden(accountId: string, operationId: string): Promise<GardenOperation> {
+    const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
+    const result = await active.cancelGarden(operationId); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
 
   public async startDailyCheckin(accountId: string): Promise<DailyOperation> {

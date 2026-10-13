@@ -58,3 +58,10 @@ Dashboard web có sidebar lọc theo trạng thái/tìm tên và bảng chi ti�
 HP/MP hiển thị khi vitals fresh và chưa quá hạn; thanh rỗng/“—” biểu thị chưa biết. Cảnh giới, Thần thức, Giáp và Đạo Hạnh vẫn “—” trong giai đoạn 1 vì server chưa có `character`. Chế độ Túi đồ nhúng sử dụng lại InventoryModal; các tab còn lại dùng component hiện có. AccountCard đã xóa sau khi bảng chi tiết nhận lại đầy đủ các thao tác.
 
 Kiểm tra: web 63/63, server 192/192, TypeScript core/server/web và Vite production build pass; năm fault injection bị test bắt và khôi phục. Chưa xác minh trực quan ở 1280/768/334 px vì CUA không có browser khả dụng.
+
+
+## Vườn thuốc — 2026-10-13
+
+Tab Vườn thuốc hiển thị Dược Công, 10 luống, hạt và gói; luống đang lớn có đồng hồ theo `readyAt`, luống sẵn sàng có thao tác thu hoạch. Có đổi gói theo số lần, gieo vào luống trống hoặc luống được chọn, thu hoạch từng luống hoặc tất cả, xác nhận hai bước, tiến độ/hủy và lỗi tiếng Việt. Các nút ghi tuân theo entitlement lock; bố cục dùng lưới 5 cột, không dùng HTML thô. Web sanitizer giữ số chưa biết là `null`. Tưới nước chưa được triển khai.
+
+Kiểm tra logic: web 72/72; Vite build pass. Chưa xác minh trực quan ở 334 px vì không có browser CUA khả dụng trong phiên này.

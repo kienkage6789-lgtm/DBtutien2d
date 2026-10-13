@@ -14,6 +14,7 @@ import { vendorAutoErrorResponse } from './vendor-auto-errors.js';
 import { moveToErrorResponse } from './move-to-errors.js';
 import { khuErrorResponse } from './khu-errors.js';
 import { dailyErrorResponse } from './daily-errors.js';
+import { gardenErrorResponse } from './garden-errors.js';
 import { entitlement } from '../security/entitlement.js';
 import { entitlementWatcher } from '../orchestrator/entitlement-runtime.js';
 import { processMetrics } from '../orchestrator/process-metrics.js';
@@ -1303,6 +1304,61 @@ apiRouter.post('/accounts/:id/daily/cancel', requireEntitlement, async (req: Req
     const response = dailyErrorResponse(error);
     res.status(response.status).json(response.body);
   }
+});
+
+apiRouter.get('/accounts/:id/garden', async (req: Request, res: Response) => {
+  try { res.json({ success: true, data: await workerPool.getGarden(String(req.params.id)) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.get('/accounts/:id/garden/operation', async (req: Request, res: Response) => {
+  try { res.json({ success: true, data: await workerPool.getGardenOperation(String(req.params.id)) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/garden/buy-pack', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).some((key) => !['packId', 'times'].includes(key)) || typeof body.packId !== 'string' || !/^[a-z0-9_-]{1,32}$/.test(body.packId)
+    || (body.times !== undefined && (!Number.isInteger(body.times) || Number(body.times) < 1 || Number(body.times) > 20))) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return;
+  }
+  const id = String(req.params.id); const times = body.times === undefined ? 1 : Number(body.times);
+  try {
+    const data = await workerPool.startGardenBuyPack(id, body.packId, times);
+    db.addLog(id, 'info', 'Garden', `garden_buy_pack pack=${body.packId} times=${data.progress.total} status=${data.status}`);
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_buy_pack', targetType: 'account', targetId: id, detail: `packId=${body.packId} times=${data.progress.total} status=${data.status}` });
+    res.status(202).json({ success: true, data });
+  } catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/garden/sow', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-empty' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
+  if (!body || Object.keys(body).some((key) => !['seedId', 'plotIds'].includes(key)) || typeof body.seedId !== 'string' || !/^hat_[a-z0-9_]{1,40}$/.test(body.seedId) || !validPlots) {
+    res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return;
+  }
+  const id = String(req.params.id);
+  try {
+    const data = await workerPool.startGardenSow(id, body.seedId, body.plotIds as string[] | 'all-empty' | undefined);
+    db.addLog(id, 'info', 'Garden', `garden_sow seed=${body.seedId} count=${data.progress.total} status=${data.status}`);
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_sow', targetType: 'account', targetId: id, detail: `seedId=${body.seedId} count=${data.progress.total} status=${data.status}` });
+    res.status(202).json({ success: true, data });
+  } catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/garden/harvest', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-ready' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
+  if (!body || Object.keys(body).some((key) => key !== 'plotIds') || !validPlots) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  const id = String(req.params.id);
+  try {
+    const data = await workerPool.startGardenHarvest(id, body.plotIds as string[] | 'all-ready' | undefined);
+    db.addLog(id, 'info', 'Garden', `garden_harvest count=${data.progress.total} status=${data.status}`);
+    db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_harvest', targetType: 'account', targetId: id, detail: `count=${data.progress.total} status=${data.status}` });
+    res.status(202).json({ success: true, data });
+  } catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
+});
+apiRouter.post('/accounts/:id/garden/cancel', requireEntitlement, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
+  if (!body || Object.keys(body).length !== 1 || typeof body.operationId !== 'string' || body.operationId.length < 1 || body.operationId.length > 128) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  try { res.json({ success: true, data: await workerPool.cancelGarden(String(req.params.id), body.operationId) }); }
+  catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
 });
 
 apiRouter.get('/accounts/:id/logs', (req: Request, res: Response) => {

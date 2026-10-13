@@ -169,6 +169,17 @@ export function registerRunnerHandleContract(name: string, create: CreateRunnerH
     const second = await handle.getInventory();
     assert.equal(second.items.some((item) => item.id === 'mutated'), false);
   });
+
+  test(`${name}: garden reads are async JSON copies and keep unknown values null`, timeout, async (t) => {
+    const fixture = await create(); const { handle } = fixture;
+    t.after(async () => { try { await handle.stop(); } finally { await fixture.forceStop?.(); } });
+    const first = await handle.getGarden();
+    assert.equal(first.known, false);
+    assert.equal(first.duocCong, null);
+    first.plots.push({ id: 'mutated', index: 99, state: 'empty', seedId: null, seedName: null, cropId: null, cropName: null, watered: null, remainSec: null, readyAt: null });
+    const second = await handle.getGarden();
+    assert.equal(second.plots.some((plot) => plot.id === 'mutated'), false);
+  });
 }
 
 function errorCode(error: unknown): string | undefined {

@@ -1,6 +1,7 @@
 import type { AuthSession } from '@tutien2d/core-client';
 import type { AutoAnchor, AutoSupervisorSnapshot } from '../headless/auto-supervisor.js';
 import type { DailyOperation, DailyStatus } from '../headless/daily-quests.js';
+import type { GardenOperation, GardenSnapshot } from '../headless/garden.js';
 import type { FrameMetricsSnapshot } from '../headless/frame-metrics.js';
 import type { KhuChangeResult, KhuInfo, KhuList } from '../headless/khu-change.js';
 import type { ReachableMap } from '../headless/map-route.js';
@@ -24,6 +25,12 @@ export interface RunnerHandle {
   getKhuProbe(): CachedValue<ReturnType<VendorRunner['getKhuProbe']>>;
   getDailySnapshot(force?: boolean): CachedValue<{ status: DailyStatus | null; current: DailyOperation | null }>;
   getInventory(): Promise<VendorInventorySnapshot>;
+  getGarden(): Promise<GardenSnapshot>;
+  getGardenOperation(): Promise<GardenOperation | null>;
+  startGardenBuyPack(packId: string, times?: number): Promise<GardenOperation>;
+  startGardenSow(seedId: string, plotIds?: string[] | 'all-empty'): Promise<GardenOperation>;
+  startGardenHarvest(plotIds?: string[] | 'all-ready'): Promise<GardenOperation>;
+  cancelGarden(operationId?: string): Promise<GardenOperation>;
   startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot>;
   stopAuto(): Promise<AutoSupervisorSnapshot>;
   walkTo(request: WalkRequest): Promise<WalkOperation>;
@@ -81,6 +88,12 @@ export class InProcessRunnerHandle implements RunnerHandle {
     }
   }
   public getInventory() { return Promise.resolve().then(() => this.runner.getInventory()).then(jsonClone); }
+  public getGarden() { return Promise.resolve().then(() => this.runner.getGarden()).then(jsonClone); }
+  public getGardenOperation() { return Promise.resolve().then(() => this.runner.getGardenOperation()).then(jsonClone); }
+  public startGardenBuyPack(packId: string, times = 1) { return Promise.resolve().then(() => this.runner.startGardenBuyPack(packId, times)).then(jsonClone); }
+  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty') { return Promise.resolve().then(() => this.runner.startGardenSow(seedId, plotIds)).then(jsonClone); }
+  public startGardenHarvest(plotIds?: string[] | 'all-ready') { return Promise.resolve().then(() => this.runner.startGardenHarvest(plotIds)).then(jsonClone); }
+  public cancelGarden(operationId?: string) { return Promise.resolve().then(() => this.runner.cancelGarden(operationId)).then(jsonClone); }
   public startAuto(anchor?: AutoAnchor) { return this.gateway.startAuto(anchor).then(jsonClone); }
   public stopAuto() { return Promise.resolve().then(() => this.gateway.stopAuto()).then(jsonClone); }
   public walkTo(request: WalkRequest) { return Promise.resolve().then(() => this.gateway.walkTo(request)).then(jsonClone); }

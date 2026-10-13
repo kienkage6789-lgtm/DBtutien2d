@@ -1,0 +1,21 @@
+# Nhiệm vụ: Vườn thuốc — bản sửa 1 (đi tới gần luống/Đại Phu trước khi gửi lệnh; bổ sung test còn thiếu)
+
+Bối cảnh: đợt trước đã làm `apps/server/src/headless/garden.ts` (+ `garden.test.ts`), runner, API, tab "Vườn thuốc". Tôi (người kiểm tra) phát hiện hai lỗi và Codex cũng báo "chưa chạy đủ phép phá thử":
+1. **`GardenClient.walk` được khai báo và `vendor-runner.ts` (khoảng dòng 1696) đã cài đặt, nhưng `GardenOperations` KHÔNG BAO GIỜ gọi nó.** Hiện bot gửi `farm.sow`/`farm.harvest`/`seed.buyPack` ngay tại chỗ đang đứng. Client chính thức bắt nhân vật tới gần: luống `herb_plot` có `r:34` (ô (3..7,4) và (3..7,6) của `duoc_vien`, 1 ô = 32 px, tâm ô = `tx*32+16, ty*32+16`), Đại Phu là prop `id:"dai_phu"` tại ô (14,8) `r:48` (đọc `world/mapdata.js`, CHỈ ĐỌC). Máy chủ có kiểm khoảng cách hay không là [Chưa xác minh live], nên phải đi tới đủ gần TRƯỚC khi gửi mỗi lệnh.
+2. **Phép phá thử "gieo vào luống đã có cây" (xoá dòng `PLOT_NOT_EMPTY`) làm test KHÔNG fail** — thiếu test.
+
+Đọc `AGENTS.md`, `docs/PROMPT_GARDEN.md` (phạm vi gốc), `docs/RESEARCH_FARMING.md`, `docs/SESSION_LOG.md` (mục đầu), `apps/server/src/headless/garden.ts`, `garden.test.ts`, `vendor-runner.ts` (`createGardenClient`, `walk`), `walk-navigator.ts` (`walkTo`: đích toạ độ + bán kính tới nơi, huỷ khi hurt/gục/Auto), mã client chỉ đọc `vendor/tutien2d-public-client/2026-10-06/src/scenes/world.js` (nhánh `herb_plot` và NPC Đại Phu: bán kính tương tác).
+
+Không chạm game thật, không mở mạng ngoài, không đọc `data/`/`.env*`, không sửa `vendor/` hay `auto-supervisor.ts`, không commit. KHÔNG tạo tài khoản qua server thật. Test dùng socket giả/đồng hồ tiêm.
+
+## Việc cần làm
+1. **Đi tới gần trước khi gửi lệnh.** Trong `GardenOperations`, trước MỖI lệnh `farm.sow`/`farm.harvest` (mỗi luống) và trước `seed.buyPack` (một lần đầu thao tác, rồi chỉ đi lại nếu đã lệch xa), nếu khoảng cách hiện tại tới tâm luống / vị trí Đại Phu lớn hơn bán kính tương tác an toàn (dùng `bán kính client − biên độ ~8 px`, ví dụ luống ≤ 26 px, Đại Phu ≤ 38 px; hằng số rõ ràng, đặt tên, có chú thích nguồn), gọi `client.walk(point, radius)` rồi CHỜ tới nơi (hoặc thất bại) trước khi gửi lệnh. Dùng `WalkNavigator` có sẵn qua `walk` đã cài (không đường tắt qua portal, giữ `abortOnHurt`). Không gửi lệnh nếu `walk` thất bại: dừng với mã `WALK_FAILED` (kèm lý do của navigator nếu có), không retry mù.
+2. Khi đi lại giữa các luống liên tiếp ở cùng một cụm (khoảng cách đã ≤ bán kính) thì KHÔNG đi, chỉ gửi lệnh (tránh phí thời gian). Kiểm lại `checkpoint()` (gục/Auto/hurt/huỷ/mất kết nối) SAU khi đi xong và TRƯỚC khi gửi lệnh.
+3. Thêm vị trí vào dữ liệu để test được: toạ độ tâm 10 luống và Đại Phu lấy từ `P.MapData.get('duoc_vien')` (props `plot_*`, `dai_phu`) nếu có, không có thì dùng hằng số suy từ `mapdata.js` đã ghi chú nguồn; không đoán cho map khác.
+4. **Bổ sung test** (đồng hồ tiêm, `walk` giả ghi lại lời gọi): (a) gọi `walk` trước lệnh khi ở xa và KHÔNG gọi khi đã đủ gần; (b) `walk` thất bại → `WALK_FAILED`, không có lệnh game nào được gửi; (c) gục/Auto/hurt giữa lúc đi → dừng, không gửi lệnh; (d) **gieo với `plotIds` chứa luống đã có cây → `PLOT_NOT_EMPTY`, không gửi lệnh nào** (test phải fail khi xoá kiểm tra đó); (e) thu hoạch luống chưa chín → `PLOT_NOT_READY` (đã có, giữ); (f) hậu kiểm hạt/Dược Công/linh thảo (đã có, giữ).
+5. Cập nhật tài liệu: `docs/CONTROL_PLANE_API.md` (mã lỗi `WALK_FAILED`), `docs/RESEARCH_FARMING.md` (đã đi tới gần trước lệnh; khoảng cách phía máy chủ vẫn chưa xác minh), `docs/SESSION_LOG.md` (mục mới Ở ĐẦU), `docs/FIX_GUIDE.md`.
+
+## Kiểm tra bắt buộc
+- Mốc: server 221/221, web 72/72 — ghi lại; không được tụt.
+- Phá thử sửa TRỰC TIẾP NGUỒN, test phải FAIL gọn không treo, rồi khôi phục: (i) xoá lời gọi `walk` trước lệnh, (ii) gửi lệnh dù `walk` thất bại, (iii) xoá kiểm `PLOT_NOT_EMPTY`, (iv) xoá kiểm `PLOT_NOT_READY`, (v) bỏ `checkpoint()` sau khi đi, (vi) bán kính đi tới lớn hơn bán kính tương tác của client.
+- `pnpm build` (nếu không có `pnpm` trong PATH: `%TEMP%\pnpmshim\pnpm.cmd`; nếu vẫn không chạy được thì nói rõ và chạy trực tiếp `tsc`/`vite build`/`vitest`), web test, từng file test liên quan, toàn bộ test server. Báo cáo bảng xong/chặn/chưa xác minh; KHÔNG tuyên bố xong nếu còn test fail; nói rõ phần nào CHƯA chạy.

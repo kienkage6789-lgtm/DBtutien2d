@@ -213,6 +213,8 @@ registerRunnerHandleContract('RemoteRunnerHandle', () => {
       if (method === 'questProbe') return { act: args[0], at: 1, result: null } as T;
       if (method === 'khuProbe') return { sent: true, at: 1, x: null, y: null, mapId: null, khu: null } as T;
       if (method === 'getInventory') return inventoryReference as T;
+      if (method === 'getGarden') return { known: false, mapId: null, inGarden: false, unlocked: null, duocCong: null, plots: [], seeds: [], packs: [], operation: null, at: 1 } as T;
+      if (method === 'getGardenOperation') return null as T;
       throw new Error('SHARD_METHOD_NOT_ALLOWED');
     },
   };

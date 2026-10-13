@@ -1,3 +1,14 @@
+# 2026-10-13 — Dashboard Vườn thuốc (giai đoạn đầu)
+
+Mốc trước việc theo yêu cầu: server 210/210, web 70/70. Kết quả sau thay đổi: server 221/221 trên các file test trong `apps/server/src`; web 72/72 trên 14 file.
+
+- Đã thêm tab Vườn thuốc, đọc garden theo yêu cầu qua RPC riêng (không nằm trong snapshot 500 ms), API quyền sở hữu, và các thao tác đổi gói / gieo / thu hoạch tuần tự.
+- Headless gửi `seed.buyPack`, `farm.sow`, `farm.harvest` trực tiếp qua `Gateway.cmd` và ACK ghép theo `cmd` như đường ACK sẵn có; không gọi hàm client có wrapper `we(...)` vì các hàm đó sửa dữ liệu cục bộ trước khi gửi. Sau ACK chờ state túi/điểm đồng bộ; mismatch dừng `GARDEN_COUNT_MISMATCH`, không retry.
+- Navigator được dùng để tới prop Đại Phu/luống theo bán kính client. Garden dừng khi ACK từ chối/quá hạn, gục, reconnect, stop, hủy, Auto hoặc hurt; khóa chéo với daily/moveTo/khu. Nút xác nhận hai bước, đồng hồ harvest và hậu kiểm counts đã có.
+- Tài liệu nghiên cứu đã ghi nguồn `state.save.farm`, `state.save.duocCong`, nơi gọi `Farm.load`, thứ tự áp dụng cục bộ của client, bán kính client và các điểm chưa xác minh.
+- Lệnh: `pnpm build` không chạy (pnpm không có PATH); pnpm shim cũng không gọi được pnpm con. Build thay thế: `tsc` server/core-client/web pass; Vite production build pass với `--configLoader runner`. Test server 221/221 (tsx chạy bằng preload `os.userInfo` và `DATA_DIR` tạm), web 72/72 với `vitest --configLoader runner`.
+- Còn thiếu xác minh: visual browser 334 px; không có game/live/network; ACK thật và trạng thái sync, ngưỡng khoảng cách phía server, luống chung/riêng, giới hạn tần suất. Fault injection trực tiếp toàn bộ danh sách prompt chưa chạy; garden unit coverage hiện kiểm tra caps, tuần tự ACK, refusal/no retry, hậu kiểm số lượng, hurt, luống không chín, giới hạn hạt, gates và JSON copy.
+
 # 2026-10-13 — Giữ Auto chờ HP có giới hạn sau reconnect
 
 Mốc trước nhiệm vụ theo yêu cầu: server 206/206, web 68/68. Đã xác nhận trong mã chuỗi tái hiện: reconnect xóa `lastVitalsAt`; khi reconnect khôi phục Auto, `autoStartedAt` bắt đầu lại; nếu hết `VITALS_CONFIRM_MS` (10 s) chưa có `you`/`hurt`/`revived`, logic cũ gọi `stopAuto()`, đặt `autoRequested=false`; sau đó `probeVitals()` không còn điều kiện chạy và `vitals.fresh` tiếp tục false. Test FakeSocket tái hiện cả trường hợp này với `autoResumeWaitMs=0` và kiểm tra không có probe mới sau khi dừng.
