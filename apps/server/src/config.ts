@@ -63,6 +63,7 @@ const SHARD_STOP_GRACE_MS = boundedEnvInt(process.env.SHARD_STOP_GRACE_MS, 5_000
 const SHARD_STALE_KILL_MS = boundedEnvInt(process.env.SHARD_STALE_KILL_MS, 30_000, 0, 3_600_000);
 const RECONNECT_MAX_DELAY_MS = boundedEnvInt(process.env.RECONNECT_MAX_DELAY_MS, 60_000, 1_000, 300_000);
 const RECONNECT_GIVE_UP_MS = boundedEnvInt(process.env.RECONNECT_GIVE_UP_MS, 1_800_000, 0, 86_400_000);
+const VENDOR_AUTO_RESUME_WAIT_MS = boundedEnvInt(process.env.VENDOR_AUTO_RESUME_WAIT_MS, 300_000, 0, 1_800_000);
 // Chu kỳ vòng lặp mô phỏng của mỗi bot (ms). 16 = ~60 Hz (mặc định, hành vi gốc). Tăng (vd 33 = ~30 Hz) giảm CPU nhưng
 // làm thô nhịp di chuyển/đánh: chỉ đổi sau khi thử live từng bước nhỏ. Kẹp trong 8..50 (dt tối đa 0,05 s của client).
 const VENDOR_LOOP_INTERVAL_MS = Math.min(50, Math.max(8, parseNonNegativeInt(process.env.VENDOR_LOOP_INTERVAL_MS, 16)));
@@ -137,6 +138,7 @@ export const CONFIG = {
   SHARD_STALE_KILL_MS,
   RECONNECT_MAX_DELAY_MS,
   RECONNECT_GIVE_UP_MS,
+  VENDOR_AUTO_RESUME_WAIT_MS,
   VENDOR_LOOP_INTERVAL_MS,
   VENDOR_ALWAYS_RUN,
   VENDOR_HALT_MODE,

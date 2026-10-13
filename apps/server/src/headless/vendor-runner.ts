@@ -114,6 +114,7 @@ export interface VendorRunnerSnapshot {
   connection: 'DISCONNECTED' | 'CONNECTING' | 'IN_GAME' | 'RECONNECTING';
   reconnectAttempts?: number;
   autoRequested: boolean;
+  autoResume: { pending: boolean; since: number | null; expiresAt: number | null } | null;
   supervisor: AutoSupervisorSnapshot;
   packets: VendorPacketCounts;
   hurtCount: number;
@@ -295,6 +296,8 @@ export interface VendorRunnerOptions {
   /** Số ms tối đa Auto được chạy khi chưa có gói vitals chính thức (mặc định VITALS_CONFIRM_MS). */
   vitalsConfirmMs?: number;
   vitalsProbeIntervalMs?: number;
+  /** Maximum time to wait for official vitals before giving up after reconnect (0 disables). */
+  autoResumeWaitMs?: number;
   khuChangeTimeoutMs?: number;
   khuListTimeoutMs?: number;
   supervisor?: Partial<AutoSupervisorConfig>;
@@ -447,6 +450,9 @@ export class VendorRunner {
   private khuProbeEvents: Array<{ at: number; op: string; data?: unknown }> = [];
   /** Thời điểm bật Auto; dùng để dừng Auto nếu quá lâu chưa có gói vitals chính thức. */
   private autoStartedAt: number | null = null;
+  private autoRestoredAwaitingVitals = false;
+  private autoResumePending: { anchor: AutoAnchor; hurtCountAtStart: number; since: number; nextProbeAt: number; probeBackoffIndex: number } | null = null;
+  private reconnectResumeAnchor: AutoAnchor | null = null;
   private killsBySelf = 0;
   private reconnectAttempts = 0;
   private reconnectStartedAt: number | null = null;
@@ -460,7 +466,7 @@ export class VendorRunner {
   private dailyAckWaiter: { command: string; resolve: (ack: DailyAck) => void; timer: ReturnType<typeof setTimeout> | null } | null = null;
   /** Thời điểm ghi cảnh báo watchdog gần nhất theo lý do, để không ghi mỗi khung hình khi vượt ngưỡng kéo dài. */
   private readonly watchdogLoggedAt = new Map<string, number>();
-  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'reconnectGiveUpMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
+  private readonly options: Required<Pick<VendorRunnerOptions, 'reconnectBaseDelayMs' | 'reconnectMaxDelayMs' | 'reconnectGiveUpMs' | 'loginTimeoutMs' | 'loopIntervalMs' | 'watchdogMaxFrameDelayMs' | 'watchdogMaxRssGrowthBytes' | 'watchdogRestart' | 'vitalsConfirmMs' | 'vitalsProbeIntervalMs' | 'autoResumeWaitMs' | 'khuChangeTimeoutMs' | 'khuListTimeoutMs'>>;
   private readonly onSnapshotChanged?: () => void;
   private transportClosed = false;
   private readonly stonesSession = new StoneSessionBaseline();
@@ -476,6 +482,8 @@ export class VendorRunner {
       loopIntervalMs: input.loopIntervalMs ?? 16,
       vitalsConfirmMs: input.vitalsConfirmMs ?? VITALS_CONFIRM_MS,
       vitalsProbeIntervalMs: input.vitalsProbeIntervalMs ?? VITALS_PROBE_INTERVAL_MS,
+      autoResumeWaitMs: Number.isFinite(input.autoResumeWaitMs)
+        ? Math.max(0, Math.min(1_800_000, Math.trunc(input.autoResumeWaitMs!))) : 300_000,
       khuChangeTimeoutMs: input.khuChangeTimeoutMs ?? KHU_CHANGE_TIMEOUT_MS,
       khuListTimeoutMs: input.khuListTimeoutMs ?? KHU_LIST_TIMEOUT_MS,
       watchdogMaxFrameDelayMs: input.watchdogMaxFrameDelayMs ?? 250,
@@ -541,6 +549,8 @@ export class VendorRunner {
     this.cancelMoveTo('runner_stopped');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('runner_stop');
+    this.cancelAutoResume();
+    this.autoRestoredAwaitingVitals = false;
     this.autoRequested = false;
     this.stopRequested = true;
     const supervisor = this.supervisor;
@@ -565,6 +575,15 @@ export class VendorRunner {
   public async startAuto(anchor?: AutoAnchor): Promise<AutoSupervisorSnapshot> {
     if (this.lifecycle === 'stopped' || this.lifecycle === 'error' || !this.P || !this.env) throw new Error('VENDOR_NOT_RUNNING');
     this.cancelDailyForReason('auto_started');
+    const wasResumePending = this.autoResumePending !== null;
+    this.cancelAutoResume();
+    this.autoRestoredAwaitingVitals = false;
+    if (wasResumePending) {
+      this.autoRequested = false;
+      this.autoStartedAt = null;
+      this.supervisor?.stop('manual_auto_restart');
+      this.lifecycle = 'in_game';
+    }
     const player = this.getPlayer();
     if (!player) throw new Error('VENDOR_NOT_IN_GAME');
     if (!this.isMapReady()) throw new Error('VENDOR_MAP_NOT_READY');
@@ -593,7 +612,7 @@ export class VendorRunner {
     this.vitalsProbeExhausted = false;
     this.vitalsProbeMoves = 0;
     supervisor.start(anchor);
-    this.autoStartedAt = Date.now();
+    this.autoStartedAt = this.nowMs();
     this.lifecycle = supervisor.getPhase() === 'farming' ? 'farming' : 'traveling';
     this.recordLog('auto_started');
     return this.supervisor!.getSnapshot();
@@ -601,6 +620,8 @@ export class VendorRunner {
 
   public stopAuto(): AutoSupervisorSnapshot {
     this.finishVitalsProbe('auto_stopped');
+    this.cancelAutoResume();
+    this.autoRestoredAwaitingVitals = false;
     this.autoRequested = false;
     this.autoStartedAt = null;
     this.supervisor?.stop('manual_auto_stop');
@@ -634,6 +655,11 @@ export class VendorRunner {
       connection: this.connectionState(),
       reconnectAttempts: this.reconnectAttempts,
       autoRequested: this.autoRequested,
+      autoResume: this.autoResumePending ? {
+        pending: true,
+        since: this.autoResumePending.since,
+        expiresAt: this.autoResumePending.since + this.options.autoResumeWaitMs,
+      } : null,
       supervisor,
       packets: {
         incoming: { ...this.packets.incoming },
@@ -856,16 +882,19 @@ export class VendorRunner {
     this.reconnectStartedAt = null;
     const supervisor = this.supervisor ?? this.createSupervisor();
     if (reconnect && this.autoRequested) {
-      const anchor = supervisor.getSnapshot().anchor;
+      const anchor = this.reconnectResumeAnchor ?? supervisor.getSnapshot().anchor;
       if (anchor) {
         await this.waitForMapReady();
         const player = this.getPlayer();
         if (this.autoRequested && !this.stopRequested && player && !this.isDown(player)
           && this.hasPlayerVitalsModel(player) && this.hurtCount === reconnectHurtCount) {
           supervisor.start(anchor, true);
-          this.autoStartedAt = Date.now();
+          this.reconnectResumeAnchor = null;
+          this.autoStartedAt = this.nowMs();
+          this.autoRestoredAwaitingVitals = true;
         } else if (this.autoRequested && !this.stopRequested) {
           supervisor.stop('reconnect_safety_gate');
+          this.reconnectResumeAnchor = null;
           this.autoRequested = false;
           const reasonCode = !player ? 'PLAYER_UNKNOWN' : this.isDown(player) ? 'CHARACTER_DOWN' : 'VITALS_OR_HURT_UNCONFIRMED';
           this.recordLog('reconnect_auto_blocked', { reasonCode });
@@ -1370,6 +1399,8 @@ export class VendorRunner {
     } else if (event.type === 'halted') {
       this.lifecycle = 'halted';
       this.autoRequested = false;
+      this.cancelAutoResume();
+      this.autoRestoredAwaitingVitals = false;
       this.finishVitalsProbe('supervisor_halted');
       this.recordLog('auto_halted', { reasonCode: event.reasonCode, at });
       if (event.haltMode === 'disconnect') this.disconnectTransportOnly();
@@ -1460,7 +1491,7 @@ export class VendorRunner {
 
   private frame(): void {
     if (this.stopRequested || !this.P || !this.env) return;
-    const now = Date.now();
+    const now = this.nowMs();
     const rawDt = Math.max(0, (now - this.lastFrameAt) / 1000);
     const dt = Math.min(0.05, rawDt);
     this.lastFrameAt = now;
@@ -1490,8 +1521,12 @@ export class VendorRunner {
 
   /** Auto đang bật mà quá VITALS_CONFIRM_MS vẫn chưa có you/hurt/revived thì dừng Auto (HP chưa được xác nhận). */
   private probeVitals(now: number): void {
-    if (this.vitalsProbeExhausted) return;
-    if (!this.autoRequested || this.lastVitalsAt !== null) {
+    if (this.autoResumePending && now >= this.autoResumePending.since + this.options.autoResumeWaitMs) {
+      this.giveUpAutoResume();
+      return;
+    }
+    if (this.vitalsProbeExhausted && !this.autoResumePending) return;
+    if (!(this.autoRequested || this.autoResumePending) || this.lastVitalsAt !== null) {
       if (this.vitalsProbe && this.lastVitalsAt !== null) this.finishVitalsProbe('vitals_confirmed');
       return;
     }
@@ -1502,6 +1537,7 @@ export class VendorRunner {
       return;
     }
     if (!this.isStationaryPlayer(player)) return;
+    if (this.autoResumePending && now < this.autoResumePending.nextProbeAt) return;
     if (this.lastOutgoingMoveAt !== null && now - this.lastOutgoingMoveAt < this.options.vitalsProbeIntervalMs) return;
 
     if (!this.vitalsProbe) {
@@ -1509,15 +1545,17 @@ export class VendorRunner {
       this.recordLog('vitals_probe_started');
     }
     if (this.vitalsProbe.movesSent >= VITALS_PROBE_MAX_MOVES) {
-      this.vitalsProbeExhausted = true;
       this.finishVitalsProbe('max_moves');
+      if (this.autoResumePending) this.scheduleNextResumeProbe(now);
+      else this.vitalsProbeExhausted = true;
       return;
     }
 
     const gateway = this.P?.Gateway;
     if (typeof gateway?.reset !== 'function' || typeof gateway?.update !== 'function') {
-      this.vitalsProbeExhausted = true;
       this.finishVitalsProbe('gateway_unavailable');
+      if (this.autoResumePending) this.scheduleNextResumeProbe(now);
+      else this.vitalsProbeExhausted = true;
       return;
     }
     const beforeMoves = this.packets.moves;
@@ -1530,16 +1568,18 @@ export class VendorRunner {
       gateway.reset();
       gateway.update(0.1, player);
     } catch {
-      this.vitalsProbeExhausted = true;
       this.finishVitalsProbe('gateway_error');
+      if (this.autoResumePending) this.scheduleNextResumeProbe(now);
+      else this.vitalsProbeExhausted = true;
       return;
     }
     if (this.packets.moves === beforeMoves) return;
     this.vitalsProbe.movesSent += 1;
     this.vitalsProbeMoves = this.vitalsProbe.movesSent;
     if (this.vitalsProbe.movesSent >= VITALS_PROBE_MAX_MOVES) {
-      this.vitalsProbeExhausted = true;
       this.finishVitalsProbe('max_moves');
+      if (this.autoResumePending) this.scheduleNextResumeProbe(now);
+      else this.vitalsProbeExhausted = true;
     }
   }
 
@@ -1558,13 +1598,101 @@ export class VendorRunner {
   }
 
   private checkVitalsConfirmation(now: number): void {
-    if (!this.autoRequested || this.autoStartedAt === null || this.lastVitalsAt !== null) return;
+    if (this.autoResumePending) {
+      this.tryCompleteAutoResume();
+      if (this.autoResumePending && now >= this.autoResumePending.since + this.options.autoResumeWaitMs) this.giveUpAutoResume();
+      return;
+    }
+    if (!this.autoRequested || this.autoStartedAt === null || this.lastVitalsAt !== null || this.connectionState() !== 'IN_GAME') return;
     if (now - this.autoStartedAt <= this.options.vitalsConfirmMs) return;
     this.finishVitalsProbe('confirmation_timeout');
     this.autoStartedAt = null;
+    if (this.autoRestoredAwaitingVitals && this.options.autoResumeWaitMs > 0 && !this.stopRequested) {
+      const anchor = this.supervisor?.getSnapshot().anchor;
+      if (anchor) {
+        this.supervisor?.stop('vitals_wait');
+        this.lifecycle = 'in_game';
+        this.autoResumePending = { anchor: { ...anchor }, hurtCountAtStart: this.hurtCount, since: now,
+          nextProbeAt: now, probeBackoffIndex: 0 };
+        this.autoRestoredAwaitingVitals = false;
+        this.vitalsProbeExhausted = false;
+        this.vitalsProbeMoves = 0;
+        this.recordLog('auto_resume_pending', { reasonCode: 'VITALS_UNCONFIRMED', at: now });
+        this.onSnapshotChanged?.();
+        return;
+      }
+    }
     this.recordLog('auto_stopped_vitals_unconfirmed');
     this.stopAuto();
   }
+
+  private scheduleNextResumeProbe(now: number): void {
+    if (!this.autoResumePending) return;
+    const delay = Math.min(30_000, 5_000 * (2 ** this.autoResumePending.probeBackoffIndex));
+    this.autoResumePending.probeBackoffIndex += 1;
+    this.autoResumePending.nextProbeAt = now + delay;
+    this.vitalsProbeExhausted = false;
+  }
+
+  private tryCompleteAutoResume(): void {
+    const pending = this.autoResumePending;
+    if (!pending) return;
+    const player = this.getPlayer();
+    let reasonCode: string | null = null;
+    if (this.stopRequested) reasonCode = 'STOP_REQUESTED';
+    else if (this.lifecycle === 'halted' || this.supervisor?.getPhase() === 'halted') reasonCode = 'HALTED';
+    else if (this.lifecycle === 'error') reasonCode = 'ERROR';
+    else if (this.hurtCount > pending.hurtCountAtStart) reasonCode = 'HURT';
+    else if (!player) reasonCode = 'PLAYER_UNKNOWN';
+    else if (this.isDown(player)) reasonCode = 'CHARACTER_DOWN';
+    else if (!this.hasPlayerVitalsModel(player)) reasonCode = 'VITALS_MODEL_UNKNOWN';
+    else if (this.connectionState() !== 'IN_GAME') reasonCode = 'NOT_IN_GAME';
+    if (reasonCode) {
+      this.autoResumePending = null;
+      this.autoRequested = false;
+      this.autoStartedAt = null;
+      this.supervisor?.stop('auto_resume_blocked');
+      this.lifecycle = 'in_game';
+      this.recordLog('auto_resume_blocked', { reasonCode });
+      this.onSnapshotChanged?.();
+      return;
+    }
+    if (this.lastVitalsAt === null) return;
+    this.autoResumePending = null;
+    try {
+      this.supervisor!.start(pending.anchor, true);
+      this.autoStartedAt = null;
+      this.autoRequested = true;
+      this.lifecycle = this.supervisor!.getPhase() === 'farming' ? 'farming' : 'traveling';
+      this.recordLog('auto_resume_completed');
+    } catch (error) {
+      this.autoRequested = false;
+      this.supervisor?.stop('auto_resume_blocked');
+      this.recordLog('auto_resume_blocked', { reasonCode: this.errorCode(error) });
+    }
+    this.onSnapshotChanged?.();
+  }
+
+  private giveUpAutoResume(): void {
+    if (!this.autoResumePending) return;
+    this.autoResumePending = null;
+    this.autoRequested = false;
+    this.autoStartedAt = null;
+    this.vitalsProbeExhausted = true;
+    this.finishVitalsProbe('resume_wait_expired');
+    this.supervisor?.stop('vitals_unconfirmed');
+    this.lifecycle = 'in_game';
+    this.recordLog('auto_resume_gave_up', { reasonCode: 'VITALS_TIMEOUT' });
+    this.onSnapshotChanged?.();
+  }
+
+  private cancelAutoResume(): void {
+    this.autoResumePending = null;
+    this.vitalsProbeExhausted = false;
+    this.reconnectResumeAnchor = null;
+  }
+
+  private nowMs(): number { return this.input.reconnectClock?.now() ?? Date.now(); }
 
   private handleWatchdog(reasonCode: string, value: number): void {
     // Vượt ngưỡng kéo dài làm hàm này chạy mỗi khung hình; mỗi dòng nhật ký lại ghi DB và phát runtime, nên
@@ -1620,6 +1748,10 @@ export class VendorRunner {
     this.cancelMoveTo('reconnecting');
     this.failKhuWaiters(new KhuError('KHU_TIMEOUT'));
     this.finishVitalsProbe('connection_closed');
+    this.autoStartedAt = null;
+    if (this.autoResumePending) this.reconnectResumeAnchor = { ...this.autoResumePending.anchor };
+    this.autoResumePending = null;
+    this.autoRestoredAwaitingVitals = false;
     this.lastVitalsAt = null;
     this.vitalsProbeExhausted = false;
     this.vitalsProbeMoves = 0;
@@ -1952,14 +2084,16 @@ export class VendorRunner {
     } else if (op === 'toast') {
       this.settleKhuToast(packet);
     }
-    if (op === 'hurt') { this.hurtCount += 1; this.lastHurtAt = Date.now(); this.lastVitalsAt = this.lastHurtAt; }
-    if (op === 'you' || op === 'revived') this.lastVitalsAt = Date.now();
+    if (op === 'hurt') { this.hurtCount += 1; this.lastHurtAt = this.nowMs(); this.lastVitalsAt = this.lastHurtAt; }
+    if (op === 'you' || op === 'revived') this.lastVitalsAt = this.nowMs();
+    if (op === 'hurt' || op === 'you' || op === 'revived') this.autoRestoredAwaitingVitals = false;
     if ((op === 'hurt' || op === 'you' || op === 'revived') && this.vitalsProbe) {
       this.finishVitalsProbe(op === 'hurt' ? 'hurt' : 'vitals_confirmed');
     }
     if (op === 'kill' && packet.by !== undefined && packet.by !== null && this.P?.Gateway?.selfId
       && String(packet.by) === String(this.P.Gateway.selfId)) this.killsBySelf += 1;
     if (op === 'hurt' || op === 'down' || op === 'revived' || op === 'you') this.onSnapshotChanged?.();
+    if (this.autoResumePending && ['hurt', 'down', 'revived', 'you'].includes(op)) this.tryCompleteAutoResume();
   }
 
   private recordOutgoing(packet: Record<string, unknown>): void {
@@ -1967,7 +2101,7 @@ export class VendorRunner {
     this.packets.outgoing[op] = (this.packets.outgoing[op] ?? 0) + 1;
     if (op === 'move') {
       this.packets.moves += 1;
-      this.lastOutgoingMoveAt = Date.now();
+      this.lastOutgoingMoveAt = this.nowMs();
     }
     if (op === 'attack') this.packets.attacks += 1;
     if (op === 'skill') this.packets.skills += 1;

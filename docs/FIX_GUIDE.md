@@ -1661,3 +1661,12 @@ ull`/rỗng.
 - [x] Chơi chỉ mở trang chính thức khi account stopped; sao chép chỉ `accountName`, có fallback clipboard và không gọi API.
 - [x] Fault injection trực tiếp nguồn: stones null→0, bỏ stale invalidation, `canPlay` luôn true, bỏ reset session khi start lại và sanitizer nhận chuỗi số đều làm test tương ứng fail; đã khôi phục nguồn.
 - [ ] `stonesToday`/`stonesCap` là số client tính từ `Quest.flags.linh_thach_ngay`; chưa xác minh khớp máy chủ. Chưa xác minh trực quan bằng trình duyệt (CUA không có app/browser) hoặc trên game thật.
+
+## Checklist Auto chờ vitals sau reconnect — 2026-10-13
+
+- [x] Mốc theo yêu cầu: server 206/206, web 68/68 trước thay đổi.
+- [x] Snapshot `vendor.autoResume` là JSON thuần; web chuẩn hóa payload thiếu/sai kiểu; protocol shard kiểm tra kiểu trường.
+- [x] Test FakeSocket tái hiện timeout dừng vĩnh viễn với `autoResumeWaitMs=0`; test reconnect chờ HP, ba đợt probe, resume muộn, hết hạn, HURT/down, stop/stopAuto/halt/socket close và backoff 5/10/20/30 giây.
+- [x] Fault injection trực tiếp nguồn (stop ngay khi timeout, bỏ chặn hurt, không hủy khi stopAuto, bỏ deadline, bỏ chặn down) đều làm test thất bại; đã khôi phục nguồn.
+- [x] Build thay thế TypeScript core/server/web + Vite pass; server 210/210 trên 33 file; web 70/70 trên 13 file. `pnpm build` không chạy vì shim gọi executable `pnpm` không có PATH.
+- [ ] Live chưa xác minh: Gateway client tiếp tục `seq` khi reconnect hay khởi động lại; 10 probe có đủ để chạm `you` không. Trước live cần một bot duy nhất và theo dõi `hurtCount`/`lastHurtAt`.

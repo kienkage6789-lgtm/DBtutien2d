@@ -521,7 +521,7 @@ test('VendorRunner retries through the same proxy transport and never falls back
     transport: { fetch: globalThis.fetch, WebSocketImpl: FailingProxySocket as unknown as new (url: string) => VendorSocketLike, close() {} } });
   try {
     await runner.start();
-    clock.advance(5_000);
+    clock.advance(1_000);
     await waitUntil(() => proxySockets >= 2 && runner.getSnapshot().lifecycle === 'in_game');
     assert.equal(directSockets, 0);
   } finally { await runner.stop(); }
@@ -539,6 +539,7 @@ test('VendorRunner preserves Auto preference on reconnect and never enables it f
     FakeSocket.instances[0]!.serverClose();
     clock.advance(5_000);
     await waitUntil(() => FakeSocket.instances.length >= 2 && runner.getSnapshot().lifecycle === 'farming');
+    assert.equal(runner.getSnapshot().autoRequested, true);
     assert.equal(runner.getSnapshot().supervisor.phase, 'farming');
     await runner.stop();
   } finally { await runner.stop(); }
@@ -570,6 +571,154 @@ test('VendorRunner preserves Auto preference on reconnect and never enables it f
     assert.equal(downRunner.getSnapshot().autoRequested, false);
     assert.equal(downRunner.getSnapshot().downed, true);
   } finally { FakeSocket.downed = false; await downRunner.stop(); }
+});
+
+test('reconnect vitals timeout waits, probes in backed-off batches, then resumes on late official vitals', async () => {
+  FakeSocket.instances = []; FakeSocket.moves = []; FakeSocket.emitYou = true; FakeSocket.downed = false;
+  const clock = new ManualReconnectClock();
+  const logs: Array<{ code: string; reasonCode?: string }> = [];
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5, vitalsConfirmMs: 100,
+    vitalsProbeIntervalMs: 1, autoResumeWaitMs: 120_000, onLog: (event) => logs.push(event) });
+  const internals = runner as unknown as { frame: () => void };
+  try {
+    await runner.start(); await waitUntil(() => runner.getSnapshot().mapId !== null);
+    await runner.startAuto();
+    assert.equal(runner.getSnapshot().vitals.fresh, true, 'first you confirms initial Auto');
+    FakeSocket.emitYou = false;
+    FakeSocket.instances[0]!.serverClose();
+    await waitUntil(() => logs.some((event) => event.code === 'reconnect_scheduled'));
+    clock.advance(1_000);
+    await waitUntil(() => FakeSocket.instances.length >= 2 && logs.some((event) => event.code === 'runner_reconnected'));
+    assert.equal(runner.getSnapshot().autoRequested, true, JSON.stringify(logs.map(({ code, reasonCode }) => ({ code, reasonCode }))));
+    clock.advance(101); internals.frame();
+    assert.equal(runner.getSnapshot().autoResume?.pending, true, JSON.stringify(logs.map(({ code, reasonCode }) => ({ code, reasonCode }))));
+    assert.deepEqual(JSON.parse(JSON.stringify(runner.getSnapshot().autoResume)), runner.getSnapshot().autoResume);
+    assert.equal(runner.getSnapshot().autoRequested, true, 'requested Auto remains pending');
+    clock.advance(100); internals.frame();
+    assert.equal((runner as any).P.Input._autoToggle, false, 'the queued safe Auto-off command is consumed');
+    assert.equal((runner as any).P.SceneWorld.autoOn, false);
+    assert.ok(logs.some((event) => event.code === 'auto_resume_pending'));
+
+    const batchMoveCounts: number[] = [];
+    for (let batch = 0; batch < 3; batch += 1) {
+      const before = FakeSocket.moves.length;
+      for (let i = 0; i < 10; i += 1) { clock.advance(150); internals.frame(); }
+      batchMoveCounts.push(FakeSocket.moves.length - before);
+      if (batch < 2) {
+        clock.advance(5_000 * (2 ** batch));
+      }
+    }
+    assert.deepEqual(batchMoveCounts, [9, 10, 10]);
+    assert.equal(runner.getSnapshot().autoResume?.pending, true);
+    (FakeSocket.instances.at(-1) as unknown as { emit(packet: Record<string, unknown>): void }).emit({ op: 'you', seq: 20, x: 240, y: 192, hp: 100, mp: 50, dn: false, fix: true });
+    assert.equal(runner.getSnapshot().autoResume, null);
+    assert.equal(runner.getSnapshot().autoRequested, true);
+    assert.equal(runner.getSnapshot().supervisor.phase, 'farming');
+    assert.ok(logs.some((event) => event.code === 'auto_resume_completed'));
+  } finally { FakeSocket.emitYou = true; await runner.stop(); }
+});
+
+async function createPendingReconnectRunner(autoResumeWaitMs = 10_000) {
+  FakeSocket.instances = []; FakeSocket.moves = []; FakeSocket.emitYou = true; FakeSocket.downed = false;
+  const clock = new ManualReconnectClock();
+  const logs: Array<{ code: string; reasonCode?: string }> = [];
+  const runner = createKhuRunner({ reconnectClock: clock, reconnectRandom: () => 0.5, vitalsConfirmMs: 100,
+    vitalsProbeIntervalMs: 1, autoResumeWaitMs, onLog: (event) => logs.push(event) });
+  await runner.start(); await waitUntil(() => runner.getSnapshot().mapId !== null);
+  await runner.startAuto(); FakeSocket.emitYou = false;
+  FakeSocket.instances[0]!.serverClose();
+  await waitUntil(() => logs.some((event) => event.code === 'reconnect_scheduled'));
+  clock.advance(1_000);
+  await waitUntil(() => logs.some((event) => event.code === 'runner_reconnected'));
+  clock.advance(101); (runner as any).frame();
+  if (autoResumeWaitMs > 0) assert.equal(runner.getSnapshot().autoResume?.pending, true);
+  return { runner, clock, logs };
+}
+
+test('reconnect wait gives up at its deadline and reports HURT/down/halt/manual cancellation', async () => {
+  let fixture = await createPendingReconnectRunner(1_000);
+  try {
+    fixture.clock.advance(1_000); (fixture.runner as any).frame();
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+    assert.ok(fixture.logs.some((event) => event.code === 'auto_resume_gave_up'));
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    (FakeSocket.instances.at(-1) as any).emit({ op: 'hurt', hp: 90, mp: 40 });
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+    assert.ok(fixture.logs.some((event) => event.code === 'auto_resume_blocked' && event.reasonCode === 'HURT'));
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    (fixture.runner as any).P.SceneWorld.player.downed = true;
+    (fixture.runner as any).frame();
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+    assert.ok(fixture.logs.some((event) => event.code === 'auto_resume_blocked' && event.reasonCode === 'CHARACTER_DOWN'));
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    fixture.runner.stopAuto();
+    assert.equal(fixture.runner.getSnapshot().autoResume, null);
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    await fixture.runner.startAuto({ mapId: 'tan_vien', khu: 1, x: 240, y: 192 });
+    assert.equal(fixture.runner.getSnapshot().autoResume, null);
+    assert.equal(fixture.runner.getSnapshot().autoRequested, true);
+    assert.equal(fixture.runner.getSnapshot().supervisor.phase, 'farming');
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    (fixture.runner as any).supervisor.halt('fixture_halt');
+    assert.equal(fixture.runner.getSnapshot().autoResume, null);
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    await fixture.runner.stop();
+    assert.equal(fixture.runner.getSnapshot().autoResume, null);
+  } finally { await fixture.runner.stop(); }
+
+  fixture = await createPendingReconnectRunner();
+  try {
+    FakeSocket.instances.at(-1)!.serverClose();
+    assert.equal(fixture.runner.getSnapshot().autoResume, null, 'socket close cancels pending wait');
+  } finally { await fixture.runner.stop(); }
+});
+
+test('autoResumeWaitMs zero keeps legacy stop-on-confirmation-timeout behavior', async () => {
+  const fixture = await createPendingReconnectRunner(0);
+  try {
+    assert.equal(fixture.runner.getSnapshot().autoResume, null);
+    assert.equal(fixture.runner.getSnapshot().autoRequested, false);
+    assert.equal(fixture.runner.getSnapshot().vitals.fresh, false);
+    assert.ok(fixture.logs.some((event) => event.code === 'auto_stopped_vitals_unconfirmed'));
+    const probeMoves = fixture.runner.getSnapshot().vitalsProbeMoves;
+    fixture.clock.advance(15_000); (fixture.runner as any).frame();
+    assert.equal(fixture.runner.getSnapshot().vitalsProbeMoves, probeMoves, 'probe stops when autoRequested is false');
+  } finally { await fixture.runner.stop(); FakeSocket.emitYou = true; }
+});
+
+test('auto resume probe backoff grows 5/10/20/30 seconds and stays capped', () => {
+  const runner = createKhuRunner({ autoResumeWaitMs: 60_000 });
+  const internals = runner as any;
+  internals.autoResumePending = { anchor: { mapId: 'tan_vien', x: 240, y: 192 }, hurtCountAtStart: 0,
+    since: 0, nextProbeAt: 0, probeBackoffIndex: 0 };
+  const actual: number[] = [];
+  let now = 0;
+  for (let i = 0; i < 5; i += 1) {
+    internals.scheduleNextResumeProbe(now);
+    actual.push(internals.autoResumePending.nextProbeAt - now);
+    now += actual.at(-1)!;
+  }
+  assert.deepEqual(actual, [5_000, 10_000, 20_000, 30_000, 30_000]);
 });
 
 test('VendorRunner validates the configured game URL before loading the client', () => {

@@ -117,6 +117,7 @@ export interface VendorRuntimeSnapshot {
   connection: string;
   reconnectAttempts?: number;
   autoRequested: boolean;
+  autoResume?: { pending: boolean; since: number | null; expiresAt: number | null } | null;
   supervisor: {
     phase: string;
     anchor: { mapId: string; khu?: number | null; x: number; y: number } | null;

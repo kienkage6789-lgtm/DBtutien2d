@@ -329,6 +329,16 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
   if (hasOwn(payload, 'vendor')) {
     if (payload.vendor && typeof payload.vendor === 'object' && !Array.isArray(payload.vendor)) {
       const vendor = { ...(payload.vendor as Record<string, unknown>) };
+      if (hasOwn(vendor, 'autoResume')) {
+        const pending = vendor.autoResume;
+        if (pending === null) vendor.autoResume = null;
+        else if (pending && typeof pending === 'object' && !Array.isArray(pending)) {
+          const item = pending as Record<string, unknown>;
+          vendor.autoResume = item.pending === true
+            ? { pending: true, since: isFiniteNumber(item.since) ? item.since : null, expiresAt: isFiniteNumber(item.expiresAt) ? item.expiresAt : null }
+            : null;
+        } else vendor.autoResume = null;
+      }
       if (hasOwn(vendor, 'moveTo')) {
         const moveTo = sanitizeMoveTo(vendor.moveTo);
         if (moveTo === undefined) delete vendor.moveTo;
@@ -420,7 +430,7 @@ export function mergeAccountRuntime(previous: AccountRuntime | undefined, incomi
     next.playersContext = { mapId: null, khu: null, observedAt: null, fresh: false };
     next.monstersContext = { mapId: null, khu: null, observedAt: null, fresh: false };
     next.khuList = null; next.monsters = []; next.players = [];
-    if (next.vendor) next.vendor = { ...next.vendor, dataStale: true, mapId: null, khu: null, x: null, y: null, hp: null, maxHp: null, mp: null, maxMp: null, downed: null };
+    if (next.vendor) next.vendor = { ...next.vendor, dataStale: true, autoResume: null, mapId: null, khu: null, x: null, y: null, hp: null, maxHp: null, mp: null, maxMp: null, downed: null };
   }
   return next;
 }

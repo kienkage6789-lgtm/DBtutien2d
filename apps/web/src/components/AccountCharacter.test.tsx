@@ -22,6 +22,15 @@ const callbacks = {
 };
 
 describe('character snapshot display', () => {
+  it('shows the reconnect HP wait only when vendor.autoResume is pending', () => {
+    const vendor = { autoRequested: true, hurtCount: 0, autoResume: { pending: true, since: Date.now(), expiresAt: Date.now() + 4_000 },
+      supervisor: { phase: 'idle', anchor: null, reasonCode: null, stats: { deaths: 0, revives: 0, trips: 0, resumed: 0 } } };
+    const pending = renderToStaticMarkup(<AccountPanel {...callbacks} tab="auto" account={{ ...base, vendor } as AccountRuntime} />);
+    expect(pending).toContain('Đang chờ HP để tiếp tục Auto (còn 4 giây)');
+    const idle = renderToStaticMarkup(<AccountPanel {...callbacks} tab="auto" account={{ ...base, vendor: { ...vendor, autoResume: null } } as AccountRuntime} />);
+    expect(idle).not.toContain('Đang chờ HP để tiếp tục Auto');
+  });
+
   it('shows em dashes for null or stale values and values with percentages when fresh', () => {
     const unknown = renderToStaticMarkup(<AccountPanel {...callbacks} account={{ ...base, status: 'stopped', character: null }} />);
     expect(unknown).toContain('Thần thức');

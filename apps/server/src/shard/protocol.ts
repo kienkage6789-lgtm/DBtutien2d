@@ -40,6 +40,11 @@ export function isChildMessage(value: unknown): value is ChildMessage {
     case 'snapshot': {
       const snapshot = message.snapshot as Record<string, unknown> | null;
       const character = snapshot && snapshot.character;
+      const autoResume = snapshot && snapshot.autoResume;
+      const validAutoResume = autoResume === undefined || autoResume === null || (typeof autoResume === 'object' && !Array.isArray(autoResume)
+        && (autoResume as Record<string, unknown>).pending === true
+        && ((autoResume as Record<string, unknown>).since === null || (typeof (autoResume as Record<string, unknown>).since === 'number' && Number.isFinite((autoResume as Record<string, unknown>).since)))
+        && ((autoResume as Record<string, unknown>).expiresAt === null || (typeof (autoResume as Record<string, unknown>).expiresAt === 'number' && Number.isFinite((autoResume as Record<string, unknown>).expiresAt))));
       const validStones = !character || character === null || (['stones', 'stonesToday', 'stonesCap'].every((field) => {
         const value = (character as Record<string, unknown>)[field];
         return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
@@ -48,6 +53,7 @@ export function isChildMessage(value: unknown): value is ChildMessage {
       return typeof message.accountId === 'string' && typeof message.at === 'number'
         && !!snapshot && typeof snapshot === 'object'
         && (character === undefined || character === null || (typeof character === 'object' && !Array.isArray(character) && validStones))
+        && validAutoResume
         && !!message.metrics && typeof message.metrics === 'object';
     }
     case 'log': return typeof message.accountId === 'string' && !!message.event && typeof message.event === 'object';

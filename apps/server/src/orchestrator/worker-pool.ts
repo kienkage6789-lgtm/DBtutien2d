@@ -351,6 +351,7 @@ export class WorkerPool {
       supervisor: { haltMode: CONFIG.VENDOR_HALT_MODE },
       reconnectMaxDelayMs: CONFIG.RECONNECT_MAX_DELAY_MS,
       reconnectGiveUpMs: CONFIG.RECONNECT_GIVE_UP_MS,
+      autoResumeWaitMs: CONFIG.VENDOR_AUTO_RESUME_WAIT_MS,
       supabaseUrl: CONFIG.SUPABASE_URL,
       supabaseAnonKey: CONFIG.SUPABASE_ANON_KEY,
       ...(transport ? { transport: transport as unknown as NonNullable<VendorRunnerOptions["transport"]> } : {}),

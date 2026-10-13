@@ -158,6 +158,19 @@ describe('character runtime sanitization', () => {
     expect(mergeAccountRuntime(running!, { ...base, status: 'stopped' })?.character).toBeNull();
     expect(mergeAccountRuntime(running!, { ...base, status: 'error' })?.character).toBeNull();
   });
+
+  it('sanitizes auto resume pending state and ignores malformed values', () => {
+    const pending = mergeAccountRuntime(undefined, { ...base,
+      vendor: { autoRequested: true, hurtCount: 0, autoResume: { pending: true, since: 1_000, expiresAt: 301_000 } },
+    });
+    expect(pending?.vendor?.autoResume).toEqual({ pending: true, since: 1_000, expiresAt: 301_000 });
+    const malformed = mergeAccountRuntime(pending!, { ...base,
+      vendor: { autoRequested: true, hurtCount: 0, autoResume: { pending: 'yes', since: '1000', expiresAt: Infinity } },
+    });
+    expect(malformed?.vendor?.autoResume).toBeNull();
+    const absent = mergeAccountRuntime(pending!, { ...base, vendor: { autoRequested: true, hurtCount: 0 } });
+    expect(absent?.vendor?.autoResume).toBeUndefined();
+  });
 });
 
 describe('frame metrics sanitizer', () => {
@@ -175,10 +188,10 @@ describe('frame metrics sanitizer', () => {
     const stale = mergeAccountRuntime(undefined, {
       ...base, dataStale: true, hp: 50, mp: 20, khu: 3, x: 100, y: 200, mapId: 'tan_vien', downed: false,
       vitals: { hp: 50, maxHp: 100, mp: 20, maxMp: 40, status: 'fresh', source: 'client', observedAt: 100 },
-      vendor: { autoRequested: true, hurtCount: 4, mapId: 'tan_vien', hp: 50, downed: false },
+      vendor: { autoRequested: true, hurtCount: 4, autoResume: { pending: true, since: 1, expiresAt: 2 }, mapId: 'tan_vien', hp: 50, downed: false },
     });
     expect(stale).toMatchObject({ dataStale: true, hp: null, mp: null, khu: null, x: null, y: null, mapId: null, downed: null });
     expect(stale?.vitals).toMatchObject({ hp: null, mp: null, status: 'unknown' });
-    expect(stale?.vendor).toMatchObject({ dataStale: true, hurtCount: 4, mapId: null, hp: null, downed: null });
+    expect(stale?.vendor).toMatchObject({ dataStale: true, hurtCount: 4, autoResume: null, mapId: null, hp: null, downed: null });
   });
 });

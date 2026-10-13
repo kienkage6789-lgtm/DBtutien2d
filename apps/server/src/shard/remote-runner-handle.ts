@@ -27,6 +27,7 @@ export interface RemoteRunnerRecord {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const blankSnapshot = (): VendorRunnerSnapshot => ({
   lifecycle: 'starting', connection: 'DISCONNECTED', autoRequested: false,
+  autoResume: null,
   supervisor: { enabled: false, phase: 'idle', targetId: null, reason: null, lastTransitionAt: 0 } as unknown as AutoSupervisorSnapshot,
   packets: { incoming: {}, outgoing: {}, commands: {}, moves: 0, attacks: 0, skills: 0, cmds: 0 },
   hurtCount: 0, lastHurtAt: null, killsBySelf: 0, packetErrors: 0, updateErrors: 0, consoleErrors: [],
@@ -74,6 +75,7 @@ export class RemoteRunnerHandle implements RunnerHandle {
     const value = clone(this.latest?.snapshot ?? blankSnapshot());
     if (this.isStale()) {
       value.lifecycle = 'stopped'; value.autoRequested = false;
+      value.autoResume = null;
       value.connection = 'DISCONNECTED'; value.mapId = null; value.khu = null; value.x = null; value.y = null;
       value.hp = null; value.maxHp = null; value.mp = null; value.maxMp = null; value.downed = null;
       value.vitals = { hp: null, maxHp: null, mp: null, maxMp: null, status: 'unknown', source: null, fresh: false, observedAt: null };

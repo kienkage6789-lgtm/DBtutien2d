@@ -106,7 +106,7 @@ Sao lưu trước khi cập nhật lớn: `node scripts/backup.mjs` (xem `BACKUP
 | Thêm tài khoản báo 409 | Có thể thiếu proxy khả dụng (`NO_PROXY_AVAILABLE`/`PROXY_REQUIRED`) hoặc đạt giới hạn bot. Xem tab Response trong F12, hoặc đặt `REQUIRE_PROXY=0` khi thử |
 | `watchdog_warning (frame_delay)` | Node bị đứng ≥ 250 ms: máy quá tải. Giảm số bot, `VENDOR_SHARDS=2`, hoặc `VENDOR_LOOP_INTERVAL_MS=33`. Dòng thoảng qua thì không sao |
 | Sau nhịp trễ lớn mất Auto, HP/Linh lực "chưa có số liệu mới", bản đồ không dùng được | Có thể bộ giám sát Auto đã dừng an toàn và ngắt kết nối. Xem tab Auto: "Đã dừng an toàn: <mã>" hoặc nhật ký `auto_halted`. Khôi phục: Dừng rồi Chạy lại. Muốn giữ kết nối: `VENDOR_HALT_MODE=stay` |
-| Sau khi nối lại Auto bị tắt | Cổng an toàn chặn khi `hurtCount` tăng, nhân vật gục hoặc chưa có HP/MP. Xem nhật ký `reconnect_auto_blocked` và `reasonCode` |
+| Sau khi nối lại Auto bị tắt | Nếu tab Auto báo đang chờ HP, runner đang dò move đứng yên trong thời hạn cấu hình và tự tiếp tục khi vitals chính thức tới mà điều kiện an toàn còn đạt. `auto_resume_gave_up` nghĩa là hết hạn; `auto_resume_blocked` hoặc `reconnect_auto_blocked` kèm `reasonCode` cho biết điều kiện chặn như hurt tăng hoặc nhân vật gục. Theo dõi `hurtCount`/`lastHurtAt` khi live. `VENDOR_AUTO_RESUME_WAIT_MS=0` giữ hành vi dừng cũ. |
 | Server tự tắt không rõ lý do | `pm2 describe tutien-server` và nhật ký có dòng `Shutting down ... reason=...`; trên Linux xem thêm `last -x reboot` |
 
 ## 10. Quy tắc an toàn
@@ -114,3 +114,7 @@ Sao lưu trước khi cập nhật lớn: `node scripts/backup.mjs` (xem `BACKUP
 - Mỗi tài khoản một phiên; không mở client thứ hai bằng cùng tài khoản.
 - Giữ nguyên các khoá an toàn chưa xác minh giao thức (`KHU_PROTOCOL_UNAVAILABLE`, `RESPAWN_PROTOCOL_UNAVAILABLE`); không bypass portal để đổi map.
 - Khi chạy thật, theo dõi `hurtCount`/`lastHurtAt`; tăng thì dừng bot (`POST /api/accounts/:id/stop` hoặc nút Dừng).
+
+### Auto sau reconnect
+
+Khi Auto đang chờ gói HP/MP, tab Auto hiển thị thời gian còn lại và runner dò bằng move đứng yên. `you`/`hurt`/`revived` chỉ cho Auto tiếp tục khi các điều kiện an toàn vẫn đạt. Nếu thời gian chờ hết, xem log `auto_resume_gave_up`; nếu hurt tăng hoặc nhân vật gục, xem `auto_resume_blocked` và `reasonCode`. Theo dõi `hurtCount`/`lastHurtAt` khi chạy live. `VENDOR_AUTO_RESUME_WAIT_MS=0` giữ hành vi dừng cũ.
