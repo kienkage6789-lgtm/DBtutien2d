@@ -7,7 +7,7 @@ function fixture() {
   const events: string[] = []; const walks: Array<{ point: { x: number; y: number }; radius: number; mapId?: string }> = [];
   const counts: Record<string, number> = { hat_a: 3, crop_a: 0, linh_tuyen_thuy: 2 };
   let state: GardenClientState = {
-    inGame: true, mapId: 'duoc_vien', inGarden: true, personalGarden: false, playerPosition: { x: 0, y: 0 }, daiPhuPosition: { x: 480, y: 272 }, scoopPosition: { x: 400, y: 144 }, permanentWater: true, down: false, auto: false, stage: 8, duocCong: 20,
+    inGame: true, mapId: 'vuon_ca_nhan', inGarden: true, personalGarden: true, playerPosition: { x: 0, y: 0 }, daiPhuPosition: { x: 480, y: 272 }, scoopPosition: { x: 400, y: 144 }, permanentWater: true, down: false, auto: false, stage: 8, duocCong: 20,
     plots: [{ id: 'plot_1', index: 1, state: 'empty', position: { x: 112, y: 144 }, seedId: null, seedName: null, cropId: null, cropName: null, watered: null, remainSec: null, readyAt: null },
       { id: 'plot_2', index: 2, state: 'empty', position: { x: 144, y: 144 }, seedId: null, seedName: null, cropId: null, cropName: null, watered: null, remainSec: null, readyAt: null },
       { id: 'plot_3', index: 3, state: 'growing', position: { x: 176, y: 144 }, seedId: 'hat_a', seedName: 'Hạt A', cropId: 'crop_a', cropName: 'Cây A', watered: false, remainSec: 20, readyAt: 30_000 }],
@@ -90,7 +90,7 @@ test('garden refuses an unripe harvest target without sending a command', async 
 
 test('garden approaches a far plot before sowing and skips walking when already within safe radius', async () => {
   const far = fixture(); far.runner.sow('hat_a', ['plot_1']); await settle(far);
-  assert.equal(far.walks.length, 1); assert.deepEqual(far.walks[0], { point: { x: 112, y: 144 }, radius: 26, mapId: 'duoc_vien' });
+  assert.equal(far.walks.length, 1); assert.deepEqual(far.walks[0], { point: { x: 112, y: 144 }, radius: 26, mapId: 'vuon_ca_nhan' });
   assert.deepEqual(far.events.slice(0, 2), ['walk', 'send:farm.sow']);
   const near = fixture(); near.setState({ ...near.state(), playerPosition: { x: 130, y: 144 } }); near.runner.sow('hat_a', ['plot_1']); await settle(near);
   assert.equal(near.walks.length, 0); assert.equal(near.sent[0]?.command, 'farm.sow');
@@ -99,13 +99,13 @@ test('garden approaches a far plot before sowing and skips walking when already 
 });
 
 test('garden approaches the NPC before buying and a far harvest plot before harvesting', async () => {
-  const buy = fixture(); buy.runner.buyPack('pham', 1); await settle(buy);
+  const buy = fixture(); buy.setState({ ...buy.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false }); buy.runner.buyPack('pham', 1); await settle(buy);
   assert.deepEqual(buy.events.slice(0, 2), ['walk', 'send:seed.buyPack']);
   assert.deepEqual(buy.walks[0], { point: { x: 480, y: 272 }, radius: 38, mapId: 'duoc_vien' });
   const harvest = fixture(); harvest.setState({ ...harvest.state(), playerPosition: { x: 0, y: 0 }, plots: [{ ...harvest.state().plots[2]!, state: 'ready' }] });
   harvest.runner.harvest(['plot_3']); await settle(harvest);
   assert.deepEqual(harvest.events.slice(0, 2), ['walk', 'send:farm.harvest']);
-  assert.equal(harvest.walks[0]?.radius, 26);
+  assert.equal(harvest.walks[0]?.radius, 26); assert.equal(harvest.walks[0]?.mapId, 'vuon_ca_nhan');
 });
 
 test('garden walk failure becomes WALK_FAILED and sends no game command', async () => {
@@ -137,6 +137,35 @@ test('garden rejects locked, distant map, down, Auto and busy operations before 
   }
 });
 
+test('garden map gate accepts vuon_ca_nhan and rejects duoc_vien for plots', () => {
+  const garden = fixture(); assert.equal(garden.runner.getGarden().inGarden, true);
+  const wrongMap = fixture(); wrongMap.setState({ ...wrongMap.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false });
+  assert.equal(wrongMap.runner.getGarden().inGarden, false);
+  assert.throws(() => wrongMap.runner.sow('hat_a', ['plot_1']), /NOT_IN_GARDEN/);
+  assert.equal(wrongMap.sent.length, 0);
+});
+
+test('plot actions walk to vuon_ca_nhan while seed pack purchase walks to dai phu in duoc_vien', async () => {
+  const f = fixture(); f.runner.sow('hat_a', ['plot_1']); await settle(f);
+  assert.equal(f.walks[0]?.mapId, 'vuon_ca_nhan');
+  const water = fixture(); water.setState({ ...water.state(), permanentWater: false, plots: [{ ...water.state().plots[2]!, state: 'growing', watered: false, remainSec: 20 }] });
+  water.runner.water(); await settle(water); assert.equal(water.walks[0]?.mapId, 'vuon_ca_nhan');
+  const buy = fixture(); buy.setState({ ...buy.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false });
+  buy.runner.buyPack('pham'); await settle(buy); assert.equal(buy.walks[0]?.mapId, 'duoc_vien');
+});
+
+test('autoTravel is opt-in and routes farm actions from duoc_vien through the target map', async () => {
+  const disabled = fixture(); disabled.setState({ ...disabled.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false });
+  assert.throws(() => disabled.runner.sow('hat_a', ['plot_1']), /NOT_IN_GARDEN/);
+  const enabled = fixture(); enabled.setState({ ...enabled.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false });
+  enabled.runner.sow('hat_a', ['plot_1'], true); await settle(enabled);
+  assert.equal(enabled.walks[0]?.mapId, 'vuon_ca_nhan');
+  assert.equal(enabled.runner.getOperation()?.status, 'done');
+  const scoop = fixture(); scoop.setState({ ...scoop.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false, permanentWater: false });
+  scoop.runner.scoop(true); await settle(scoop);
+  assert.equal(scoop.walks[0]?.mapId, 'vuon_ca_nhan'); assert.equal(scoop.runner.getOperation()?.status, 'done');
+});
+
 test('garden JSON snapshot is detached and unknown Dược Công stays null', () => {
   const f = fixture(); f.setState({ ...f.state(), duocCong: null }); const snapshot = f.runner.getGarden();
   assert.equal(snapshot.duocCong, null); snapshot.plots[0]!.id = 'mutated'; assert.equal(f.runner.getGarden().plots[0]!.id, 'plot_1');
@@ -154,5 +183,5 @@ test('scoop is one-time and requires the personal garden', async () => {
   const f = fixture(); f.setState({ ...f.state(), inGarden: false, personalGarden: true, mapId: 'vuon_ca_nhan', playerPosition: { x: 0, y: 0 }, permanentWater: false });
   f.runner.scoop(); await settle(f); assert.equal(f.runner.getOperation()?.status, 'done'); assert.equal(f.sent[0]?.command, 'lake.scoop'); assert.equal(f.state().permanentWater, true);
   assert.throws(() => f.runner.scoop(), /WATER_ALREADY_SCOOPED/);
-  const wrongMap = fixture(); wrongMap.setState({ ...wrongMap.state(), permanentWater: false }); wrongMap.runner.scoop(); await settle(wrongMap); assert.equal(wrongMap.runner.getOperation()?.error, 'NOT_IN_PERSONAL_GARDEN'); assert.equal(wrongMap.sent.length, 0);
+  const wrongMap = fixture(); wrongMap.setState({ ...wrongMap.state(), mapId: 'duoc_vien', inGarden: false, personalGarden: false, permanentWater: false }); wrongMap.runner.scoop(); await settle(wrongMap); assert.equal(wrongMap.runner.getOperation()?.error, 'NOT_IN_GARDEN'); assert.equal(wrongMap.sent.length, 0);
 });

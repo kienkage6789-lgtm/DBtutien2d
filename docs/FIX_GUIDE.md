@@ -1702,3 +1702,14 @@ ull`/rỗng.
 - [x] Toàn server 230/230 (`npx tsx --test` trên mọi `apps/server/src/**/*.test.ts` qua binary tsx cục bộ); web 76/76. TypeScript server/core-client/web và Vite production build pass.
 - [ ] `pnpm build` chưa chạy: `%TEMP%\pnpmshim\pnpm.cmd` không tìm được executable `pnpm` trong PATH; đã chạy build thay thế bằng binary cục bộ.
 - [ ] Chưa xác minh trực quan ở 334 px vì CUA không có browser/app; chưa xác minh độ tin cậy live của `Quest.stage` ngay sau đăng nhập. Không truy cập game thật trong nhiệm vụ này.
+
+## Checklist sửa sai map Vườn thuốc — 2026-10-13
+
+- [x] Đối chiếu mã client: `vuon_ca_nhan` (`scope: personal`) chứa 10 luống, `dai_da_duoc`, `dan_lo_vuon` và ao; `duoc_vien` chứa Đại Phu và cổng tới vườn.
+- [x] Server Garden map luống và map Đại Phu tách biệt; mọi thao tác plot nhắm `vuon_ca_nhan`, mua gói nhắm `duoc_vien`; `inGarden`/fallback plot/đài đá đã sửa.
+- [x] Cultivation giữ map hiện tại nếu là `tan_vien`/`vuon_ca_nhan`, nếu không mặc định đi tới `tan_vien`.
+- [x] Ngoài vườn thao tác ghi tiếp tục bị chặn; hướng dẫn chỉ rõ Vườn Cá Nhân và tọa độ cổng (11,6)/(11,7); không bật tự đổi map.
+- [x] Mốc server 243/243, web 78/78; sau sửa server 248/248, web 78/78; test liên quan 79/79. TypeScript core/server/web và Vite production build pass; `pnpm build` không chạy vì pnpm không có PATH.
+- [x] Fault injection 5/5: map luống sai, mua hạt buộc ở vườn, map đài đá sai, fallback plot mọi map, autoTravel mặc định bật. Cả năm mutant làm test tương ứng fail gọn rồi đã khôi phục.
+- [ ] Hành vi `autoTravel` qua cổng và tạo bản vườn của server thật chưa xác minh; không kết nối game trong lượt này.
+- [ ] Chưa xác minh live: khởi tạo bản vườn, điều kiện stage của cổng, ACK/state và khoảng cách máy chủ.

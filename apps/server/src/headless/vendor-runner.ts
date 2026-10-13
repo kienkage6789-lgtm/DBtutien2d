@@ -1758,10 +1758,11 @@ export class VendorRunner {
         const inventory = P?.Inventory;
         const mapId = this.getMapId();
         const player = this.getPlayer();
-        const mapData = P?.MapData?.get ? P.MapData.get('duoc_vien') : P?.MapData?.DUOC_VIEN;
+        const daiPhuMap = P?.MapData?.get ? P.MapData.get('duoc_vien') : P?.MapData?.DUOC_VIEN;
         const personalMap = P?.MapData?.get ? P.MapData.get('vuon_ca_nhan') : P?.MapData?.VUON_CA_NHAN;
-        const mapProps = Array.isArray(mapData?.props) ? mapData.props : [];
-        // Client mapdata.js fallback: plot_1..5 at (3..7,4), plot_6..10 at (3..7,6), dai_phu at (14,8).
+        const mapProps = Array.isArray(personalMap?.props) ? personalMap.props : [];
+        const daiPhuProps = Array.isArray(daiPhuMap?.props) ? daiPhuMap.props : [];
+        // Client mapdata.js fallback: personal plot_1..5 at (3..7,4), plot_6..10 at (3..7,6); dai_phu is in duoc_vien at (14,8).
         // Tile centers are tx*32+16, ty*32+16, matching the official 32 px map grid.
         const fallbackPlotPositions = Array.from({ length: 10 }, (_unused, i) => {
           const index = i % 5;
@@ -1789,7 +1790,7 @@ export class VendorRunner {
           const id = `plot_${i + 1}`; const state = farm?.plot?.(id) ?? null; const def = state ? farm?.seedDef?.(state.seed) : null;
           const remainSec = state && typeof farm?.remain === 'function' ? this.safeCount(farm.remain(id)) : null;
           const plotState: GardenPlotState = !state ? 'empty' : remainSec === null ? 'unknown' : remainSec <= 0 ? 'ready' : 'growing';
-          return { id, index: i + 1, state: plotState, position: mapId === 'duoc_vien' ? propPosition(id, fallbackPlotPositions[i]) : null, seedId: typeof state?.seed === 'string' ? state.seed : null,
+          return { id, index: i + 1, state: plotState, position: mapId === 'vuon_ca_nhan' ? propPosition(id, fallbackPlotPositions[i]) : null, seedId: typeof state?.seed === 'string' ? state.seed : null,
             seedName: typeof P?.ITEMS?.[state?.seed]?.name === 'string' ? P.ITEMS[state.seed].name : (state?.seed ?? null),
             cropId: typeof def?.crop === 'string' ? def.crop : null,
             cropName: typeof P?.ITEMS?.[def?.crop]?.name === 'string' ? P.ITEMS[def.crop].name : (def?.crop ?? null),
@@ -1805,10 +1806,10 @@ export class VendorRunner {
           give: (Array.isArray(pack?.give) ? pack.give : []).map((item: any[]) => ({ itemId: String(item?.[0] ?? ''), name: P?.ITEMS?.[item?.[0]]?.name ?? String(item?.[0] ?? ''), qty: Number.isFinite(item?.[1]) ? item[1] : null })),
         }));
         return {
-          inGame: this.connectionState() === 'IN_GAME', mapId, inGarden: mapId === 'duoc_vien',
+          inGame: this.connectionState() === 'IN_GAME', mapId, inGarden: mapId === 'vuon_ca_nhan',
           personalGarden: mapId === 'vuon_ca_nhan',
           playerPosition: player && Number.isFinite(player.x) && Number.isFinite(player.y) ? { x: Number(player.x), y: Number(player.y) } : null,
-          daiPhuPosition: propPosition('dai_phu', { x: 14 * 32 + 16, y: 8 * 32 + 16 }),
+          daiPhuPosition: (() => { const prop = daiPhuProps.find((item: any) => item?.id === 'dai_phu'); return prop ? { x: Number.isFinite(prop.x) ? prop.x : prop.tx * 32 + 16, y: Number.isFinite(prop.y) ? prop.y : prop.ty * 32 + 16 } : { x: 14 * 32 + 16, y: 8 * 32 + 16 }; })(),
           down: this.isDown(this.getPlayer()), auto: this.autoRequested || !!P?.SceneWorld?.autoOn,
           stage: Number.isFinite(quest?.stage) ? quest.stage : null,
           duocCong: Number.isFinite(P?.Progress?.duocCong) ? P.Progress.duocCong : null,
@@ -1866,7 +1867,7 @@ export class VendorRunner {
         return { id, state: !state ? 'empty' : remainSec === null ? 'unknown' : remainSec <= 0 ? 'ready' : 'growing', watered: typeof state?.wet === 'boolean' ? state.wet : null,
           remainSec: state ? remainSec : null, position: x !== null && y !== null ? { x, y } : null };
       });
-      const stoneIds: Record<string, string> = { tan_vien: 'dai_da', duoc_vien: 'dai_da_duoc' };
+      const stoneIds: Record<string, string> = { tan_vien: 'dai_da', vuon_ca_nhan: 'dai_da_duoc' };
       const stone = props.find((p: any) => p?.id === stoneIds[mapId ?? '']);
       const furnaceIds: Record<string, string> = { tan_vien: 'dan_lo', vuon_ca_nhan: 'dan_lo_vuon' };
       const furnace = props.find((p: any) => p?.id === furnaceIds[mapId ?? '']);
@@ -1973,10 +1974,10 @@ export class VendorRunner {
   public getGarden(): GardenSnapshot { return this.gardenOperations.getGarden(); }
   public getGardenOperation(): GardenOperation | null { return this.gardenOperations.getOperation(); }
   public startGardenBuyPack(packId: string, times = 1): GardenOperation { return this.gardenOperations.buyPack(packId, times); }
-  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty'): GardenOperation { return this.gardenOperations.sow(seedId, plotIds); }
-  public startGardenHarvest(plotIds?: string[] | 'all-ready'): GardenOperation { return this.gardenOperations.harvest(plotIds); }
-  public startGardenWater(plotIds?: string[] | 'all-watering-needed'): GardenOperation { return this.gardenOperations.water(plotIds); }
-  public startGardenScoop(): GardenOperation { return this.gardenOperations.scoop(); }
+  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty', autoTravel = false): GardenOperation { return this.gardenOperations.sow(seedId, plotIds, autoTravel); }
+  public startGardenHarvest(plotIds?: string[] | 'all-ready', autoTravel = false): GardenOperation { return this.gardenOperations.harvest(plotIds, autoTravel); }
+  public startGardenWater(plotIds?: string[] | 'all-watering-needed', autoTravel = false): GardenOperation { return this.gardenOperations.water(plotIds, autoTravel); }
+  public startGardenScoop(autoTravel = false): GardenOperation { return this.gardenOperations.scoop(autoTravel); }
   public cancelGarden(operationId?: string): GardenOperation {
     const operation = this.gardenOperations.cancel(operationId);
     const walk = this.walkNavigator.getOperation();

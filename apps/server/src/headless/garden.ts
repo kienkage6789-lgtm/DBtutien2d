@@ -16,6 +16,8 @@ export class GardenError extends Error { public constructor(public readonly code
 
 // Official world.js herb_plot uses r:34; subtract an 8 px safety margin.
 export const GARDEN_PLOT_INTERACTION_RADIUS = 26;
+export const GARDEN_PLOT_MAP = 'vuon_ca_nhan';
+export const DAI_PHU_MAP = 'duoc_vien';
 // Official mapdata.js dai_phu uses r:48; keep a 10 px safety margin.
 export const GARDEN_DAI_PHU_INTERACTION_RADIUS = 38;
 
@@ -132,14 +134,14 @@ export class GardenOperations {
     void this.perform(async () => {
       const before = this.client.read().duocCong;
       if (before === null) throw new GardenError('GARDEN_COUNT_MISMATCH');
-      await this.approach(this.client.read().daiPhuPosition, GARDEN_DAI_PHU_INTERACTION_RADIUS, 'duoc_vien');
+      await this.approach(this.client.read().daiPhuPosition, GARDEN_DAI_PHU_INTERACTION_RADIUS, DAI_PHU_MAP);
       await this.send('seed.buyPack', { packId });
       await this.waitFor(() => { const after = this.client.read().duocCong; return after !== null && before - after === pack.cost; });
     }, Array.from({ length: count }, () => packId));
     return this.getOperation()!;
   }
-  public sow(seedId: string, plotIds?: string[] | 'all-empty'): GardenOperation {
-    const state = this.validate(true); const seed = state.seeds.find((item) => item.seedId === seedId);
+  public sow(seedId: string, plotIds?: string[] | 'all-empty', autoTravel = false): GardenOperation {
+    const state = this.validate(!autoTravel); const seed = state.seeds.find((item) => item.seedId === seedId);
     if (!seed || seed.count === null || seed.count < 1) throw new GardenError('NO_SEEDS');
     const chosen = plotIds === undefined || plotIds === 'all-empty' ? state.plots.filter((plot) => plot.state === 'empty')
       : plotIds.map((id) => state.plots.find((plot) => plot.id === id)).filter((plot): plot is GardenPlot => !!plot);
@@ -150,14 +152,14 @@ export class GardenOperations {
       const plot = targets[this.operation!.progress.current]!; const before = this.client.count(seedId);
       if (before === null) throw new GardenError('GARDEN_COUNT_MISMATCH');
       const target = this.client.read().plots.find((item) => item.id === plot);
-      await this.approach(target?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
+      await this.approach(target?.position, GARDEN_PLOT_INTERACTION_RADIUS, GARDEN_PLOT_MAP);
       await this.send('farm.sow', { plot, seed: seedId });
       await this.waitFor(() => { const after = this.client.count(seedId); return after !== null && before - after === 1; });
     }, targets);
     return this.getOperation()!;
   }
-  public harvest(plotIds?: string[] | 'all-ready'): GardenOperation {
-    const state = this.validate(true);
+  public harvest(plotIds?: string[] | 'all-ready', autoTravel = false): GardenOperation {
+    const state = this.validate(!autoTravel);
     const chosen = plotIds === undefined || plotIds === 'all-ready' ? state.plots.filter((plot) => plot.state === 'ready')
       : plotIds.map((id) => state.plots.find((plot) => plot.id === id)).filter((plot): plot is GardenPlot => !!plot);
     if (!chosen.length) throw new GardenError('NO_READY_PLOTS');
@@ -166,15 +168,15 @@ export class GardenOperations {
     void this.perform(async () => {
       const plotId = targets[this.operation!.progress.current]!; const before = this.client.read().plots.find((plot) => plot.id === plotId);
       const item = before?.cropId; const countBefore = item ? this.client.count(item) : null;
-      await this.approach(before?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
+      await this.approach(before?.position, GARDEN_PLOT_INTERACTION_RADIUS, GARDEN_PLOT_MAP);
       await this.send('farm.harvest', { plot: plotId });
       if (countBefore === null || !item) throw new GardenError('GARDEN_COUNT_MISMATCH');
       await this.waitFor(() => { const after = this.client.count(item); return after !== null && after === countBefore + 1; });
     }, targets);
     return this.getOperation()!;
   }
-  public water(plotIds?: string[] | 'all-watering-needed'): GardenOperation {
-    const state = this.validate(true);
+  public water(plotIds?: string[] | 'all-watering-needed', autoTravel = false): GardenOperation {
+    const state = this.validate(!autoTravel);
     if (state.permanentWater === null || state.permanentWater === undefined) throw new GardenError('GARDEN_DATA_UNKNOWN');
     const chosen = plotIds === undefined || plotIds === 'all-watering-needed'
       ? state.plots.filter((p) => p.state === 'growing' && p.watered === false)
@@ -190,7 +192,7 @@ export class GardenOperations {
       const id = targets[this.operation!.progress.current]!; const plot = this.client.read().plots.find((p) => p.id === id);
       if (plot?.remainSec === null || plot?.remainSec === undefined) throw new GardenError('GARDEN_DATA_UNKNOWN');
       const beforeWater = this.client.count('linh_tuyen_thuy'); const beforeRemain = plot?.remainSec;
-      await this.approach(plot?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
+      await this.approach(plot?.position, GARDEN_PLOT_INTERACTION_RADIUS, GARDEN_PLOT_MAP);
       await this.send('farm.water', { plot: id });
       await this.waitFor(() => { const after = this.client.read().plots.find((p) => p.id === id); const count = this.client.count('linh_tuyen_thuy');
         return after?.watered === true && (state.permanentWater === true || (beforeWater !== null && count !== null && beforeWater - count === 1))
@@ -198,7 +200,7 @@ export class GardenOperations {
     }, targets);
     return this.getOperation()!;
   }
-  public scoop(): GardenOperation {
+  public scoop(autoTravel = false): GardenOperation {
     const state = this.validate(false);
     if (state.stage === null || state.stage < 8) throw new GardenError('GARDEN_LOCKED');
     if (state.permanentWater === null) throw new GardenError('GARDEN_DATA_UNKNOWN');
@@ -206,8 +208,8 @@ export class GardenOperations {
     this.begin('scoop', 1);
     void this.perform(async () => {
       const current = this.client.read();
-      if (!current.personalGarden) throw new GardenError('NOT_IN_PERSONAL_GARDEN');
-      await this.approach(current.scoopPosition, GARDEN_SCOOP_INTERACTION_RADIUS, 'vuon_ca_nhan');
+      if (!autoTravel && !current.personalGarden) throw new GardenError('NOT_IN_GARDEN');
+      await this.approach(current.scoopPosition, GARDEN_SCOOP_INTERACTION_RADIUS, GARDEN_PLOT_MAP);
       await this.send('lake.scoop', {});
       await this.waitFor(() => this.client.read().permanentWater === true);
     }, ['ho_bich_thuy']);

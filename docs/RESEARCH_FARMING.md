@@ -1,13 +1,13 @@
-# Nghiên cứu: đổi hạt giống và trồng linh dược (Thảo Dược Cốc)
+# Nghiên cứu: đổi hạt giống và trồng linh dược (Vườn Cá Nhân)
 
-Cập nhật: 2026-10-13. Nguồn: mã client chính thức ở `vendor/tutien2d-public-client/2026-10-06` (`systems/farm.js`, `systems/quest.js`, `scenes/world.js`, `net/gateway.js`, `world/mapdata.js`, `systems/items.js`), CHỈ ĐỌC. Không chạm game thật. Hiện bot CHƯA có chức năng nào cho việc này.
+Cập nhật: 2026-10-13. Nguồn: mã client chính thức ở `vendor/tutien2d-public-client/2026-10-06` (`systems/farm.js`, `systems/quest.js`, `scenes/world.js`, `net/gateway.js`, `world/mapdata.js`, `systems/items.js`), CHỈ ĐỌC. Không chạm game thật. Bot hiện đã có thao tác vườn và dashboard; ghi chú map phía dưới đã được sửa sau khi xác nhận giả định ban đầu đặt luống ở sai map.
 Nhãn: **[Client]** đọc từ mã client; **[Suy ra]** tính từ dữ liệu client; **[Chưa xác minh]** cần thử live.
 
 ## 1. Tổng quan [Client]
 Chuỗi: làm việc Dược Công → nhận điểm **Dược Công** → đổi **gói hạt** ở Đại Phu → gieo hạt vào **luống** → (tưới) → hái linh thảo → dùng luyện đan. Điều kiện mở: nhiệm vụ chính tuyến **giai đoạn ≥ 8** (`Quest.canOpenSeedMenu`). Trước đó luống bị khoá ("chưa được chủ vườn gật đầu").
 
-- **Nơi trồng:** map `duoc_vien` "Thảo Dược Cốc" (shared): **10 luống** `plot_1..plot_10` ở ô (3..7, 4) và (3..7, 6). `Farm.PLOT_COUNT = 10`. Mỗi luống chứa tối đa một cây; thu hoạch được **+1 linh thảo** mỗi cây.
-- **Đại Phu** ở map `duoc_vien` (NPC `dai_phu`): menu "Mở Quầy Đổi Hạt" và "Nhận Việc Dược Công".
+- **Nơi trồng:** map `vuon_ca_nhan` "Vườn Cá Nhân" (`scope: "personal"`, `instanceType: "player_garden"`): **10 luống** `plot_1..plot_10` ở ô (3..7, 4) và (3..7, 6), cùng đài đá `dai_da_duoc` (8,7), đan lô `dan_lo_vuon` (10,9) và ao `ho_bich_thuy` (12,4). Bản đồ cá nhân nghĩa là mỗi người chơi có một bản; các luống không dùng chung. `Farm.PLOT_COUNT = 10`. Mỗi luống chứa tối đa một cây; thu hoạch được **+1 linh thảo** mỗi cây.
+- **Đại Phu** ở map `duoc_vien` (NPC `dai_phu`, ô (14,8)): menu "Mở Quầy Đổi Hạt" và "Nhận Việc Dược Công". Thảo Dược Cốc có cổng sang Vườn Cá Nhân ở ô (11,6) và (11,7), `targetSpawn` (8,10).
 - **Nước:** tưới làm cây chín nhanh hơn rất nhiều. Cần vật phẩm `linh_tuyen_thuy` (mỗi lần tưới tốn 1), HOẶC mở **nguồn nước vĩnh viễn** một lần: ở map `vuon_ca_nhan` (Vườn Cá Nhân), tương tác Hồ Nước (`ho_bich_thuy`) → "Múc nước" (`lake.scoop`) → cờ `ho_bich_thuy_da_muc`; sau đó tưới không tốn vật phẩm.
 
 ## 2. Hạt giống và thời gian [Client] (`Farm.SEEDS`)
@@ -54,14 +54,13 @@ Mỗi việc có trần lượt mỗi ngày (mặc định 3, `SEED_TASK_DAILY_L
 - Gói `pham` (2 Dược Công) đổi nhiều hạt nhất theo điểm, hợp cho đan cấp thấp.
 - 10 luống, hạt Địa chín 60 phút (30 phút nếu tưới): thông lượng tối đa ~10 cây/giờ khô, đủ cho lượng hạt có được từ Dược Công; luống không phải điểm nghẽn.
 
-## 7. Bot đã có và còn thiếu
-Có: đăng nhập, di chuyển giữa map (qua cổng), việc hằng ngày cho 5 việc Dược Công, đọc túi đồ (có `Inventory.count`).
-Thiếu: nhận/giao việc Dược Công qua Đại Phu (kiểm tra bot đã xử lý bước nhận việc/giao việc chưa), `seed.buyPack`, `farm.sow`/`water`/`harvest`, `lake.scoop`, đồng hồ theo từng luống (thời gian chín), theo dõi trạng thái luống từ gói máy chủ.
+## 7. Trạng thái tính năng hiện tại
+Garden dashboard đã có đọc trạng thái/đếm ngược, đổi gói ở Đại Phu, gieo, tưới, thu hoạch và múc nước; thao tác ghi tuần tự, có hậu kiểm và không retry. Có thể bật `autoTravel` để WalkNavigator đi qua cổng tới map đích; mặc định tắt. Các hành vi server thật (ACK/state, khoảng cách, điều kiện tạo bản đồ cá nhân) vẫn **chưa xác minh live**. Tính năng nhận/giao việc Dược Công và các việc hằng ngày là luồng riêng.
 
 ## 8. Đề xuất lộ trình (chưa làm)
 1. **Chỉ đọc:** hiển thị trên dashboard Dược Công đang có, trạng thái 10 luống (trống/đang lớn/chín, còn bao lâu), hạt trong túi. Cần xác định gói máy chủ nào mang trạng thái luống (chưa biết).
 2. **Đổi hạt:** nút "Đổi gói hạt" (xác nhận hai bước; chọn gói; kiểm điều kiện cảnh giới và điểm) qua `seed.buyPack`.
-3. **Trồng:** "Gieo/tưới/thu hoạch tất cả" tuần tự, mỗi lệnh chờ ACK, không retry mù; chỉ khi ở đúng map `duoc_vien`, bot đứng đủ gần luống, và không có `hurt`.
+3. **Trồng:** "Gieo/tưới/thu hoạch tất cả" tuần tự, mỗi lệnh chờ ACK, không retry mù; chỉ khi ở đúng map `vuon_ca_nhan`, bot đứng đủ gần luống, và không có `hurt`.
 4. **Mở nước vĩnh viễn:** một lần ở Vườn Cá Nhân (`lake.scoop`).
 5. Tự động theo lịch: gieo → tưới → chờ → thu → gieo lại, giữ ranh giới an toàn (`hurtCount`, một phiên mỗi tài khoản).
 Mỗi bước cần thử live với một tài khoản, có người giám sát, ghi gói tin đã che dữ liệu.
@@ -73,7 +72,7 @@ Hình dạng ACK của `seed.*`/`farm.*`; luống riêng hay chung; khoảng cá
 
 - **[Client] Nguồn đọc:** `Farm.state` được khởi tạo trong `systems/farm.js`; `Farm.load(t.farm)` được gọi trong `Quest.load()` khi nạp save. Gateway xử lý gói `state` có `save` bằng `Utils.store.set(PROGRESS_KEY, t.save)` rồi gọi `Quest.load()`. `Progress.duocCong` được nạp từ `state.save.duocCong`; `Quest.save()` serialize `duocCong`, túi và các tiến độ. Client source cho thấy cập nhật qua gói `state` là đường đồng bộ; chưa xác minh live server luôn gửi `state` sau từng lệnh vườn/đổi gói hay cấu trúc ACK cụ thể.
 - **[Client] Gửi lệnh:** `farm.sow`, `farm.harvest`, `farm.water`, `Quest.buySeedPack` được Gateway bọc bằng `we(...)`. Hàm gốc thay đổi state/túi/điểm đồng bộ trước, wrapper mới gửi `Gateway.cmd(...)`. Headless nên gửi `Gateway.cmd` trực tiếp qua hàm runner ACK (ghép `rid` + `cmd`) để không áp dụng cục bộ thêm lần nữa và có thể chờ đúng ACK. Sau ACK phải đọc lại state/túi/điểm đồng bộ; nếu số lượng hoặc Dược Công không đổi đúng như mong đợi thì dừng `GARDEN_COUNT_MISMATCH`. Không tự hoàn tác dữ liệu cục bộ: save có thể đã được server xác nhận/ghi lại và một rollback dự đoán có nguy cơ lệch thêm; cần chờ state authoritative hoặc dừng để người dùng làm mới.
-- **[Client] Khoảng cách:** nhánh `herb_plot` dùng kiểm tra tương tác trong bán kính `r:34`; 10 props `plot_1..plot_10` của `duoc_vien` nằm ở ô (3..7,4) và (3..7,6). Tâm ô tính `tx*32+16, ty*32+16`. Prop NPC `dai_phu` nằm ở ô (14,8), bán kính tương tác `r:48`. Thao tác headless đi tới trước khi gửi lệnh: luống trong ≤26 px, Đại Phu ≤38 px (chừa biên lần lượt 8/10 px). Vị trí prop được đọc từ `P.MapData.get('duoc_vien')` nếu có; fallback tọa độ lấy từ `world/mapdata.js`, chỉ dùng cho map `duoc_vien`. Nếu nhân vật đã trong ngưỡng thì không gọi walk. Mọi lệnh dùng `WalkNavigator` và `abortOnHurt`; sau walk, checkpoint sát trước khi gửi kiểm tra down/Auto/hurt/huỷ/kết nối. Máy chủ có kiểm tra khoảng cách hay không vẫn **chưa xác minh live**.
+- **[Client] Khoảng cách/map:** nhánh `herb_plot` dùng kiểm tra tương tác trong bán kính `r:34`; 10 props `plot_1..plot_10` của `vuon_ca_nhan` nằm ở ô (3..7,4) và (3..7,6). `dai_da_duoc` ở (8,7), `dan_lo_vuon` ở (10,9), ao `ho_bich_thuy` ở (12,4). Tâm ô tính `tx*32+16, ty*32+16`. Prop NPC `dai_phu` nằm ở `duoc_vien`, ô (14,8), bán kính tương tác `r:48`. Thao tác headless đi tới trước khi gửi lệnh: luống trong ≤26 px, Đại Phu ≤38 px (chừa biên lần lượt 8/10 px). Props luống đọc từ `P.MapData.get('vuon_ca_nhan')`; fallback tọa độ chỉ dùng khi map hiện tại là `vuon_ca_nhan`. Vị trí Đại Phu đọc riêng từ `duoc_vien`. Nếu nhân vật đã trong ngưỡng thì không gọi walk. Mọi lệnh dùng `WalkNavigator` và `abortOnHurt`; sau walk, checkpoint sát trước khi gửi kiểm tra down/Auto/hurt/huỷ/kết nối. Máy chủ có kiểm tra khoảng cách hay không vẫn **chưa xác minh live**.
 - **[Chưa xác minh live]:** ACK thật của `farm.*`/`seed.buyPack`, lý do từ chối; có phát `state` cập nhật sau mỗi lệnh hay không; luống cá nhân hay dùng chung; khoảng cách server; giới hạn tần suất; stage của tài khoản thật. Không gửi lệnh thử trên game thật trong giai đoạn này.
 
 ## 11. Tình trạng tính năng
@@ -82,7 +81,7 @@ Hình dạng ACK của `seed.*`/`farm.*`; luống riêng hay chung; khoảng cá
 
 ## 12. Thao tác tưới và múc nước trên dashboard — 2026-10-13
 
-- Luống ở `duoc_vien`; `Farm.canWater` yêu cầu luống có cây, chưa tưới và chưa chín. Nguồn tưới là cờ vĩnh viễn `ho_bich_thuy_da_muc` hoặc một `linh_tuyen_thuy` cho mỗi lần tưới.
+- Luống, đài đá `dai_da_duoc`, đan lô `dan_lo_vuon` và ao `ho_bich_thuy` ở `vuon_ca_nhan`; `Farm.canWater` yêu cầu luống có cây, chưa tưới và chưa chín. Nguồn tưới là cờ vĩnh viễn `ho_bich_thuy_da_muc` hoặc một `linh_tuyen_thuy` cho mỗi lần tưới.
 - Ao `ho_bich_thuy` nằm ở `vuon_ca_nhan` ô (12,4), bán kính client 48 px. Server operation đi tới bán kính an toàn trong cùng map; không tự chuyển bản đồ.
 - Các lệnh được thực hiện tuần tự qua ACK, không retry, hủy khi down/reconnect/Auto/hurt/stop và hậu kiểm `watered`/`remainSec`, số Linh Tuyền Thủy hoặc cờ nguồn.
 - ACK, khoảng cách máy chủ, nguồn nước và state sau lệnh trên server thật **chưa xác minh live**.

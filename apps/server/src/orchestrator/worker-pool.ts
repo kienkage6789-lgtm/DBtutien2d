@@ -637,21 +637,21 @@ export class WorkerPool {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
     const result = await active.startGardenBuyPack(packId, times); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
-  public async startGardenSow(accountId: string, seedId: string, plotIds?: string[] | 'all-empty'): Promise<GardenOperation> {
+  public async startGardenSow(accountId: string, seedId: string, plotIds?: string[] | 'all-empty', autoTravel = false): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
-    const result = await active.startGardenSow(seedId, plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+    const result = await active.startGardenSow(seedId, plotIds, autoTravel); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
-  public async startGardenHarvest(accountId: string, plotIds?: string[] | 'all-ready'): Promise<GardenOperation> {
+  public async startGardenHarvest(accountId: string, plotIds?: string[] | 'all-ready', autoTravel = false): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
-    const result = await active.startGardenHarvest(plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+    const result = await active.startGardenHarvest(plotIds, autoTravel); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
-  public async startGardenWater(accountId: string, plotIds?: string[] | 'all-watering-needed'): Promise<GardenOperation> {
+  public async startGardenWater(accountId: string, plotIds?: string[] | 'all-watering-needed', autoTravel = false): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
-    const result = await active.startGardenWater(plotIds); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+    const result = await active.startGardenWater(plotIds, autoTravel); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
-  public async startGardenScoop(accountId: string): Promise<GardenOperation> {
+  public async startGardenScoop(accountId: string, autoTravel = false): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');
-    const result = await active.startGardenScoop(); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
+    const result = await active.startGardenScoop(autoTravel); wsHub.broadcastAccountUpdate(this.getRuntimeInfo(accountId)); return result;
   }
   public async cancelGarden(accountId: string, operationId: string): Promise<GardenOperation> {
     const active = this.activeVendors.get(accountId); if (!active) throw new Error('NOT_IN_GAME');

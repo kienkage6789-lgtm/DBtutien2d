@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CultivationError, CultivationOperations, type CultivationClient, type CultivationState } from './cultivation.js';
 
 function fixture() {
-  let now = 1_000; const commands: Array<{ command: string; args: Record<string, unknown> }> = []; const counts = new Map<string, number>([['herb', 6], ['pill', 0], ['bao_menh_phu', 0]]);
+  let now = 1_000; const commands: Array<{ command: string; args: Record<string, unknown> }> = []; const walks: Array<{ point: { x: number; y: number }; mapId?: string }> = []; const counts = new Map<string, number>([['herb', 6], ['pill', 0], ['bao_menh_phu', 0]]);
   let state: CultivationState = { inGame: true, connected: true, down: false, auto: false, activeOtherOperation: false, mapId: 'tan_vien', position: { x: 720, y: 592 }, stonePosition: { x: 720, y: 592 }, hurtCount: 0,
     realmId: 'luyen_khi_1', exp: 10, expMax: 20, questStage: 12, nextGateReady: true, gateFrom: 'luyen_khi_1', gateTo: 'luyen_khi_2', gateItemId: null, gateItemQty: null,
     recipes: [{ id: 'pill', name: 'Pill', open: true, recipe: [{ id: 'herb', qty: 2 }] }], permanentWater: false, furnaceMapId: 'tan_vien', furnacePosition: { x: 528, y: 368 }, plots: [] };
@@ -19,12 +19,12 @@ function fixture() {
       if (command === 'meditate' && args.on === 0) { /* stand */ }
       return { ok: true, ...(ackSuccess !== undefined ? { success: ackSuccess } : {}) };
     },
-    walk: async (point, _radius, mapId) => { state = { ...state, mapId, position: point }; },
+    walk: async (point, _radius, mapId) => { walks.push({ point, mapId }); state = { ...state, mapId, position: point }; },
     wait: async (ms) => { if (pauseWait) await new Promise<void>((resolve) => { releaseWait = resolve; }); now += ms; if (advanceExp && state.exp !== null) state = { ...state, exp: Math.min(state.expMax ?? state.exp + 1, state.exp + 1) }; await Promise.resolve(); },
     record: () => {}, ackTimeoutMs: 100, commandDelayMs: 1, meditateMaxMs: 5_000,
   };
   const runner = new CultivationOperations(client);
-  return { runner, commands, state: () => state, setState: (s: CultivationState) => { state = s; }, setRefusal: (v: string) => { refusal = v; }, setAckSuccess: (v: boolean | undefined) => { ackSuccess = v; }, setAdvanceExp: (v: boolean) => { advanceExp = v; }, setMutateRealm: (v: boolean) => { mutateRealm = v; }, setMutateBrew: (v: boolean) => { mutateBrew = v; }, holdWait: () => { pauseWait = true; }, release: () => { pauseWait = false; releaseWait?.(); releaseWait = null; }, count: (id: string) => counts.get(id) ?? null, tick: (ms = 1) => { now += ms; } };
+  return { runner, commands, walks, state: () => state, setState: (s: CultivationState) => { state = s; }, setRefusal: (v: string) => { refusal = v; }, setAckSuccess: (v: boolean | undefined) => { ackSuccess = v; }, setAdvanceExp: (v: boolean) => { advanceExp = v; }, setMutateRealm: (v: boolean) => { mutateRealm = v; }, setMutateBrew: (v: boolean) => { mutateBrew = v; }, holdWait: () => { pauseWait = true; }, release: () => { pauseWait = false; releaseWait?.(); releaseWait = null; }, count: (id: string) => counts.get(id) ?? null, tick: (ms = 1) => { now += ms; } };
 }
 async function settle(f: ReturnType<typeof fixture>) { for (let i = 0; i < 100; i += 1) { await new Promise<void>((resolve) => setImmediate(resolve)); if (f.runner.getOperation()?.status !== 'running') return; } }
 
@@ -46,9 +46,17 @@ test('ACK timeout is terminal and the recipe command is never retried', async ()
   const f = fixture(); f.setRefusal('ACK_TIMEOUT'); f.runner.brew('pill', 3); await settle(f);
   assert.equal(f.runner.getOperation()?.error, 'ACK_TIMEOUT'); assert.equal(f.commands.filter((x) => x.command === 'brew').length, 1);
 });
-test('brew requires a known supported furnace map before sending', async () => {
+test('brew travels to tan_vien when started outside supported furnace maps', async () => {
   const f = fixture(); f.setState({ ...f.state(), mapId: 'unknown_map', furnaceMapId: null }); f.runner.brew('pill'); await settle(f);
-  assert.equal(f.runner.getOperation()?.error, 'NOT_NEAR_FURNACE'); assert.equal(f.commands.length, 0);
+  assert.equal(f.runner.getOperation()?.status, 'done'); assert.equal(f.walks[0]?.mapId, 'tan_vien'); assert.equal(f.commands.filter((x) => x.command === 'brew').length, 1);
+});
+test('cultivation keeps tan_vien or vuon_ca_nhan and defaults other maps to tan_vien', async () => {
+  const garden = fixture(); garden.setState({ ...garden.state(), mapId: 'vuon_ca_nhan', position: { x: 0, y: 0 }, furnaceMapId: 'vuon_ca_nhan', furnacePosition: { x: 336, y: 304 } });
+  garden.runner.brew('pill'); await settle(garden); assert.equal(garden.walks[0]?.mapId, 'vuon_ca_nhan');
+  const stone = fixture(); stone.setState({ ...stone.state(), mapId: 'vuon_ca_nhan', position: { x: 0, y: 0 }, stonePosition: { x: 272, y: 240 } });
+  stone.runner.breakthrough(); await settle(stone); assert.equal(stone.walks[0]?.mapId, 'vuon_ca_nhan');
+  const fallback = fixture(); fallback.setState({ ...fallback.state(), mapId: 'duoc_vien', stonePosition: null });
+  fallback.runner.breakthrough(); await settle(fallback); assert.equal(fallback.walks[0]?.mapId, 'tan_vien');
 });
 test('brew count mismatch and unknown inventory or exp stop without inventing values', async () => {
   const mismatch = fixture(); mismatch.setMutateBrew(false); mismatch.runner.brew('pill'); await settle(mismatch);

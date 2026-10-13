@@ -328,6 +328,31 @@ test('VendorRunner reads loaded inventory and cave-chest state from the client',
   } finally { await runner.stop(); }
 });
 
+test('getGarden uses personal garden plots and limits fallback coordinates to vuon_ca_nhan', () => {
+  resetKhuFixture();
+  const runner = createKhuRunner();
+  const P: any = {
+    Gateway: { ready: true, connected: true, mapId: 'vuon_ca_nhan' },
+    SceneWorld: { map: { data: { id: 'vuon_ca_nhan' } }, player: { x: 20, y: 30 }, autoOn: false },
+    MapData: { get: (id: string) => id === 'vuon_ca_nhan' ? { props: [{ id: 'dai_da_duoc', tx: 8, ty: 7 }, { id: 'dan_lo_vuon', tx: 10, ty: 9 }] } : { props: [{ id: 'dai_phu', tx: 14, ty: 8 }] } },
+    Quest: { stage: 8, SEED_PACKS: [], packUnlocked: () => false, flags: {} },
+    Farm: { PLOT_COUNT: 10, SEEDS: [], plot: () => null, remain: () => 0 },
+    Inventory: { count: () => 0 }, Progress: { duocCong: 0 },
+  };
+  (runner as unknown as { P: unknown }).P = P;
+  const personal = runner.getGarden();
+  assert.equal(personal.inGarden, true);
+  assert.deepEqual(personal.plots[0]?.position, { x: 112, y: 144 });
+  const cultivation = (runner as any).createCultivationClient().read();
+  assert.deepEqual(cultivation.stonePosition, { x: 272, y: 240 });
+  assert.deepEqual(cultivation.furnacePosition, { x: 336, y: 304 });
+  P.SceneWorld.map.data.id = 'duoc_vien'; P.Gateway.mapId = 'duoc_vien';
+  const shared = runner.getGarden();
+  assert.equal(shared.inGarden, false);
+  assert.equal(shared.plots[0]?.position, null);
+  assert.equal((runner as any).createCultivationClient().read().stonePosition, undefined);
+});
+
 test('VendorRunner reads quest objectives and computes the next gate from current-realm BREAKTHROUGH rules', async () => {
   const runner = createKhuRunner();
   const client: Record<string, any> = {

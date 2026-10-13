@@ -107,10 +107,10 @@ export class RemoteRunnerHandle implements RunnerHandle {
   public getGarden(): Promise<GardenSnapshot> { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenSnapshot>('getGarden').then(clone); }
   public getGardenOperation() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<GardenOperation | null>('getGardenOperation').then(clone); }
   public startGardenBuyPack(packId: string, times = 1) { return this.call<GardenOperation>('startGardenBuyPack', packId, times); }
-  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty') { return this.call<GardenOperation>('startGardenSow', seedId, plotIds); }
-  public startGardenHarvest(plotIds?: string[] | 'all-ready') { return this.call<GardenOperation>('startGardenHarvest', plotIds); }
-  public startGardenWater(plotIds?: string[] | 'all-watering-needed') { return this.call<GardenOperation>('startGardenWater', plotIds); }
-  public startGardenScoop() { return this.call<GardenOperation>('startGardenScoop'); }
+  public startGardenSow(seedId: string, plotIds?: string[] | 'all-empty', autoTravel = false) { return this.call<GardenOperation>('startGardenSow', seedId, plotIds, autoTravel); }
+  public startGardenHarvest(plotIds?: string[] | 'all-ready', autoTravel = false) { return this.call<GardenOperation>('startGardenHarvest', plotIds, autoTravel); }
+  public startGardenWater(plotIds?: string[] | 'all-watering-needed', autoTravel = false) { return this.call<GardenOperation>('startGardenWater', plotIds, autoTravel); }
+  public startGardenScoop(autoTravel = false) { return this.call<GardenOperation>('startGardenScoop', autoTravel); }
   public cancelGarden(operationId?: string) { return this.call<GardenOperation>('cancelGarden', operationId); }
   public getCultivationOperation() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<CultivationOperation | null>('getCultivationOperation').then(clone); }
   public getCultivationState() { if (this.isStale()) return Promise.reject(new Error('VENDOR_DATA_STALE')); return this.call<CultivationState>('getCultivationState').then(clone); }

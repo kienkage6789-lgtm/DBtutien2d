@@ -1343,12 +1343,12 @@ apiRouter.post('/accounts/:id/garden/buy-pack', requireEntitlement, async (req: 
 apiRouter.post('/accounts/:id/garden/sow', requireEntitlement, async (req: Request, res: Response) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
   const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-empty' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
-  if (!body || Object.keys(body).some((key) => !['seedId', 'plotIds'].includes(key)) || typeof body.seedId !== 'string' || !/^hat_[a-z0-9_]{1,40}$/.test(body.seedId) || !validPlots) {
+  if (!body || Object.keys(body).some((key) => !['seedId', 'plotIds', 'autoTravel'].includes(key)) || typeof body.seedId !== 'string' || !/^hat_[a-z0-9_]{1,40}$/.test(body.seedId) || !validPlots || (body.autoTravel !== undefined && typeof body.autoTravel !== 'boolean')) {
     res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return;
   }
   const id = String(req.params.id);
   try {
-    const data = await workerPool.startGardenSow(id, body.seedId, body.plotIds as string[] | 'all-empty' | undefined);
+    const data = await workerPool.startGardenSow(id, body.seedId, body.plotIds as string[] | 'all-empty' | undefined, body.autoTravel === true);
     db.addLog(id, 'info', 'Garden', `garden_sow seed=${body.seedId} count=${data.progress.total} status=${data.status}`);
     db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_sow', targetType: 'account', targetId: id, detail: `seedId=${body.seedId} count=${data.progress.total} status=${data.status}` });
     res.status(202).json({ success: true, data });
@@ -1357,10 +1357,10 @@ apiRouter.post('/accounts/:id/garden/sow', requireEntitlement, async (req: Reque
 apiRouter.post('/accounts/:id/garden/harvest', requireEntitlement, async (req: Request, res: Response) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
   const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-ready' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
-  if (!body || Object.keys(body).some((key) => key !== 'plotIds') || !validPlots) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  if (!body || Object.keys(body).some((key) => !['plotIds', 'autoTravel'].includes(key)) || !validPlots || (body.autoTravel !== undefined && typeof body.autoTravel !== 'boolean')) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
   const id = String(req.params.id);
   try {
-    const data = await workerPool.startGardenHarvest(id, body.plotIds as string[] | 'all-ready' | undefined);
+    const data = await workerPool.startGardenHarvest(id, body.plotIds as string[] | 'all-ready' | undefined, body.autoTravel === true);
     db.addLog(id, 'info', 'Garden', `garden_harvest count=${data.progress.total} status=${data.status}`);
     db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_harvest', targetType: 'account', targetId: id, detail: `count=${data.progress.total} status=${data.status}` });
     res.status(202).json({ success: true, data });
@@ -1369,16 +1369,16 @@ apiRouter.post('/accounts/:id/garden/harvest', requireEntitlement, async (req: R
 apiRouter.post('/accounts/:id/garden/water', requireEntitlement, async (req: Request, res: Response) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
   const validPlots = body?.plotIds === undefined || body?.plotIds === 'all-watering-needed' || (Array.isArray(body?.plotIds) && body.plotIds.length <= 10 && body.plotIds.every((id) => typeof id === 'string' && /^plot_(?:[1-9]|10)$/.test(id)));
-  if (!body || Object.keys(body).some((key) => key !== 'plotIds') || !validPlots) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  if (!body || Object.keys(body).some((key) => !['plotIds', 'autoTravel'].includes(key)) || !validPlots || (body.autoTravel !== undefined && typeof body.autoTravel !== 'boolean')) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
   const id = String(req.params.id);
-  try { const data = await workerPool.startGardenWater(id, body.plotIds as string[] | 'all-watering-needed' | undefined); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_water', targetType: 'account', targetId: id, detail: `count=${data.progress.total} status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  try { const data = await workerPool.startGardenWater(id, body.plotIds as string[] | 'all-watering-needed' | undefined, body.autoTravel === true); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_water', targetType: 'account', targetId: id, detail: `count=${data.progress.total} status=${data.status}` }); res.status(202).json({ success: true, data }); }
   catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
 });
 apiRouter.post('/accounts/:id/garden/scoop', requireEntitlement, async (req: Request, res: Response) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : null;
-  if (!body || Object.keys(body).length !== 0) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
+  if (!body || Object.keys(body).some((key) => key !== 'autoTravel') || (body.autoTravel !== undefined && typeof body.autoTravel !== 'boolean')) { res.status(400).json({ success: false, error: 'INVALID_REQUEST', errorCode: 'INVALID_REQUEST', retryable: false }); return; }
   const id = String(req.params.id);
-  try { const data = await workerPool.startGardenScoop(id); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_scoop', targetType: 'account', targetId: id, detail: `status=${data.status}` }); res.status(202).json({ success: true, data }); }
+  try { const data = await workerPool.startGardenScoop(id, body.autoTravel === true); db.addAuditLog({ actorId: req.principal?.userId ?? null, action: 'garden_scoop', targetType: 'account', targetId: id, detail: `status=${data.status}` }); res.status(202).json({ success: true, data }); }
   catch (error) { const response = gardenErrorResponse(error); res.status(response.status).json(response.body); }
 });
 apiRouter.post('/accounts/:id/garden/cancel', requireEntitlement, async (req: Request, res: Response) => {

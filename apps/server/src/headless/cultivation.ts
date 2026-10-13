@@ -109,8 +109,9 @@ export class CultivationOperations {
     this.begin('brew', possible);
     void this.run(async () => {
       const initial = this.client.read();
-      if (!['tan_vien', 'vuon_ca_nhan'].includes(initial.mapId ?? '') || !initial.furnaceMapId || initial.furnaceMapId !== initial.mapId) throw new CultivationError('NOT_NEAR_FURNACE');
-      await this.approach(initial.furnacePosition ?? (initial.mapId === 'tan_vien' ? { x: 16 * 32 + 16, y: 11 * 32 + 16 } : { x: 10 * 32 + 16, y: 9 * 32 + 16 }), FURNACE_RADIUS, initial.mapId);
+      const map = initial.mapId === 'vuon_ca_nhan' ? 'vuon_ca_nhan' : initial.mapId === 'tan_vien' ? 'tan_vien' : 'tan_vien';
+      const knownFurnace = initial.mapId === map && initial.furnaceMapId === map ? initial.furnacePosition : null;
+      await this.approach(knownFurnace ?? (map === 'tan_vien' ? { x: 16 * 32 + 16, y: 11 * 32 + 16 } : { x: 10 * 32 + 16, y: 9 * 32 + 16 }), FURNACE_RADIUS, map);
       for (let i = 0; i < possible; i += 1) {
         this.checkpoint();
         const before = new Map(recipe.recipe.map((p) => [p.id, this.client.count(p.id)]));
@@ -141,7 +142,7 @@ export class CultivationOperations {
     this.begin('meditate', 1);
     void this.run(async () => {
       if (on) {
-        const map = s.mapId === 'duoc_vien' ? 'duoc_vien' : 'tan_vien';
+        const map = s.mapId === 'vuon_ca_nhan' ? 'vuon_ca_nhan' : 'tan_vien';
         await this.approach(s.stonePosition ?? STONE_POSITION, STONE_RADIUS, map);
         const before = this.client.read().exp;
         await this.send('meditate', { on: 1 }); this.meditationStarted = true; this.operation!.results.push({ target: 'meditate', ok: true }); this.operation!.progress.current = 1;
@@ -177,7 +178,7 @@ export class CultivationOperations {
     if (useBaoMenh && !s.gateTo.startsWith('truc_co')) throw new CultivationError('BAO_MENH_NOT_APPLICABLE');
     this.begin('breakthrough', 1);
     void this.run(async () => {
-      const map = s.mapId === 'duoc_vien' ? 'duoc_vien' : 'tan_vien';
+      const map = s.mapId === 'vuon_ca_nhan' ? 'vuon_ca_nhan' : 'tan_vien';
       await this.approach(s.stonePosition ?? STONE_POSITION, STONE_RADIUS, map);
       const beforeRealm = this.client.read().realmId;
       const ack = await this.send('breakthrough', { useBaoMenh: !!useBaoMenh });
