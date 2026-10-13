@@ -167,7 +167,7 @@ export interface KhuInfo {
   list: KhuList | null;
 }
 
-export interface GardenOperation { id: string; kind: 'buy-pack' | 'sow' | 'harvest'; status: 'running' | 'done' | 'failed' | 'cancelled'; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; startedAt: number; updatedAt: number }
+export interface GardenOperation { id: string; kind: 'buy-pack' | 'sow' | 'harvest'; status: 'running' | 'done' | 'failed' | 'cancelled'; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
 export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; at: number | null; operation: GardenOperation | null;
   plots: Array<{ id: string; index: number; state: 'empty' | 'growing' | 'ready' | 'unknown'; seedId: string | null; seedName: string | null; cropId: string | null; cropName: string | null; watered: boolean | null; remainSec: number | null; readyAt: number | null }>;
   seeds: Array<{ seedId: string; name: string; count: number | null; growSec: number | null; wetSec: number | null; tier: string | null }>;

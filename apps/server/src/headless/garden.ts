@@ -1,18 +1,23 @@
 export type GardenPlotState = 'empty' | 'growing' | 'ready' | 'unknown';
-export interface GardenPlot { id: string; index: number; state: GardenPlotState; seedId: string | null; seedName: string | null; cropId: string | null; cropName: string | null; watered: boolean | null; remainSec: number | null; readyAt: number | null }
+export interface GardenPlot { id: string; index: number; state: GardenPlotState; seedId: string | null; seedName: string | null; cropId: string | null; cropName: string | null; watered: boolean | null; remainSec: number | null; readyAt: number | null; position?: { x: number; y: number } | null }
 export interface GardenSeed { seedId: string; name: string; count: number | null; growSec: number | null; wetSec: number | null; tier: string | null }
 export interface GardenPack { id: string; name: string; cost: number | null; realm: string | null; unlocked: boolean | null; affordable: boolean | null; give: Array<{ itemId: string; name: string; qty: number | null }> }
 export interface GardenSnapshot { known: boolean; mapId: string | null; inGarden: boolean; unlocked: boolean | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; operation: GardenOperation | null; at: number }
 export type GardenOperationKind = 'buy-pack' | 'sow' | 'harvest';
 export type GardenOperationStatus = 'running' | 'done' | 'failed' | 'cancelled';
-export interface GardenOperation { id: string; kind: GardenOperationKind; status: GardenOperationStatus; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; startedAt: number; updatedAt: number }
-export interface GardenClientState { inGame: boolean; mapId: string | null; inGarden: boolean; down: boolean; auto: boolean; stage: number | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; activeOtherOperation: boolean; hurtCount: number }
+export interface GardenOperation { id: string; kind: GardenOperationKind; status: GardenOperationStatus; progress: { current: number; total: number }; results: Array<{ target: string; ok: boolean; code?: string }>; error?: string; errorReason?: string; startedAt: number; updatedAt: number }
+export interface GardenClientState { inGame: boolean; mapId: string | null; inGarden: boolean; playerPosition?: { x: number; y: number } | null; daiPhuPosition?: { x: number; y: number } | null; down: boolean; auto: boolean; stage: number | null; duocCong: number | null; plots: GardenPlot[]; seeds: GardenSeed[]; packs: GardenPack[]; activeOtherOperation: boolean; hurtCount: number }
 export interface GardenClient {
   now(): number; read(): GardenClientState; issue(command: string, args: Record<string, unknown>): Promise<{ ok: boolean; why?: string }>;
   walk(point: { x: number; y: number }, radius: number, mapId?: string): Promise<void>; count(itemId: string): number | null; wait(ms: number): Promise<void>; record(code: string, detail?: string): void;
   ackTimeoutMs: number; commandDelayMs: number;
 }
-export class GardenError extends Error { public constructor(public readonly code: string) { super(code); this.name = 'GardenError'; } }
+export class GardenError extends Error { public constructor(public readonly code: string, public readonly reason?: string) { super(code); this.name = 'GardenError'; } }
+
+// Official world.js herb_plot uses r:34; subtract an 8 px safety margin.
+export const GARDEN_PLOT_INTERACTION_RADIUS = 26;
+// Official mapdata.js dai_phu uses r:48; keep a 10 px safety margin.
+export const GARDEN_DAI_PHU_INTERACTION_RADIUS = 38;
 
 const active = (operation: GardenOperation | null): boolean => operation?.status === 'running';
 const copyOp = (op: GardenOperation | null): GardenOperation | null => op ? { ...op, progress: { ...op.progress }, results: op.results.map((result) => ({ ...result })) } : null;
@@ -68,10 +73,22 @@ export class GardenOperations {
     return state;
   }
   private async send(command: string, args: Record<string, unknown>): Promise<void> {
+    // Final checkpoint is deliberately adjacent to issue(), including after any awaited walk.
     this.checkpoint();
     const ack = await this.client.issue(command, args);
     if (!ack.ok) throw new GardenError(ack.why || 'COMMAND_REFUSED');
-    this.checkpoint();
+  }
+  private async approach(point: { x: number; y: number } | null | undefined, radius: number, targetMapId: string): Promise<void> {
+    const state = this.checkpoint();
+    if (!point) throw new GardenError('GARDEN_TARGET_NOT_FOUND');
+    const position = state.playerPosition;
+    if (state.mapId === targetMapId && position && Math.hypot(position.x - point.x, position.y - point.y) <= radius) return;
+    try {
+      await this.client.walk(point, radius, targetMapId);
+    } catch (error) {
+      const reason = error instanceof GardenError ? error.reason : error instanceof Error ? error.message : String(error);
+      throw new GardenError('WALK_FAILED', reason);
+    }
   }
   private async waitFor(predicate: () => boolean): Promise<void> {
     const deadline = this.client.now() + this.client.ackTimeoutMs;
@@ -92,8 +109,10 @@ export class GardenOperations {
       this.operation!.status = 'done';
     } catch (error) {
       const code = error instanceof GardenError ? error.code : 'GARDEN_FAILED';
+      const reason = error instanceof GardenError ? error.reason : undefined;
       const cancelled = this.cancelled || code === 'CANCELLED';
       this.operation!.status = cancelled ? 'cancelled' : 'failed'; this.operation!.error = cancelled ? 'CANCELLED' : code;
+      if (reason) this.operation!.errorReason = reason.slice(0, 160);
       const failedTarget = targets[this.operation!.progress.current];
       if (failedTarget) this.operation!.results.push({ target: failedTarget, ok: false, code: cancelled ? 'CANCELLED' : code });
       this.client.record(`garden_${this.operation!.kind.replace('-', '_')}_${cancelled ? 'cancelled' : 'failed'}`, `count=${this.operation!.progress.current} code=${cancelled ? 'CANCELLED' : code}`);
@@ -113,6 +132,7 @@ export class GardenOperations {
     void this.perform(async () => {
       const before = this.client.read().duocCong;
       if (before === null) throw new GardenError('GARDEN_COUNT_MISMATCH');
+      await this.approach(this.client.read().daiPhuPosition, GARDEN_DAI_PHU_INTERACTION_RADIUS, 'duoc_vien');
       await this.send('seed.buyPack', { packId });
       await this.waitFor(() => { const after = this.client.read().duocCong; return after !== null && before - after === pack.cost; });
     }, Array.from({ length: count }, () => packId));
@@ -129,6 +149,8 @@ export class GardenOperations {
     void this.perform(async () => {
       const plot = targets[this.operation!.progress.current]!; const before = this.client.count(seedId);
       if (before === null) throw new GardenError('GARDEN_COUNT_MISMATCH');
+      const target = this.client.read().plots.find((item) => item.id === plot);
+      await this.approach(target?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
       await this.send('farm.sow', { plot, seed: seedId });
       await this.waitFor(() => { const after = this.client.count(seedId); return after !== null && before - after === 1; });
     }, targets);
@@ -144,6 +166,7 @@ export class GardenOperations {
     void this.perform(async () => {
       const plotId = targets[this.operation!.progress.current]!; const before = this.client.read().plots.find((plot) => plot.id === plotId);
       const item = before?.cropId; const countBefore = item ? this.client.count(item) : null;
+      await this.approach(before?.position, GARDEN_PLOT_INTERACTION_RADIUS, 'duoc_vien');
       await this.send('farm.harvest', { plot: plotId });
       if (countBefore === null || !item) throw new GardenError('GARDEN_COUNT_MISMATCH');
       await this.waitFor(() => { const after = this.client.count(item); return after !== null && after === countBefore + 1; });

@@ -1679,5 +1679,7 @@ ull`/rỗng.
 - [x] Mỗi đổi/gieo/thu có ACK tuần tự, không retry, hậu kiểm counts, hủy khi stop/reconnect/down/Auto/hurt, delay/timeout cấu hình; dùng WalkNavigator và abortOnHurt.
 - [x] Tab Vườn thuốc: đọc/đếm ngược, gói, chọn hạt/luống, xác nhận hai bước, thu hoạch từng/all, tiến độ/hủy và khóa thao tác.
 - [x] Server 221/221; web 72/72. Direct tsc core/server/web và Vite build pass; `pnpm build` không chạy vì executable pnpm không có PATH và shim không có pnpm con.
-- [ ] Fault injection trực tiếp đầy đủ theo danh sách yêu cầu chưa chạy; garden unit tests cover ACK timeout/no retry, tuần tự ACK, down/hurt, luống chín, hậu kiểm số lượng và quyền sở hữu route.
+- [x] Bản sửa đi tới gần trước mỗi lệnh và bổ sung chặn `PLOT_NOT_EMPTY`; garden unit 13/13, server 226/226 (mốc 221), web 72/72. Sáu fault injection trực tiếp nguồn đều làm test đích fail gọn rồi đã hoàn nguyên. `WALK_FAILED` giữ lý do navigator qua API và tab Vườn thuốc.
+- [x] Fallback TypeScript core/server/web và Vite production build pass; `pnpm build` shim không chạy do executable `pnpm` con thiếu PATH. Tsx cần preload tạm chỉ vá `os.userInfo` vì sandbox báo `uv_os_get_passwd ... ENOMEM`.
+- [ ] Chưa xác minh live: khoảng cách máy chủ và ACK/state đồng bộ; không kết nối game thật.
 - [ ] Chưa xác minh browser 334 px hoặc game thật. ACK/state sync thật, bán kính server, luống chung/riêng, rate limit game chưa xác minh. Không mở game/network.

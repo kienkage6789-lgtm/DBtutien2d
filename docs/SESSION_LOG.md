@@ -1,3 +1,13 @@
+# 2026-10-13 — Vườn thuốc, bản sửa đi tới gần trước lệnh
+
+Mốc theo yêu cầu trước bản sửa: server 221/221, web 72/72. Sau bản sửa: server 226/226 trên 34 file; web 72/72 trên 14 file.
+
+- `GardenOperations` giờ dùng `WalkNavigator` qua `GardenClient.walk` trước từng lệnh `farm.sow`/`farm.harvest` và trước mỗi lần mua gói. Bỏ qua walk khi đã ở trong bán kính an toàn; điểm đến lấy từ `P.MapData.get('duoc_vien')`, nếu thiếu thì dùng tọa độ mapdata đã ghi chú, chỉ cho map này. Tâm ô là `tx*32+16, ty*32+16`; bán kính đi tới là luống 26 px (`r:34−8`) và Đại Phu 38 px (`r:48−10`). `abortOnHurt` giữ nguyên. Walk lỗi dừng `WALK_FAILED`, có `errorReason` khi navigator nêu lý do; API sanitizer và tab Vườn thuốc hiện lý do, không gửi lệnh game.
+- Checkpoint cuối đặt sát trước `issue()` để kiểm lại gục/Auto/hurt/huỷ/mất kết nối sau walk. Test dùng walk giả và đồng hồ tiêm, kiểm thứ tự walk→lệnh, bỏ walk khi đã gần/cùng cụm, walk lỗi, down/Auto/hurt sau walk; bổ sung test luống đã có cây (`PLOT_NOT_EMPTY`). Test `PLOT_NOT_READY` và hậu kiểm giữ nguyên.
+- Sáu phép phá thử sửa trực tiếp nguồn đều làm test đích thất bại gọn rồi được hoàn nguyên: bỏ walk; vẫn gửi lệnh khi walk lỗi; bỏ `PLOT_NOT_EMPTY`; bỏ `PLOT_NOT_READY`; bỏ checkpoint sát lệnh sau walk; đặt bán kính đi tới lớn hơn bán kính client.
+- Kiểm tra: garden 13/13; các test liên quan garden/vendor-runner/walk-navigator 73/73; toàn server 226/226; web 72/72. TypeScript core-client/server/web và Vite production build pass. `pnpm build` qua `%TEMP%\pnpmshim\pnpm.cmd` không chạy vì shim gọi `pnpm` con không có PATH; đã chạy compiler/Vite/Vitest bằng binary cục bộ. Test tsx dùng preload tạm để tránh lỗi môi trường `uv_os_get_passwd ... ENOMEM`; preload đã xóa sau kiểm tra.
+- Chưa xác minh khoảng cách phía máy chủ, ACK/state thật, hoặc hành vi trong game; không kết nối game/mạng và không dùng tài khoản thật.
+
 # 2026-10-13 — Dashboard Vườn thuốc (giai đoạn đầu)
 
 Mốc trước việc theo yêu cầu: server 210/210, web 70/70. Kết quả sau thay đổi: server 221/221 trên các file test trong `apps/server/src`; web 72/72 trên 14 file.

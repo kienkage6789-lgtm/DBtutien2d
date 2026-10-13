@@ -1643,6 +1643,25 @@ export class VendorRunner {
         const farm = P?.Farm;
         const inventory = P?.Inventory;
         const mapId = this.getMapId();
+        const player = this.getPlayer();
+        const mapData = P?.MapData?.get ? P.MapData.get('duoc_vien') : P?.MapData?.DUOC_VIEN;
+        const mapProps = Array.isArray(mapData?.props) ? mapData.props : [];
+        // Client mapdata.js fallback: plot_1..5 at (3..7,4), plot_6..10 at (3..7,6), dai_phu at (14,8).
+        // Tile centers are tx*32+16, ty*32+16, matching the official 32 px map grid.
+        const fallbackPlotPositions = Array.from({ length: 10 }, (_unused, i) => {
+          const index = i % 5;
+          return { x: (3 + index) * 32 + 16, y: (i < 5 ? 4 : 6) * 32 + 16 };
+        });
+        const tile = 32;
+        const propPosition = (id: string, fallback?: { x: number; y: number } | null) => {
+          const prop = mapProps.find((item: any) => item?.id === id);
+          if (prop) {
+            const x = Number.isFinite(prop.x) ? prop.x : Number.isFinite(prop.tx) ? prop.tx * tile + tile / 2 : NaN;
+            const y = Number.isFinite(prop.y) ? prop.y : Number.isFinite(prop.ty) ? prop.ty * tile + tile / 2 : NaN;
+            if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+          }
+          return fallback ?? null;
+        };
         const seedsDef = Array.isArray(farm?.SEEDS) ? farm.SEEDS : [];
         const seeds = seedsDef.map((def: any) => ({
           seedId: typeof def?.seed === 'string' ? def.seed : '',
@@ -1655,7 +1674,7 @@ export class VendorRunner {
           const id = `plot_${i + 1}`; const state = farm?.plot?.(id) ?? null; const def = state ? farm?.seedDef?.(state.seed) : null;
           const remainSec = state && typeof farm?.remain === 'function' ? this.safeCount(farm.remain(id)) : null;
           const plotState: GardenPlotState = !state ? 'empty' : remainSec === null ? 'unknown' : remainSec <= 0 ? 'ready' : 'growing';
-          return { id, index: i + 1, state: plotState, seedId: typeof state?.seed === 'string' ? state.seed : null,
+          return { id, index: i + 1, state: plotState, position: mapId === 'duoc_vien' ? propPosition(id, fallbackPlotPositions[i]) : null, seedId: typeof state?.seed === 'string' ? state.seed : null,
             seedName: typeof P?.ITEMS?.[state?.seed]?.name === 'string' ? P.ITEMS[state.seed].name : (state?.seed ?? null),
             cropId: typeof def?.crop === 'string' ? def.crop : null,
             cropName: typeof P?.ITEMS?.[def?.crop]?.name === 'string' ? P.ITEMS[def.crop].name : (def?.crop ?? null),
@@ -1672,6 +1691,8 @@ export class VendorRunner {
         }));
         return {
           inGame: this.connectionState() === 'IN_GAME', mapId, inGarden: mapId === 'duoc_vien',
+          playerPosition: player && Number.isFinite(player.x) && Number.isFinite(player.y) ? { x: Number(player.x), y: Number(player.y) } : null,
+          daiPhuPosition: propPosition('dai_phu', { x: 14 * 32 + 16, y: 8 * 32 + 16 }),
           down: this.isDown(this.getPlayer()), auto: this.autoRequested || !!P?.SceneWorld?.autoOn,
           stage: Number.isFinite(quest?.stage) ? quest.stage : null,
           duocCong: Number.isFinite(P?.Progress?.duocCong) ? P.Progress.duocCong : null,
@@ -1681,14 +1702,6 @@ export class VendorRunner {
         };
       },
       issue: async (command: string, args: Record<string, unknown>) => {
-        const mapId = command === 'seed.buyPack' ? 'duoc_vien' : this.getMapId();
-        const objectId = command === 'seed.buyPack' ? 'dai_phu' : String(args.plot ?? '');
-        const prop = this.gardenProp(mapId, objectId);
-        if (!prop || !mapId) return { ok: false, why: 'GARDEN_TARGET_NOT_FOUND' };
-        const player = this.getPlayer();
-        if (!player || this.getMapId() !== mapId || Math.hypot(Number(player.x) - prop.x, Number(player.y) - prop.y) > (command === 'seed.buyPack' ? 46 : 34)) {
-          await this.walkGarden(prop, command === 'seed.buyPack' ? 40 : 30, mapId);
-        }
         const ackTimeout = Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000;
         const ack = await this.issueDailyCommand(command, () => this.P?.Gateway?.cmd?.(command, args, () => undefined), ackTimeout);
         return { ok: ack.ok, ...(ack.why ? { why: ack.why } : {}) };
@@ -1700,10 +1713,10 @@ export class VendorRunner {
           const current = this.walkNavigator.getOperation();
           if (current?.operationId !== op.operationId) throw new GardenError('WALK_CANCELLED');
           if (current.status === 'arrived') return;
-          if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new GardenError(current.reason ?? 'WALK_FAILED');
+          if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new GardenError('WALK_FAILED', current.reason);
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
-        this.walkNavigator.cancel(op.operationId, 'garden_walk_timeout'); throw new GardenError('WALK_TIMEOUT');
+        this.walkNavigator.cancel(op.operationId, 'garden_walk_timeout'); throw new GardenError('WALK_FAILED', 'WALK_TIMEOUT');
       },
       wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
       count: (itemId: string) => { const value = (this.P as any)?.Inventory?.count?.(itemId); return this.safeCount(value); },
@@ -1711,32 +1724,6 @@ export class VendorRunner {
       ackTimeoutMs: Number.isFinite(this.input.gardenAckTimeoutMs) ? Math.max(100, Math.min(120_000, Math.trunc(this.input.gardenAckTimeoutMs!))) : 10_000,
       commandDelayMs: Number.isFinite(this.input.gardenCmdDelayMs) ? Math.max(100, Math.min(5_000, Math.trunc(this.input.gardenCmdDelayMs!))) : 400,
     };
-  }
-
-  private gardenProp(mapId: string | null, propId: string): { x: number; y: number } | null {
-    const P = this.P as any;
-    const props = P?.SceneWorld?.map?.props;
-    let prop = Array.isArray(props) ? props.find((item: any) => item?.id === propId) : null;
-    if (!prop && mapId && Array.isArray(P?.MapData?.[mapId.toUpperCase()]?.props)) prop = P.MapData[mapId.toUpperCase()].props.find((item: any) => item?.id === propId);
-    if (!prop) return null;
-    const tile = Number(P?.CONFIG?.TILE_SIZE) || 32;
-    const x = Number.isFinite(prop.x) ? prop.x : Number.isFinite(prop.tx) ? prop.tx * tile + tile / 2 : NaN;
-    const y = Number.isFinite(prop.y) ? prop.y : Number.isFinite(prop.ty) ? prop.ty * tile + tile / 2 : NaN;
-    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-  }
-
-  private async walkGarden(point: { x: number; y: number }, radius: number, targetMapId: string): Promise<void> {
-    const op = this.walkNavigator.walkTo({ target: point, targetMapId, arrivalRadius: radius, requester: 'garden', abortOnHurt: true });
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      const current = this.walkNavigator.getOperation();
-      if (current?.operationId !== op.operationId) throw new GardenError('WALK_CANCELLED');
-      if (current.status === 'arrived') return;
-      if (['failed', 'blocked', 'cancelled'].includes(current.status)) throw new GardenError(current.reason ?? 'WALK_FAILED');
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    this.walkNavigator.cancel(op.operationId, 'garden_walk_timeout');
-    throw new GardenError('WALK_TIMEOUT');
   }
 
   private safeCount(value: unknown): number | null { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null; }
