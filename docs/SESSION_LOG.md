@@ -1,3 +1,7 @@
+# 2026-10-13 — Nghiên cứu chuỗi nhiệm vụ chính tuyến tới Luyện Khí 7 (chưa có code)
+
+Thêm `docs/RESEARCH_QUEST_CHAIN.md`: giai đoạn 0..18 (đích Luyện Khí 7 ở giai đoạn 18), điều kiện đột phá từng tầng, công thức Tụ Khí/Luyện Khí Đan, nhu cầu vật phẩm (2 Tụ Khí Đan, 3 Luyện Khí Đan, ~16 Linh Thúy, ≥15 Dược Công, 3.090 Đạo Hạnh), lệnh cần có và hiện trạng bot, rủi ro, lộ trình. Chỉ đọc client; mọi lệnh chưa xác minh live. Chưa xác minh: đáp án Bách Khoa, tỉ lệ rơi Linh Thúy, ACK các lệnh `talk`/`brew`/`breakthrough`/`gather`.
+
 # 2026-10-13 — Vườn thuốc, bản sửa đi tới gần trước lệnh
 
 Mốc theo yêu cầu trước bản sửa: server 221/221, web 72/72. Sau bản sửa: server 226/226 trên 34 file; web 72/72 trên 14 file.
